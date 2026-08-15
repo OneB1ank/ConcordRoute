@@ -11,10 +11,10 @@ import (
 // VARCHAR(255) 宽度内；超长值直接拒绝，避免不同标识因截断而混为一体。
 const maxPersistedSessionIDLength = 255
 
-// clientSessionIDHeaders 在 OpenAI 兼容粘性会话头的基础上加入原生协议标识；
-// 这些标识可以安全持久化，但不得改变 OpenAI 调度行为。
+// clientSessionIDHeaders 优先识别 Codex CLI 标准 session-id，再兼容 OpenAI
+// 粘性会话头和原生协议标识；这些标识只用于持久化，不得改变调度行为。
 var clientSessionIDHeaders = append(
-	append([]string(nil), explicitOpenAIHeaderSessionNames...),
+	append([]string{"session-id"}, explicitOpenAIHeaderSessionNames...),
 	claudeCodeSessionHeader,
 )
 

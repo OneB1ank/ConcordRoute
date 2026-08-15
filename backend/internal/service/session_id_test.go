@@ -80,6 +80,7 @@ func TestExtractClientSessionID_SupportedHeaders(t *testing.T) {
 		header string
 		value  string
 	}{
+		{"session-id", "session-id", "sess-codex"},
 		{"session_id", "session_id", "sess-A"},
 		{"conversation_id", "conversation_id", "conv-B"},
 		{"X-Session-Affinity", openCodeSessionAffinityHeader, "aff-C"},
@@ -97,14 +98,15 @@ func TestExtractClientSessionID_SupportedHeaders(t *testing.T) {
 }
 
 func TestExtractClientSessionID_HeaderPrecedence(t *testing.T) {
-	// session_id 的优先级高于 conversation_id 和各类 X-* 请求头。
+	// Codex CLI 标准 session-id 的优先级与指纹提取链路保持一致。
 	c := newSessionHeaderContext(t, map[string]string{
-		"session_id":                "primary",
-		"conversation_id":           "secondary",
-		openCodeSessionIDHeader:     "tertiary",
-		codeBuddyConversationHeader: "quaternary",
+		"session-id":                "codex-primary",
+		"session_id":                "compat-secondary",
+		"conversation_id":           "tertiary",
+		openCodeSessionIDHeader:     "quaternary",
+		codeBuddyConversationHeader: "quinary",
 	})
-	require.Equal(t, "primary", ExtractClientSessionID(c))
+	require.Equal(t, "codex-primary", ExtractClientSessionID(c))
 }
 
 func TestExtractClientSessionID_Sanitizes(t *testing.T) {
