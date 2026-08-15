@@ -31,13 +31,17 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+	latestRepo     string
+	recentRepo     string
 }
 
-func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchLatestRelease(_ context.Context, repo string) (*GitHubRelease, error) {
+	s.latestRepo = repo
 	return s.release, nil
 }
 
-func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchRecentReleases(_ context.Context, repo string, _ int) ([]*GitHubRelease, error) {
+	s.recentRepo = repo
 	return s.recentReleases, s.recentErr
 }
 
@@ -67,6 +71,69 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
+}
+
+func TestUpdateServiceCustomBuildSameBaseVersionHasNoUpdate(t *testing.T) {
+	client := &updateServiceGitHubClientStub{
+		release: &GitHubRelease{
+			TagName: "v0.1.261",
+			Name:    "v0.1.261",
+		},
+	}
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		client,
+		"0.1.261-cockpit.2",
+		"release",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.Equal(t, "0.1.261-cockpit.2", info.CurrentVersion)
+	require.Equal(t, "0.1.261", info.LatestVersion)
+	require.False(t, info.HasUpdate)
+	require.Equal(t, "OneB1ank/TokenRouter-cockpit", client.latestRepo)
+}
+
+func TestUpdateServiceCustomRevisionReportsUpdate(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{
+			TagName: "v0.1.261-cockpit.4",
+			Name:    "v0.1.261-cockpit.4",
+		}},
+		"0.1.261-cockpit.3",
+		"release",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.Equal(t, "0.1.261-cockpit.4", info.LatestVersion)
+	require.True(t, info.HasUpdate)
+}
+
+func TestCompareVersionsUsesCustomBuildBaseVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		latest  string
+		want    int
+	}{
+		{name: "自定义版高于同基础裸版本", current: "0.1.261-cockpit.2", latest: "0.1.261", want: 1},
+		{name: "同基础版本修订可升级", current: "0.1.261-cockpit.3", latest: "0.1.261-cockpit.4", want: -1},
+		{name: "相同 cockpit 修订", current: "0.1.261-cockpit.4", latest: "v0.1.261-cockpit.4", want: 0},
+		{name: "裸版本可升级到 cockpit", current: "0.1.261", latest: "0.1.261-cockpit.4", want: -1},
+		{name: "自定义版本较旧", current: "0.1.261-cockpit.2", latest: "0.1.262", want: -1},
+		{name: "自定义版本较新", current: "v0.1.262-cockpit.1", latest: "0.1.261", want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, compareVersions(tt.current, tt.latest))
+		})
+	}
 }
 
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
@@ -99,6 +166,26 @@ func TestUpdateServiceListRollbackVersionsFiltersAndCaps(t *testing.T) {
 	require.Equal(t, "0.1.146", versions[0].Version)
 	require.Equal(t, "0.1.144", versions[1].Version)
 	require.Equal(t, "0.1.143", versions[2].Version)
+}
+
+func TestUpdateServiceListRollbackVersionsSupportsCockpitRevisions(t *testing.T) {
+	releases := []*GitHubRelease{
+		{TagName: "v0.1.262-cockpit.1"},
+		{TagName: "v0.1.261-cockpit.4"},
+		{TagName: "v0.1.261-cockpit.3"},
+		{TagName: "v0.1.261-cockpit.2"},
+		{TagName: "v0.1.261-cockpit.1"},
+	}
+	svc := newRollbackTestService("0.1.261-cockpit.4", releases)
+
+	versions, err := svc.ListRollbackVersions(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, []RollbackVersion{
+		{Version: "0.1.261-cockpit.3"},
+		{Version: "0.1.261-cockpit.2"},
+		{Version: "0.1.261-cockpit.1"},
+	}, versions)
 }
 
 func TestUpdateServiceListRollbackVersionsSortsUnorderedInput(t *testing.T) {

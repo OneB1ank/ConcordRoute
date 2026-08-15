@@ -30,7 +30,7 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "TokenFlux/TokenRouter"
+	githubRepo     = "OneB1ank/TokenRouter-cockpit"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -404,12 +404,14 @@ func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubR
 	return candidates, nil
 }
 
-// normalizeRollbackVersion 只接受可安全用于下载与手动命令展示的 v?MAJOR.MINOR.PATCH。
+// normalizeRollbackVersion 接受可安全用于下载与手动命令展示的基础版本，
+// 以及本 fork 使用的 v?MAJOR.MINOR.PATCH-cockpit.REVISION。
 // 严格格式既保证排序语义，也防止 release tag 中的 shell 元字符进入复制命令。
 func normalizeRollbackVersion(raw string) (string, bool) {
 	version := strings.TrimSpace(raw)
 	version = strings.TrimPrefix(version, "v")
-	parts := strings.Split(version, ".")
+	baseVersion, suffix, hasSuffix := strings.Cut(version, "-")
+	parts := strings.Split(baseVersion, ".")
 	if len(parts) != 3 {
 		return "", false
 	}
@@ -426,7 +428,29 @@ func normalizeRollbackVersion(raw string) (string, bool) {
 			return "", false
 		}
 	}
-	return strings.Join(parts, "."), true
+
+	normalized := strings.Join(parts, ".")
+	if !hasSuffix {
+		return normalized, true
+	}
+	const cockpitPrefix = "cockpit."
+	if !strings.HasPrefix(suffix, cockpitPrefix) {
+		return "", false
+	}
+	revision := strings.TrimPrefix(suffix, cockpitPrefix)
+	if revision == "" || (len(revision) > 1 && revision[0] == '0') {
+		return "", false
+	}
+	for _, ch := range revision {
+		if ch < '0' || ch > '9' {
+			return "", false
+		}
+	}
+	parsedRevision, err := strconv.Atoi(revision)
+	if err != nil || parsedRevision <= 0 {
+		return "", false
+	}
+	return normalized + "-cockpit." + revision, true
 }
 
 func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, error) {
@@ -667,29 +691,50 @@ func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {
 	_ = s.cache.SetUpdateInfo(ctx, string(data), time.Duration(updateCacheTTL)*time.Second)
 }
 
-// compareVersions compares two semantic versions
+// compareVersions 比较基础语义版本，并在基础版本相同时继续比较 cockpit 修订号。
+// 裸版本视为修订 0，因此 cockpit.3 不会被同基础版本的裸 tag 误报为可更新，
+// 同时裸版本可以升级到同基础版本的 cockpit 修订版。
 func compareVersions(current, latest string) int {
 	currentParts := parseVersion(current)
 	latestParts := parseVersion(latest)
 
 	for i := 0; i < 3; i++ {
-		if currentParts[i] < latestParts[i] {
+		if currentParts.base[i] < latestParts.base[i] {
 			return -1
 		}
-		if currentParts[i] > latestParts[i] {
+		if currentParts.base[i] > latestParts.base[i] {
 			return 1
 		}
+	}
+	if currentParts.cockpitRevision < latestParts.cockpitRevision {
+		return -1
+	}
+	if currentParts.cockpitRevision > latestParts.cockpitRevision {
+		return 1
 	}
 	return 0
 }
 
-func parseVersion(v string) [3]int {
+type parsedVersion struct {
+	base            [3]int
+	cockpitRevision int
+}
+
+func parseVersion(v string) parsedVersion {
 	v = strings.TrimPrefix(v, "v")
-	parts := strings.Split(v, ".")
-	result := [3]int{0, 0, 0}
-	for i := 0; i < len(parts) && i < 3; i++ {
+	baseVersion, suffix, _ := strings.Cut(v, "-")
+	parts := strings.Split(baseVersion, ".")
+	result := parsedVersion{}
+	for i := 0; i < len(parts) && i < len(result.base); i++ {
 		if parsed, err := strconv.Atoi(parts[i]); err == nil {
-			result[i] = parsed
+			result.base[i] = parsed
+		}
+	}
+
+	const cockpitPrefix = "cockpit."
+	if strings.HasPrefix(suffix, cockpitPrefix) {
+		if revision, err := strconv.Atoi(strings.TrimPrefix(suffix, cockpitPrefix)); err == nil && revision > 0 {
+			result.cockpitRevision = revision
 		}
 	}
 	return result

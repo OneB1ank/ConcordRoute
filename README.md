@@ -6,9 +6,9 @@
   <p><strong>AI API 网关与订阅配额管理平台</strong></p>
 
   <p>
-    <a href="https://github.com/TokenFlux/TokenRouter/actions/workflows/backend-ci.yml"><img src="https://github.com/TokenFlux/TokenRouter/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://github.com/TokenFlux/TokenRouter/releases"><img src="https://img.shields.io/github/v/release/TokenFlux/TokenRouter?display_name=tag" alt="Release" /></a>
-    <a href="https://github.com/TokenFlux/TokenRouter/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io%2Ftokenflux%2Ftokenrouter-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
+    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml"><img src="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/releases"><img src="https://img.shields.io/github/v/release/OneB1ank/TokenRouter-cockpit?display_name=tag" alt="Release" /></a>
+    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io%2Foneb1ank%2Ftokenrouter-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0--or--later-4c1.svg" alt="License: LGPL-3.0-or-later" /></a>
   </p>
 
