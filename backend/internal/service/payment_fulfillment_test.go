@@ -950,8 +950,9 @@ func createPaymentFulfillmentSubscriptionOrder(
 	updatedAt time.Time,
 ) *dbent.PaymentOrder {
 	t.Helper()
+	suffix := nextPaymentTestSuffix()
 	user, err := client.User.Create().
-		SetEmail("fulfillment-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "@example.com").
+		SetEmail("fulfillment-" + suffix + "@example.com").
 		SetPasswordHash("hash").
 		SetUsername("payment-fulfillment-user").
 		Save(ctx)
@@ -964,8 +965,8 @@ func createPaymentFulfillmentSubscriptionOrder(
 		SetAmount(80).
 		SetPayAmount(80).
 		SetFeeRate(0).
-		SetRechargeCode("PAY-SUB-" + strconv.FormatInt(time.Now().UnixNano(), 10)).
-		SetOutTradeNo("sub2_fulfillment_" + strconv.FormatInt(time.Now().UnixNano(), 10)).
+		SetRechargeCode("PAY-SUB-" + suffix).
+		SetOutTradeNo("sub2_fulfillment_" + suffix).
 		SetPaymentType(payment.TypeAlipay).
 		SetPaymentTradeNo("trade-fulfillment").
 		SetOrderType(payment.OrderTypeSubscription).

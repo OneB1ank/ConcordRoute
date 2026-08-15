@@ -5234,6 +5234,8 @@ func TestDataSharingService_ListExportArtifactsMergesUploadProgress(t *testing.T
 	require.NoError(t, err)
 
 	svc.startExportArtifactUploadProgress(artifact.ID, artifact.FileSize)
+	// Windows 的系统时钟粒度可能让连续两次 time.Now 相同，等待一个 tick 后再计算速率。
+	time.Sleep(time.Millisecond)
 	svc.updateExportArtifactUploadProgress(artifact.ID, 250)
 	items, _, err := svc.ListExportArtifacts(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 10})
 	require.NoError(t, err)

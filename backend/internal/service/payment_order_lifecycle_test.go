@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,13 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	_ "modernc.org/sqlite"
 )
+
+var paymentTestUniqueSequence atomic.Uint64
+
+// nextPaymentTestSuffix 生成不依赖系统时钟粒度的测试唯一后缀。
+func nextPaymentTestSuffix() string {
+	return strconv.FormatUint(paymentTestUniqueSequence.Add(1), 10)
+}
 
 type paymentOrderLifecycleQueryProvider struct {
 	key               string
@@ -1198,7 +1206,7 @@ func newPaymentOrderLifecycleTestClient(t *testing.T) *dbent.Client {
 
 func createPaymentOrderLifecycleOrder(t *testing.T, ctx context.Context, client *dbent.Client, status string, expiresAt time.Time) *dbent.PaymentOrder {
 	t.Helper()
-	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	suffix := nextPaymentTestSuffix()
 	user, err := client.User.Create().
 		SetEmail("payment-lifecycle-" + suffix + "@example.com").
 		SetPasswordHash("hash").
