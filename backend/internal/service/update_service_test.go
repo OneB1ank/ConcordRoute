@@ -107,9 +107,12 @@ func TestUpdateServiceRejectsReleaseVersionSuffix(t *testing.T) {
 		"release",
 	)
 
-	_, err := svc.CheckUpdate(context.Background(), true)
+	info, err := svc.CheckUpdate(context.Background(), true)
 
-	require.ErrorContains(t, err, "invalid release version")
+	require.NoError(t, err)
+	require.Equal(t, "0.2.100", info.LatestVersion)
+	require.False(t, info.HasUpdate)
+	require.Contains(t, info.Warning, "invalid release version")
 }
 
 func TestCompareVersionsUsesNumericSemanticVersion(t *testing.T) {

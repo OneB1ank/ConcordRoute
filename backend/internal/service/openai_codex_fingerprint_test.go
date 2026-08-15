@@ -290,13 +290,16 @@ func TestCockpitMode_UsesBodyFallbackAndRewritesPromptCacheKey(t *testing.T) {
 
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
 	assert.Equal(t, expectedCacheKey, body["prompt_cache_key"])
-	clientMetadata := body["client_metadata"].(map[string]any)
+	clientMetadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, ids.sessionID, clientMetadata["session_id"])
 	assert.Equal(t, ids.threadID, clientMetadata["thread_id"])
 	assert.Equal(t, ids.windowID, clientMetadata["x-codex-window-id"])
 
+	turnMetadata, ok := clientMetadata["x-codex-turn-metadata"].(string)
+	require.True(t, ok)
 	var embedded map[string]any
-	require.NoError(t, json.Unmarshal([]byte(clientMetadata["x-codex-turn-metadata"].(string)), &embedded))
+	require.NoError(t, json.Unmarshal([]byte(turnMetadata), &embedded))
 	assert.Equal(t, expectedCacheKey, embedded["prompt_cache_key"])
 	assert.Equal(t, ids.turnID, embedded["turn_id"])
 
@@ -607,7 +610,8 @@ func TestCockpitMode_RawBodyFallbackAndPromptCacheRewrite(t *testing.T) {
 	decoded := map[string]any{}
 	require.NoError(t, json.Unmarshal(updated, &decoded))
 	assert.Equal(t, expectedCacheKey, decoded["prompt_cache_key"])
-	metadata := decoded["client_metadata"].(map[string]any)
+	metadata, ok := decoded["client_metadata"].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, ids.sessionID, metadata["session_id"])
 	assert.Equal(t, ids.threadID, metadata["thread_id"])
 	assert.Equal(t, ids.windowID, metadata["x-codex-window-id"])
