@@ -64,7 +64,7 @@ release:
     owner: "{{ .Env.GITHUB_REPO_OWNER }}"
     name: "{{ .Env.GITHUB_REPO_NAME }}"
   draft: false
-  # cockpit.N 是 fork 的正式修订号；保持正式 Release，确保 /releases/latest 可见。
+  # 纯数字语义版本均作为正式 Release，并更新 /releases/latest。
   prerelease: false
   make_latest: true
   name_template: "TokenRouter {{.Version}} (Simple)"
