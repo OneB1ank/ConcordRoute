@@ -4266,7 +4266,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
+const codexFingerprintMode = ref<CodexFingerprintMode>('session')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -5505,7 +5505,7 @@ const resetForm = () => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
-  codexFingerprintMode.value = 'cockpit'
+  codexFingerprintMode.value = 'session'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5677,8 +5677,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.tls_fingerprint_router_id
   }
 
-  // cockpit 是默认模式，不写入 extra；其它模式（包括 off）需要显式保存。
-  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'cockpit') {
+  // session 是兼容旧账号的默认模式，不写入 extra；cockpit 等其它模式显式保存。
+  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'session') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode

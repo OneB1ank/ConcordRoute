@@ -248,14 +248,14 @@ describe('CreateAccountModal OpenAI account options', () => {
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBeUndefined()
   })
 
-  it('defaults Codex fingerprint convergence to cockpit for OAuth imports', async () => {
+  it('defaults Codex fingerprint convergence to session for OAuth imports', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
 
     const modeSelect = wrapper.get<HTMLSelectElement>(
       '[data-testid="create-codex-fingerprint-mode-select"]'
     )
-    expect(modeSelect.element.value).toBe('cockpit')
+    expect(modeSelect.element.value).toBe('session')
 
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
@@ -269,13 +269,13 @@ describe('CreateAccountModal OpenAI account options', () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
 
-    await wrapper.get<HTMLSelectElement>('[data-testid="create-codex-fingerprint-mode-select"]').setValue('session')
+    await wrapper.get<HTMLSelectElement>('[data-testid="create-codex-fingerprint-mode-select"]').setValue('cockpit')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
     await flushPromises()
 
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('session')
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('cockpit')
   })
 
 })

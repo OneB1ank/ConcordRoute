@@ -655,11 +655,11 @@ describe('EditAccountModal', () => {
     )
 
     expect(modeSelect.element.value).toBe('device')
-    await modeSelect.setValue('session')
+    await modeSelect.setValue('cockpit')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_fingerprint_mode).toBe('session')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_fingerprint_mode).toBe('cockpit')
   })
 
   it('does not show the plan type override for OpenAI API-key accounts', () => {

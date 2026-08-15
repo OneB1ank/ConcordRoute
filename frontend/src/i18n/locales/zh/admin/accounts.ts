@@ -759,11 +759,11 @@ export default {
         codexCLIOnlyAllowClaudeCode: '额外放行 Claude Code 的 Codex 插件',
         codexCLIOnlyAllowClaudeCodeDesc: '仅在上方开关开启时生效。额外放行通过 Claude Code 的 Codex 插件发起的请求（精确匹配 originator=Claude Code），不影响对其他非官方客户端的拦截。',
         codexFingerprintMode: 'Codex 指纹收敛',
-        codexFingerprintModeDesc: '共享 OAuth 账号的身份收敛。Cockpit 为默认值：一个稳定设备与主会话，不同对话按 thread 和缓存键隔离；选择关闭可保留入站标识。',
+        codexFingerprintModeDesc: '共享 OAuth 账号的身份收敛。默认保持设备+会话模式以兼容已有账号；Cockpit 需显式选择，并额外按对话稳定处理缓存键。',
         codexFingerprintOff: '关闭',
         codexFingerprintDevice: '仅设备',
         codexFingerprintSession: '设备+会话',
-        codexFingerprintCockpit: 'Cockpit（会话+缓存键，推荐）',
+        codexFingerprintCockpit: 'Cockpit（会话+缓存键）',
         codexFingerprintFull: '完全收敛',
         codexImageTool: 'Codex 图片桥接策略',
         codexImageToolDesc:
