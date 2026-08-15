@@ -620,14 +620,14 @@ describe('BulkEditAccountModal', () => {
     })
 
     await wrapper.get('#bulk-edit-codex-fingerprint-mode-enabled').setValue(true)
-    await wrapper.get('[data-testid="bulk-codex-fingerprint-mode-select"]').setValue('session')
+    await wrapper.get('[data-testid="bulk-codex-fingerprint-mode-select"]').setValue('cockpit')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
       extra: {
-        codex_fingerprint_mode: 'session'
+        codex_fingerprint_mode: 'cockpit'
       }
     })
   })
@@ -639,6 +639,7 @@ describe('BulkEditAccountModal', () => {
     })
 
     await wrapper.get('#bulk-edit-codex-fingerprint-mode-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-fingerprint-mode-select"]').setValue('off')
     expect((wrapper.get('[data-testid="bulk-codex-fingerprint-mode-select"]').element as HTMLSelectElement).value).toBe('off')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()

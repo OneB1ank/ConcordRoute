@@ -1824,13 +1824,14 @@ const autoPause5hThreshold = ref<OptionalNumberInputValue>(null)
 const autoPause7dThreshold = ref<OptionalNumberInputValue>(null)
 const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
-type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
+type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const enableCodexFingerprintMode = ref(false)
-const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
+  { value: 'cockpit' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintCockpit') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
 ])
 const openAICompactMode = ref<OpenAICompactMode>('auto')
@@ -2340,7 +2341,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enableCodexFingerprintMode.value) {
     const extra = ensureExtra()
-    // 批量 extra 使用 JSONB merge；off 也必须显式写入，才能覆盖已有的收敛档位。
+    // 批量 extra 使用 JSONB merge；默认 cockpit 也必须显式写入，才能覆盖已有的其它档位。
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   }
 
@@ -2633,7 +2634,7 @@ const resetBulkEditFormState = () => {
   autoPause7dThreshold.value = null
   autoPause5hDisabled.value = false
   autoPause7dDisabled.value = false
-  codexFingerprintMode.value = 'off'
+  codexFingerprintMode.value = 'cockpit'
   openAICompactMode.value = 'auto'
   openAINativeCompactionV2Mode.value = 'auto'
   openAICompactModelMappings.value = []

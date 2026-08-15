@@ -91,7 +91,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
 			}
-			fingerprintIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+			fingerprintIDs := resolveCodexFingerprintIDsFromRawRequest(account, clientHeaders, body)
 			if fingerprintIDs != nil {
 				updatedBody, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(body, fingerprintIDs)
 				if fingerprintErr != nil {

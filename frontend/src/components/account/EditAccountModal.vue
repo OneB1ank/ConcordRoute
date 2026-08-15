@@ -2985,8 +2985,8 @@ const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
-type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
+const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
@@ -3064,6 +3064,7 @@ const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
+  { value: 'cockpit' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintCockpit') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
 ])
 
@@ -3493,7 +3494,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
-  codexFingerprintMode.value = 'off'
+  codexFingerprintMode.value = 'cockpit'
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -3538,9 +3539,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     }
     if (newAccount.type === 'oauth') {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
-      codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
+      codexFingerprintMode.value = (['off', 'device', 'session', 'cockpit', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
-        : 'off')
+        : 'cockpit')
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
@@ -4991,9 +4992,9 @@ const handleSubmit = async () => {
         }
       }
 
-      // 指纹收敛模式：默认 off，不写入；其它模式必须显式写入。
+      // 指纹收敛模式：默认 cockpit，不写入；非默认值显式写入（包括 off）
       if (props.account.type === 'oauth') {
-        if (codexFingerprintMode.value !== 'off') {
+        if (codexFingerprintMode.value !== 'cockpit') {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {
           delete newExtra.codex_fingerprint_mode

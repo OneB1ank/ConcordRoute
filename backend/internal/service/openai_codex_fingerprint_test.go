@@ -65,12 +65,13 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}{
 		{"nil 账号", nil, codexFingerprintOff},
 		{"非 OAuth 账号", &Account{Platform: PlatformOpenAI, Type: "api_key"}, codexFingerprintOff},
-		{"无 extra 默认 off", newTestOAuthAccount(1, nil), codexFingerprintOff},
-		{"空值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintOff},
-		{"非法值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintOff},
+		{"无 extra 默认 cockpit", newTestOAuthAccount(1, nil), codexFingerprintCockpit},
+		{"空值默认 cockpit", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintCockpit},
+		{"非法值默认 cockpit", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintCockpit},
 		{"显式 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), codexFingerprintOff},
 		{"device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), codexFingerprintDevice},
 		{"session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"}), codexFingerprintSession},
+		{"cockpit", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "cockpit"}), codexFingerprintCockpit},
 		{"full", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "full"}), codexFingerprintFull},
 	}
 	for _, tt := range tests {
@@ -122,6 +123,21 @@ func TestResolveConvergedThreadID_EmptySession(t *testing.T) {
 	assert.Equal(t, "", resolveConvergedThreadID(account, ""))
 }
 
+// --- resolveConvergedPromptCacheKey ---
+
+func TestResolveConvergedPromptCacheKey_StableAndIsolated(t *testing.T) {
+	accountA := newTestOAuthAccount(1, nil)
+	accountB := newTestOAuthAccount(2, nil)
+
+	a1 := resolveConvergedPromptCacheKey(accountA, "cache-A")
+	a2 := resolveConvergedPromptCacheKey(accountA, "cache-A")
+	assert.Equal(t, a1, a2, "同账号同缓存键应稳定")
+	assert.NotEqual(t, a1, resolveConvergedPromptCacheKey(accountA, "cache-B"), "不同对话应隔离")
+	assert.NotEqual(t, a1, resolveConvergedPromptCacheKey(accountB, "cache-A"), "不同账号应隔离")
+	_, err := uuid.Parse(a1)
+	require.NoError(t, err)
+}
+
 // --- off 模式：resolveCodexFingerprintIDsFromRequest 返回 nil ---
 
 func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
@@ -130,10 +146,13 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsCockpit(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
-	assert.Nil(t, ids, "无 extra 默认 off 模式，应返回 nil")
+	require.NotNil(t, ids, "无 extra 默认 cockpit 模式，应返回非 nil")
+	assert.Equal(t, codexFingerprintCockpit, ids.mode)
+	assert.NotEmpty(t, ids.sessionID)
+	assert.NotEmpty(t, ids.turnID)
 }
 
 // --- applyCodexFingerprintHeaders: off 模式 ---
@@ -244,6 +263,87 @@ func TestApplyCodexFingerprintHeaders_SessionMode_DifferentClients(t *testing.T)
 	assert.NotEqual(t, hA.Get("thread-id"), hB.Get("thread-id"), "不同客户端 thread_id 应不同")
 	assert.NotEqual(t, hA.Get("x-codex-window-id"), hB.Get("x-codex-window-id"), "不同客户端 window_id 应不同")
 	assert.Equal(t, hA.Get("x-codex-installation-id"), hB.Get("x-codex-installation-id"))
+}
+
+// --- cockpit 模式 ---
+
+func TestCockpitMode_UsesBodyFallbackAndRewritesPromptCacheKey(t *testing.T) {
+	account := newTestOAuthAccount(7, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+	})
+	body := map[string]any{
+		"prompt_cache_key": "client-cache-A",
+		"client_metadata": map[string]any{
+			"session_id":            "body-session-A",
+			"thread_id":             "body-thread-A",
+			"x-codex-window-id":     "body-thread-A:0",
+			"x-codex-turn-metadata": `{"prompt_cache_key":"client-cache-A","turn_id":"client-turn","window_id":"body-thread-A:0"}`,
+		},
+	}
+
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
+	require.NotNil(t, ids)
+	assert.Equal(t, codexFingerprintCockpit, ids.mode)
+	assert.Equal(t, resolveConvergedThreadID(account, "body-thread-A"), ids.threadID)
+	expectedCacheKey := resolveConvergedPromptCacheKey(account, "client-cache-A")
+	assert.Equal(t, expectedCacheKey, ids.promptCacheKey)
+
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.Equal(t, expectedCacheKey, body["prompt_cache_key"])
+	clientMetadata := body["client_metadata"].(map[string]any)
+	assert.Equal(t, ids.sessionID, clientMetadata["session_id"])
+	assert.Equal(t, ids.threadID, clientMetadata["thread_id"])
+	assert.Equal(t, ids.windowID, clientMetadata["x-codex-window-id"])
+
+	var embedded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(clientMetadata["x-codex-turn-metadata"].(string)), &embedded))
+	assert.Equal(t, expectedCacheKey, embedded["prompt_cache_key"])
+	assert.Equal(t, ids.turnID, embedded["turn_id"])
+
+	headers := http.Header{}
+	headers.Set("conversation_id", "isolated-client-cache")
+	headers.Set("x-codex-turn-metadata", `{"prompt_cache_key":"client-cache-A","turn_id":"client-turn"}`)
+	applyCodexFingerprintHeaders(headers, ids)
+	assert.Equal(t, expectedCacheKey, headers.Get("conversation_id"))
+	assert.Equal(t, ids.sessionID, headers.Get("session-id"))
+	assert.Equal(t, ids.threadID, headers.Get("thread-id"))
+
+	var headerMetadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(headers.Get("x-codex-turn-metadata")), &headerMetadata))
+	assert.Equal(t, expectedCacheKey, headerMetadata["prompt_cache_key"])
+	assert.Equal(t, ids.turnID, headerMetadata["turn_id"])
+}
+
+func TestCockpitMode_PromptCacheFallbackKeepsConversationStable(t *testing.T) {
+	account := newTestOAuthAccount(7, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+	})
+	bodyA := map[string]any{"prompt_cache_key": "cache-only"}
+	bodyB := map[string]any{"prompt_cache_key": "cache-only"}
+
+	idsA := resolveCodexFingerprintIDsFromRequest(account, nil, bodyA)
+	idsB := resolveCodexFingerprintIDsFromRequest(account, nil, bodyB)
+	require.NotNil(t, idsA)
+	require.NotNil(t, idsB)
+	assert.Equal(t, idsA.threadID, idsB.threadID, "相同缓存键应派生同一 thread")
+	assert.Equal(t, idsA.promptCacheKey, idsB.promptCacheKey, "相同缓存键应稳定")
+	assert.NotEqual(t, idsA.turnID, idsB.turnID, "不同请求仍应生成独立 turn")
+}
+
+func TestCockpitMode_HeaderOnlyPromptCacheKeyDoesNotReinsertBodyField(t *testing.T) {
+	account := newTestOAuthAccount(7, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+	})
+	ids := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientSessionID:      "session-A",
+		promptCacheKey:       "header-only-cache",
+		promptCacheKeyInBody: false,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, ids)
+
+	body := map[string]any{}
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.NotContains(t, body, "prompt_cache_key", "Header-only 兼容键不应重新写回 Body")
 }
 
 // --- full 模式 ---
@@ -488,6 +588,29 @@ func TestApplyCodexFingerprintClientMetadataRaw_MatchesDecodedPath(t *testing.T)
 
 	assert.Equal(t, decoded["client_metadata"], rawDecoded["client_metadata"])
 	assert.Equal(t, "gpt-5.6-sol", rawDecoded["model"])
+}
+
+func TestCockpitMode_RawBodyFallbackAndPromptCacheRewrite(t *testing.T) {
+	account := newTestOAuthAccount(7, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	body := []byte(`{"model":"gpt-5.6-sol","prompt_cache_key":"raw-cache","client_metadata":{"session_id":"raw-session","thread_id":"raw-thread","x-codex-turn-metadata":"{\"prompt_cache_key\":\"raw-cache\",\"turn_id\":\"raw-turn\"}"}}`)
+
+	ids := resolveCodexFingerprintIDsFromRawRequest(account, nil, body)
+	require.NotNil(t, ids)
+	assert.Equal(t, resolveConvergedThreadID(account, "raw-thread"), ids.threadID)
+	expectedCacheKey := resolveConvergedPromptCacheKey(account, "raw-cache")
+	assert.Equal(t, expectedCacheKey, ids.promptCacheKey)
+
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	decoded := map[string]any{}
+	require.NoError(t, json.Unmarshal(updated, &decoded))
+	assert.Equal(t, expectedCacheKey, decoded["prompt_cache_key"])
+	metadata := decoded["client_metadata"].(map[string]any)
+	assert.Equal(t, ids.sessionID, metadata["session_id"])
+	assert.Equal(t, ids.threadID, metadata["thread_id"])
+	assert.Equal(t, ids.windowID, metadata["x-codex-window-id"])
 }
 
 func TestStageCodexFingerprintIDs_NilClearsPriorAttempt(t *testing.T) {

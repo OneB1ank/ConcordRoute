@@ -1286,6 +1286,8 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 		},
 		Extra: map[string]any{
 			"responses_websockets_v2_enabled": true,
+			// 本用例只验证 WS 的 prompt_cache_key 回退，显式关闭默认 Cockpit 收敛。
+			codexFingerprintModeExtraKey: "off",
 		},
 	}
 

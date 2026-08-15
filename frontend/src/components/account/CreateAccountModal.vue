@@ -4265,12 +4265,13 @@ const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
-type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
+const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
   { value: 'session' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintSession') },
+  { value: 'cockpit' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintCockpit') },
   { value: 'full' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintFull') },
 ])
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
@@ -5504,7 +5505,7 @@ const resetForm = () => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
-  codexFingerprintMode.value = 'off'
+  codexFingerprintMode.value = 'cockpit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5676,8 +5677,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.tls_fingerprint_router_id
   }
 
-  // 收敛是显式 opt-in；off 为默认值，不写入 extra。
-  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'off') {
+  // cockpit 是默认模式，不写入 extra；其它模式（包括 off）需要显式保存。
+  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'cockpit') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
