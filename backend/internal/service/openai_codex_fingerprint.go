@@ -370,12 +370,16 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 	source.installationID = firstNonEmptyCodexValue(
 		h.Get("x-codex-installation-id"),
 		extractCodexStringField(clientMetadata, "x-codex-installation-id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "installation_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "installation_id"),
 	)
 	source.originalSessionID = firstNonEmptyCodexValue(
 		source.clientSessionID,
 		extractCodexStringField(reqBody, "session_id"),
 		extractCodexStringField(reqBody, "session-id"),
 		extractCodexStringField(clientMetadata, "session_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "session_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "session_id"),
 	)
 
 	if source.clientSessionID == "" {
@@ -383,6 +387,8 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 			extractCodexStringField(reqBody, "session_id"),
 			extractCodexStringField(reqBody, "session-id"),
 			extractCodexStringField(clientMetadata, "session_id"),
+			extractCodexTurnMetadataField(embeddedTurnMetadata, "session_id"),
+			extractCodexTurnMetadataField(headerTurnMetadata, "session_id"),
 			extractCodexStringField(clientMetadata, "x-codex-window-id"),
 			extractCodexStringField(reqBody, "prompt_cache_key"),
 		} {
@@ -399,6 +405,8 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 			extractCodexStringField(reqBody, "thread_id"),
 			h.Get("thread-id"),
 			h.Get("x-client-request-id"),
+			extractCodexTurnMetadataField(embeddedTurnMetadata, "thread_id"),
+			extractCodexTurnMetadataField(headerTurnMetadata, "thread_id"),
 		)
 	}
 	source.turnID = firstNonEmptyCodexValue(
@@ -415,6 +423,13 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 	)
 	source.promptCacheKey = extractCodexStringField(reqBody, "prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
+	if source.promptCacheKey == "" {
+		source.promptCacheKey = firstNonEmptyCodexValue(
+			h.Get("conversation_id"),
+			extractCodexTurnMetadataField(embeddedTurnMetadata, "prompt_cache_key"),
+			extractCodexTurnMetadataField(headerTurnMetadata, "prompt_cache_key"),
+		)
+	}
 	return source
 }
 
@@ -433,12 +448,16 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 	source.installationID = firstNonEmptyCodexValue(
 		h.Get("x-codex-installation-id"),
 		read("client_metadata.x-codex-installation-id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "installation_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "installation_id"),
 	)
 	source.originalSessionID = firstNonEmptyCodexValue(
 		source.clientSessionID,
 		read("session_id"),
 		read("session-id"),
 		read("client_metadata.session_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "session_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "session_id"),
 	)
 
 	if source.clientSessionID == "" {
@@ -446,6 +465,8 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 			read("session_id"),
 			read("session-id"),
 			read("client_metadata.session_id"),
+			extractCodexTurnMetadataField(embeddedTurnMetadata, "session_id"),
+			extractCodexTurnMetadataField(headerTurnMetadata, "session_id"),
 			read("client_metadata.x-codex-window-id"),
 			read("prompt_cache_key"),
 		} {
@@ -458,7 +479,13 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 
 	source.threadID = read("client_metadata.thread_id")
 	if source.threadID == "" {
-		source.threadID = firstNonEmptyCodexValue(read("thread_id"), h.Get("thread-id"), h.Get("x-client-request-id"))
+		source.threadID = firstNonEmptyCodexValue(
+			read("thread_id"),
+			h.Get("thread-id"),
+			h.Get("x-client-request-id"),
+			extractCodexTurnMetadataField(embeddedTurnMetadata, "thread_id"),
+			extractCodexTurnMetadataField(headerTurnMetadata, "thread_id"),
+		)
 	}
 	source.turnID = firstNonEmptyCodexValue(
 		read("client_metadata.turn_id"),
@@ -474,6 +501,13 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 	)
 	source.promptCacheKey = read("prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
+	if source.promptCacheKey == "" {
+		source.promptCacheKey = firstNonEmptyCodexValue(
+			h.Get("conversation_id"),
+			extractCodexTurnMetadataField(embeddedTurnMetadata, "prompt_cache_key"),
+			extractCodexTurnMetadataField(headerTurnMetadata, "prompt_cache_key"),
+		)
+	}
 	return source
 }
 
@@ -526,28 +560,209 @@ func resolveCodexFingerprintIDsFromRawRequest(account *Account, clientHeaders ht
 	return resolveCodexFingerprintIDsWithSource(account, source, mode)
 }
 
-// restoreCodexFingerprintResponsePayload 将上游回显的收敛身份恢复为客户端原始身份。
-// 映射仅保存在单次账号尝试内，既不会跨账号共享，也不会影响内部调度与缓存键。
-func restoreCodexFingerprintResponsePayload(payload []byte, ids *codexFingerprintIDs) []byte {
-	if len(payload) == 0 || ids == nil || ids.mode == codexFingerprintOff {
-		return payload
-	}
-	for _, pair := range [][2]string{
+// codexFingerprintResponseMappings 返回收敛值到客户端原始值的完整映射。
+func codexFingerprintResponseMappings(ids *codexFingerprintIDs) [][2]string {
+	return [][2]string{
 		{ids.windowID, ids.originalWindowID},
 		{ids.promptCacheKey, ids.originalPromptCacheKey},
 		{ids.turnID, ids.originalTurnID},
 		{ids.installationID, ids.originalInstallationID},
 		{ids.sessionID, ids.originalSessionID},
 		{ids.threadID, ids.originalThreadID},
-	} {
+	}
+}
+
+// restoreCodexFingerprintFieldValue 按 JSON 字段语义恢复身份。
+// full 模式的 sessionID 与 threadID 相同，必须依靠字段名区分两个原始值。
+func restoreCodexFingerprintFieldValue(field, value string, ids *codexFingerprintIDs) (string, bool) {
+	field = strings.ToLower(strings.TrimSpace(field))
+	var from, to string
+	switch field {
+	case "installation_id", "installation-id", "x-codex-installation-id":
+		from, to = ids.installationID, ids.originalInstallationID
+	case "session_id", "session-id":
+		from, to = ids.sessionID, ids.originalSessionID
+	case "thread_id", "thread-id", "x-client-request-id":
+		from, to = ids.threadID, ids.originalThreadID
+	case "turn_id", "turn-id":
+		from, to = ids.turnID, ids.originalTurnID
+	case "window_id", "window-id", "x-codex-window-id":
+		from, to = ids.windowID, ids.originalWindowID
+	case "prompt_cache_key", "prompt-cache-key", "conversation_id":
+		from, to = ids.promptCacheKey, ids.originalPromptCacheKey
+	default:
+		return "", false
+	}
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if from == "" || to == "" || from == to || value != from {
+		return "", false
+	}
+	return to, true
+}
+
+// restoreUnambiguousCodexFingerprintValue 恢复没有一对多冲突的精确字符串值。
+// 对 full 模式共享的 session/thread 收敛值保持原样，交给字段感知逻辑处理。
+func restoreUnambiguousCodexFingerprintValue(value string, ids *codexFingerprintIDs) (string, bool) {
+	restored := ""
+	found := false
+	for _, pair := range codexFingerprintResponseMappings(ids) {
+		from := strings.TrimSpace(pair[0])
+		to := strings.TrimSpace(pair[1])
+		if from == "" || to == "" || from == to || from != value {
+			continue
+		}
+		if found && restored != to {
+			return "", false
+		}
+		restored = to
+		found = true
+	}
+	return restored, found
+}
+
+// restoreCodexFingerprintJSONValue 递归恢复 JSON 对象和数组中的身份字段。
+func restoreCodexFingerprintJSONValue(value any, field string, ids *codexFingerprintIDs) (any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		modified := false
+		for key, child := range typed {
+			restored, changed := restoreCodexFingerprintJSONValue(child, key, ids)
+			if changed {
+				typed[key] = restored
+				modified = true
+			}
+		}
+		return typed, modified
+	case []any:
+		modified := false
+		for index, child := range typed {
+			restored, changed := restoreCodexFingerprintJSONValue(child, field, ids)
+			if changed {
+				typed[index] = restored
+				modified = true
+			}
+		}
+		return typed, modified
+	case string:
+		if strings.EqualFold(strings.TrimSpace(field), "x-codex-turn-metadata") {
+			if restored, changed := restoreCodexFingerprintJSONPayload([]byte(typed), ids); changed {
+				return string(restored), true
+			}
+		}
+		if restored, ok := restoreCodexFingerprintFieldValue(field, typed, ids); ok {
+			return restored, true
+		}
+		if restored, ok := restoreUnambiguousCodexFingerprintValue(typed, ids); ok {
+			return restored, true
+		}
+	}
+	return value, false
+}
+
+// restoreCodexFingerprintJSONPayload 恢复单个 JSON 文档，返回是否成功解析并发生修改。
+func restoreCodexFingerprintJSONPayload(payload []byte, ids *codexFingerprintIDs) ([]byte, bool) {
+	if !json.Valid(payload) {
+		return payload, false
+	}
+	var decoded any
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return payload, false
+	}
+	restored, modified := restoreCodexFingerprintJSONValue(decoded, "", ids)
+	if !modified {
+		return payload, false
+	}
+	rebuilt, err := json.Marshal(restored)
+	if err != nil {
+		return payload, false
+	}
+	return rebuilt, true
+}
+
+// restoreCodexFingerprintSSEPayload 兼容测试、错误路径或聚合器传入的完整 SSE 文本。
+func restoreCodexFingerprintSSEPayload(payload []byte, ids *codexFingerprintIDs) ([]byte, bool) {
+	lines := bytes.SplitAfter(payload, []byte("\n"))
+	modified := false
+	for index, line := range lines {
+		lineEnd := []byte{}
+		content := line
+		if bytes.HasSuffix(content, []byte("\n")) {
+			lineEnd = []byte("\n")
+			content = content[:len(content)-1]
+		}
+		if bytes.HasSuffix(content, []byte("\r")) {
+			lineEnd = append([]byte("\r"), lineEnd...)
+			content = content[:len(content)-1]
+		}
+		trimmedLeft := bytes.TrimLeft(content, " \t")
+		if !bytes.HasPrefix(trimmedLeft, []byte("data:")) {
+			continue
+		}
+		colon := bytes.Index(content, []byte(":"))
+		if colon < 0 {
+			continue
+		}
+		jsonStart := colon + 1
+		for jsonStart < len(content) && (content[jsonStart] == ' ' || content[jsonStart] == '\t') {
+			jsonStart++
+		}
+		restored, changed := restoreCodexFingerprintJSONPayload(content[jsonStart:], ids)
+		if !changed {
+			continue
+		}
+		lines[index] = append(append(append([]byte{}, content[:jsonStart]...), restored...), lineEnd...)
+		modified = true
+	}
+	if !modified {
+		return payload, false
+	}
+	return bytes.Join(lines, nil), true
+}
+
+// restoreUnambiguousCodexFingerprintPayload 为非 JSON 错误体保留原有的文本恢复能力。
+// 同一收敛值对应多个原始值时跳过，防止 full 模式混淆 session/thread。
+func restoreUnambiguousCodexFingerprintPayload(payload []byte, ids *codexFingerprintIDs) []byte {
+	mappings := codexFingerprintResponseMappings(ids)
+	for index, pair := range mappings {
 		from := strings.TrimSpace(pair[0])
 		to := strings.TrimSpace(pair[1])
 		if from == "" || to == "" || from == to || !bytes.Contains(payload, []byte(from)) {
 			continue
 		}
-		payload = bytes.ReplaceAll(payload, []byte(from), []byte(to))
+		ambiguous := false
+		for otherIndex, other := range mappings {
+			if otherIndex == index || strings.TrimSpace(other[0]) != from {
+				continue
+			}
+			otherTarget := strings.TrimSpace(other[1])
+			if otherTarget != "" && otherTarget != to {
+				ambiguous = true
+				break
+			}
+		}
+		if !ambiguous {
+			payload = bytes.ReplaceAll(payload, []byte(from), []byte(to))
+		}
 	}
 	return payload
+}
+
+// restoreCodexFingerprintResponsePayload 将上游回显的收敛身份恢复为客户端原始身份。
+// 映射仅保存在单次账号尝试内，既不会跨账号共享，也不会影响内部调度与缓存键。
+func restoreCodexFingerprintResponsePayload(payload []byte, ids *codexFingerprintIDs) []byte {
+	if len(payload) == 0 || ids == nil || ids.mode == codexFingerprintOff {
+		return payload
+	}
+	if restored, changed := restoreCodexFingerprintJSONPayload(payload, ids); changed {
+		return restored
+	}
+	if restored, changed := restoreCodexFingerprintSSEPayload(payload, ids); changed {
+		return restored
+	}
+	return restoreUnambiguousCodexFingerprintPayload(payload, ids)
 }
 
 // restoreStagedCodexFingerprintResponsePayload 使用当前 Gin 请求暂存的账号级映射。

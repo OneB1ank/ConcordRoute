@@ -675,6 +675,22 @@ func TestCockpitMode_RawBodyFallbackAndPromptCacheRewrite(t *testing.T) {
 	assert.Equal(t, ids.windowID, metadata["x-codex-window-id"])
 }
 
+func TestCockpitMode_ExtractsOriginalIdentityFromEmbeddedTurnMetadata(t *testing.T) {
+	account := newTestOAuthAccount(8, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	body := []byte(`{"model":"gpt-5.6-sol","client_metadata":{"x-codex-turn-metadata":"{\"installation_id\":\"embedded-install\",\"session_id\":\"embedded-session\",\"thread_id\":\"embedded-thread\",\"turn_id\":\"embedded-turn\",\"window_id\":\"embedded-window\",\"prompt_cache_key\":\"embedded-cache\"}"}}`)
+
+	ids := resolveCodexFingerprintIDsFromRawRequest(account, nil, body)
+	require.NotNil(t, ids)
+	assert.Equal(t, "embedded-install", ids.originalInstallationID)
+	assert.Equal(t, "embedded-session", ids.originalSessionID)
+	assert.Equal(t, "embedded-thread", ids.originalThreadID)
+	assert.Equal(t, "embedded-turn", ids.originalTurnID)
+	assert.Equal(t, "embedded-window", ids.originalWindowID)
+	assert.Equal(t, "embedded-cache", ids.originalPromptCacheKey)
+	assert.Equal(t, resolveConvergedThreadID(account, "embedded-thread"), ids.threadID)
+	assert.Equal(t, resolveConvergedPromptCacheKey(account, "embedded-cache"), ids.promptCacheKey)
+}
+
 func TestStageCodexFingerprintIDs_NilClearsPriorAttempt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -748,7 +764,24 @@ func TestRestoreCodexFingerprintResponsePayload_WorksForSSEAndOffMode(t *testing
 	payload := []byte("data: {\"session_id\":\"upstream-session\"}\n\n")
 	restored := restoreCodexFingerprintResponsePayload(payload, ids)
 	assert.Equal(t, "data: {\"session_id\":\"client-session\"}\n\n", string(restored))
+	assert.Equal(t, "plain client-session error", string(restoreCodexFingerprintResponsePayload([]byte("plain upstream-session error"), ids)))
 	assert.Equal(t, payload, restoreCodexFingerprintResponsePayload(payload, nil))
+}
+
+func TestRestoreCodexFingerprintResponsePayload_FullModeSeparatesSessionAndThread(t *testing.T) {
+	ids := &codexFingerprintIDs{
+		mode:              codexFingerprintFull,
+		originalSessionID: "client-session",
+		sessionID:         "shared-upstream-id",
+		originalThreadID:  "client-thread",
+		threadID:          "shared-upstream-id",
+	}
+	payload := []byte(`{"session_id":"shared-upstream-id","thread_id":"shared-upstream-id","other":"shared-upstream-id","large_number":9007199254740993,"x-codex-turn-metadata":"{\"session_id\":\"shared-upstream-id\",\"thread_id\":\"shared-upstream-id\"}"}`)
+
+	restored := restoreCodexFingerprintResponsePayload(payload, ids)
+
+	assert.JSONEq(t, `{"session_id":"client-session","thread_id":"client-thread","other":"shared-upstream-id","large_number":9007199254740993,"x-codex-turn-metadata":"{\"session_id\":\"client-session\",\"thread_id\":\"client-thread\"}"}`, string(restored))
+	assert.Contains(t, string(restored), `"large_number":9007199254740993`, "恢复身份时不得损失大整数精度")
 }
 
 func TestRestoreStagedCodexFingerprintResponsePayload_UsesCurrentFailoverAttempt(t *testing.T) {
