@@ -1583,7 +1583,17 @@ dataSharing: {
         supportedVersions: '支持的 TLS 版本',
         keyShareGroups: '密钥共享组',
         pskModes: 'PSK 模式',
-        extensions: '扩展'
+        extensions: '扩展',
+        invalidNumber: '{field} 中的值“{value}”不是合法整数',
+        numberOutOfRange: '{field} 中的值“{value}”超出 0–{max} 范围',
+        duplicateValue: '{field} 中存在重复值“{value}”',
+        invalidAlpnEmpty: 'ALPN 协议列表中存在空项',
+        invalidAlpnLength: 'ALPN 协议“{value}”超过 255 字节',
+        invalidAlpnControl: 'ALPN 协议“{value}”包含控制字符',
+        duplicateAlpn: 'ALPN 协议“{value}”重复',
+        unsupportedTlsVersion: '不支持的 TLS 版本 {value}',
+        requiredExtension: '配置 {field} 时必须包含 TLS 扩展 {extension}',
+        tls13RequiredExtension: '启用 TLS 1.3 时必须包含 TLS 扩展 {extension}'
       },
 
       deleteConfirm: '删除模板',

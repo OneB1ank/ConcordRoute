@@ -914,24 +914,99 @@ const closeFormModal = () => {
   resetForm()
 }
 
-// 解析逗号分隔的数字，支持十六进制与十进制。
-const parseNumericArray = (input: string): number[] => {
+type NumericFieldName = Exclude<keyof typeof fieldInputs, 'alpn_protocols'>
+
+// 解析逗号分隔的数字，支持十六进制与十进制；任何非法值都直接阻止提交。
+const parseNumericArray = (input: string, field: NumericFieldName, max = 0xffff): number[] => {
   if (!input.trim()) return []
-  return input
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.length > 0)
-    .map(s => s.startsWith('0x') || s.startsWith('0X') ? parseInt(s, 16) : parseInt(s, 10))
-    .filter(n => !isNaN(n))
+  const values: number[] = []
+  const seen = new Set<number>()
+  for (const rawToken of input.split(',')) {
+    const token = rawToken.trim()
+    const validToken = /^(?:0[xX][0-9a-fA-F]+|[0-9]+)$/.test(token)
+    if (!validToken) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.invalidNumber', { field, value: token || '(empty)' }))
+    }
+    const value = token.startsWith('0x') || token.startsWith('0X') ? Number.parseInt(token.slice(2), 16) : Number.parseInt(token, 10)
+    if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.numberOutOfRange', { field, value: token, max }))
+    }
+    if (seen.has(value)) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.duplicateValue', { field, value: token }))
+    }
+    seen.add(value)
+    values.push(value)
+  }
+  return values
 }
 
-// 解析逗号分隔的字符串。
+// 解析并验证 ALPN：空项、重复项、控制字符和超长协议名均在保存前报告。
 const parseStringArray = (input: string): string[] => {
   if (!input.trim()) return []
-  return input
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.length > 0)
+  const protocols: string[] = []
+  const seen = new Set<string>()
+  for (const rawProtocol of input.split(',')) {
+    const protocol = rawProtocol.trim()
+    if (!protocol) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.invalidAlpnEmpty'))
+    }
+    if (new TextEncoder().encode(protocol).length > 255) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.invalidAlpnLength', { value: protocol }))
+    }
+    if (Array.from(protocol).some(char => {
+      const codePoint = char.codePointAt(0) ?? 0
+      return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
+    })) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.invalidAlpnControl', { value: protocol }))
+    }
+    if (seen.has(protocol)) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.duplicateAlpn', { value: protocol }))
+    }
+    seen.add(protocol)
+    protocols.push(protocol)
+  }
+  return protocols
+}
+
+const validateTLSProfileRelations = (data: {
+  curves: number[]
+  point_formats: number[]
+  signature_algorithms: number[]
+  alpn_protocols: string[]
+  supported_versions: number[]
+  key_share_groups: number[]
+  psk_modes: number[]
+  extensions: number[]
+}) => {
+  for (const version of data.supported_versions) {
+    if (version < 0x0301 || version > 0x0304) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.unsupportedTlsVersion', { value: formatHex(version) }))
+    }
+  }
+  if (data.extensions.length === 0) return
+
+  const extensionSet = new Set(data.extensions)
+  const relations: Array<[keyof typeof data, number]> = [
+    ['curves', 10],
+    ['point_formats', 11],
+    ['signature_algorithms', 13],
+    ['alpn_protocols', 16],
+    ['supported_versions', 43],
+    ['psk_modes', 45],
+    ['key_share_groups', 51]
+  ]
+  for (const [field, extension] of relations) {
+    if (data[field].length > 0 && !extensionSet.has(extension)) {
+      throw new Error(t('admin.tlsFingerprintProfiles.form.requiredExtension', { field, extension }))
+    }
+  }
+  if (data.supported_versions.includes(0x0304)) {
+    for (const extension of [43, 51, 13]) {
+      if (!extensionSet.has(extension)) {
+        throw new Error(t('admin.tlsFingerprintProfiles.form.tls13RequiredExtension', { extension }))
+      }
+    }
+  }
 }
 
 // 数字按 4 位十六进制展示，便于对照 TLS ID。
@@ -1010,29 +1085,41 @@ const handleDelete = (profile: TLSFingerprintProfile) => {
   showDeleteDialog.value = true
 }
 
+const buildValidatedProfileData = () => {
+  const data = {
+    name: form.name.trim(),
+    description: form.description?.trim() || null,
+    enable_grease: form.enable_grease,
+    cipher_suites: parseNumericArray(fieldInputs.cipher_suites, 'cipher_suites'),
+    curves: parseNumericArray(fieldInputs.curves, 'curves'),
+    point_formats: parseNumericArray(fieldInputs.point_formats, 'point_formats', 0xff),
+    signature_algorithms: parseNumericArray(fieldInputs.signature_algorithms, 'signature_algorithms'),
+    alpn_protocols: parseStringArray(fieldInputs.alpn_protocols),
+    supported_versions: parseNumericArray(fieldInputs.supported_versions, 'supported_versions'),
+    key_share_groups: parseNumericArray(fieldInputs.key_share_groups, 'key_share_groups'),
+    psk_modes: parseNumericArray(fieldInputs.psk_modes, 'psk_modes', 0xff),
+    extensions: parseNumericArray(fieldInputs.extensions, 'extensions')
+  }
+  validateTLSProfileRelations(data)
+  return data
+}
+
 const handleSubmit = async () => {
   if (!form.name.trim()) {
     appStore.showError(t('admin.tlsFingerprintProfiles.form.name') + ' ' + t('common.required'))
     return
   }
 
+  let data: ReturnType<typeof buildValidatedProfileData>
+  try {
+    data = buildValidatedProfileData()
+  } catch (error: any) {
+    appStore.showError(error?.message || t('admin.tlsFingerprintProfiles.saveFailed'))
+    return
+  }
+
   submitting.value = true
   try {
-    const data = {
-      name: form.name.trim(),
-      description: form.description?.trim() || null,
-      enable_grease: form.enable_grease,
-      cipher_suites: parseNumericArray(fieldInputs.cipher_suites),
-      curves: parseNumericArray(fieldInputs.curves),
-      point_formats: parseNumericArray(fieldInputs.point_formats),
-      signature_algorithms: parseNumericArray(fieldInputs.signature_algorithms),
-      alpn_protocols: parseStringArray(fieldInputs.alpn_protocols),
-      supported_versions: parseNumericArray(fieldInputs.supported_versions),
-      key_share_groups: parseNumericArray(fieldInputs.key_share_groups),
-      psk_modes: parseNumericArray(fieldInputs.psk_modes),
-      extensions: parseNumericArray(fieldInputs.extensions)
-    }
-
     if (showEditModal.value && editingProfile.value) {
       await adminAPI.tlsFingerprintProfiles.update(editingProfile.value.id, data)
       appStore.showSuccess(t('admin.tlsFingerprintProfiles.updateSuccess'))

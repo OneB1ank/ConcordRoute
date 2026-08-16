@@ -446,8 +446,10 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	// Parametric extensions (curves, sigalgs, etc.) are populated with resolved profile values.
 	// Unknown IDs use GenericExtension (sends type ID with empty data).
 	extensions := make([]utls.TLSExtension, 0, len(extOrder)+2)
+	hasExplicitGREASE := false
 	for _, id := range extOrder {
 		if isGREASEValue(id) {
+			hasExplicitGREASE = true
 			extensions = append(extensions, &utls.UtlsGREASEExtension{})
 			continue
 		}
@@ -491,8 +493,8 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 		}
 	}
 
-	// For default extension order with EnableGREASE, wrap with GREASE bookends
-	if enableGREASE && (profile == nil || len(profile.Extensions) == 0) {
+	// 开启 GREASE 时，自定义扩展顺序也需要自动补齐 GREASE；显式配置过则避免重复插入。
+	if enableGREASE && !hasExplicitGREASE {
 		extensions = append([]utls.TLSExtension{&utls.UtlsGREASEExtension{}}, extensions...)
 		extensions = append(extensions, &utls.UtlsGREASEExtension{})
 	}

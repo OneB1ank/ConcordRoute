@@ -1591,7 +1591,17 @@ dataSharing: {
         supportedVersions: 'Supported TLS Versions',
         keyShareGroups: 'Key Share Groups',
         pskModes: 'PSK Modes',
-        extensions: 'Extensions'
+        extensions: 'Extensions',
+        invalidNumber: 'Value "{value}" in {field} is not a valid integer',
+        numberOutOfRange: 'Value "{value}" in {field} is outside the 0–{max} range',
+        duplicateValue: 'Value "{value}" is duplicated in {field}',
+        invalidAlpnEmpty: 'The ALPN protocol list contains an empty item',
+        invalidAlpnLength: 'ALPN protocol "{value}" exceeds 255 bytes',
+        invalidAlpnControl: 'ALPN protocol "{value}" contains control characters',
+        duplicateAlpn: 'ALPN protocol "{value}" is duplicated',
+        unsupportedTlsVersion: 'Unsupported TLS version {value}',
+        requiredExtension: 'TLS extension {extension} is required when {field} is configured',
+        tls13RequiredExtension: 'TLS extension {extension} is required when TLS 1.3 is enabled'
       },
 
       deleteConfirm: 'Delete Profile',

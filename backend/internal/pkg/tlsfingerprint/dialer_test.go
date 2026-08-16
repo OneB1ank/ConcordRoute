@@ -24,6 +24,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	utls "github.com/refraction-networking/utls"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDialerBasicConnection tests that the dialer can establish TLS connections.
@@ -189,6 +192,35 @@ func TestDialerWithProfile(t *testing.T) {
 	// Profile with GREASE should have more extensions
 	if len(spec2.Extensions) <= len(spec1.Extensions) {
 		t.Error("expected GREASE profile to have more extensions")
+	}
+}
+
+func TestBuildClientHelloSpecAddsGREASEToCustomExtensions(t *testing.T) {
+	tests := []struct {
+		name       string
+		extensions []uint16
+		wantGREASE int
+	}{
+		{name: "自动添加首尾 GREASE", extensions: []uint16{0, 10, 43}, wantGREASE: 2},
+		{name: "显式 GREASE 不重复添加", extensions: []uint16{0x0a0a, 0, 10, 43}, wantGREASE: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := buildClientHelloSpecFromProfile(&Profile{
+				Name:         "custom-grease",
+				EnableGREASE: true,
+				Extensions:   test.extensions,
+			})
+
+			greaseCount := 0
+			for _, extension := range spec.Extensions {
+				if _, ok := extension.(*utls.UtlsGREASEExtension); ok {
+					greaseCount++
+				}
+			}
+			require.Equal(t, test.wantGREASE, greaseCount)
+		})
 	}
 }
 

@@ -130,6 +130,16 @@ function mountModal() {
   })
 }
 
+async function openCreateForm(wrapper: ReturnType<typeof mountModal>) {
+  const createProfileButton = wrapper.findAll('button').find(button =>
+    button.text().includes('admin.tlsFingerprintProfiles.createProfile')
+  )
+  expect(createProfileButton).toBeTruthy()
+  await createProfileButton!.trigger('click')
+  await flushPromises()
+  await wrapper.find('input[required]').setValue('macOS Codex')
+}
+
 describe('TLSFingerprintProfilesModal', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -284,5 +294,61 @@ describe('TLSFingerprintProfilesModal', () => {
       '  extensions: [0x0000, 0x002b]'
     ].join('\n'))
     expect(showSuccessMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.collector.copied')
+  })
+
+  it('在保存前拒绝会被截断的 point_formats 数值', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+
+    await wrapper.find('textarea[placeholder="0"]').setValue('256')
+    const submitButton = wrapper.findAll('button').find(button => button.text().includes('common.create'))
+    await submitButton!.trigger('click')
+    await flushPromises()
+
+    expect(createProfileMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.form.numberOutOfRange')
+  })
+
+  it('在保存前拒绝重复 ALPN 和缺失的 ALPN 扩展', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+
+    const alpnInput = wrapper.find('textarea[placeholder="h2, http/1.1"]')
+    const extensionsInput = wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]')
+    const submitButton = wrapper.findAll('button').find(button => button.text().includes('common.create'))
+
+    await alpnInput.setValue('h2, h2')
+    await submitButton!.trigger('click')
+    await flushPromises()
+    expect(showErrorMock).toHaveBeenLastCalledWith('admin.tlsFingerprintProfiles.form.duplicateAlpn')
+
+    showErrorMock.mockClear()
+    await alpnInput.setValue('h2, http/1.1')
+    await extensionsInput.setValue('0, 10, 11, 13, 43, 45, 51')
+    await submitButton!.trigger('click')
+    await flushPromises()
+    expect(createProfileMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.form.requiredExtension')
+  })
+
+  it('保存包含 h2 与 HTTP/1.1 回退的合法 ALPN 模板', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+
+    await wrapper.find('textarea[placeholder="h2, http/1.1"]').setValue('h2, http/1.1')
+    await wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]').setValue('16')
+    const submitButton = wrapper.findAll('button').find(button => button.text().includes('common.create'))
+    await submitButton!.trigger('click')
+    await flushPromises()
+
+    expect(showErrorMock).not.toHaveBeenCalled()
+    expect(createProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'macOS Codex',
+      alpn_protocols: ['h2', 'http/1.1'],
+      extensions: [16]
+    }))
   })
 })
