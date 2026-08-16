@@ -75,6 +75,22 @@ func TestUpdateSettingsGrokDefaultBaseURLModeIsWritable(t *testing.T) {
 	require.Equal(t, service.GrokDefaultBaseURLModeEUWest1, repo.values[service.SettingKeyGrokDefaultBaseURLMode])
 }
 
+func TestUpdateSettingsOpenAIGatewayFieldsAreWritable(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyOpenAICodexUserAgent:             "old-user-agent",
+		service.SettingKeyOpenAIAllowClaudeCodeCodexPlugin: "false",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"openai_codex_user_agent":               "new-user-agent",
+		"openai_allow_claude_code_codex_plugin": true,
+	}, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "new-user-agent", repo.values[service.SettingKeyOpenAICodexUserAgent])
+	require.Equal(t, "true", repo.values[service.SettingKeyOpenAIAllowClaudeCodeCodexPlugin])
+}
+
 func TestUpdateSettingsRejectsTwoCaptchaProviders(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{
 		service.SettingKeyTurnstileEnabled:   "true",

@@ -322,7 +322,7 @@
         </section>
 
         <div class="flex justify-end">
-          <button type="button" class="btn btn-primary" :disabled="saving" @click="save">
+          <button type="button" class="btn btn-primary" :disabled="saving" @click="save()">
             {{ saving ? t('common.saving') : t('common.save') }}
           </button>
         </div>
@@ -375,6 +375,7 @@ const appStore = useAppStore()
 
 const loading = ref(true)
 const saving = ref(false)
+const loaded = ref(false)
 const defaultAllowedModels = ref<string[]>([])
 const defaultModelMappings = ref<ModelMapping[]>([])
 const credentialsJson = ref('{}')
@@ -665,9 +666,11 @@ const hydrate = (defaults: OpenAIOAuthImportDefaults) => {
 
 const load = async () => {
   loading.value = true
+  loaded.value = false
   try {
     const defaults = await adminAPI.settings.getOpenAIOAuthImportDefaults()
     hydrate(defaults)
+    loaded.value = true
   } catch (error: any) {
     appStore.showError(error?.message || t('admin.accounts.openAIOAuthImportDefaultsLoadFailed'))
   } finally {
@@ -720,7 +723,16 @@ const buildAccountDefaults = (): OpenAIOAuthImportDefaults['account'] => {
   return Object.keys(account).length > 0 ? account : undefined
 }
 
-const save = async () => {
+interface SaveOptions {
+  silentSuccess?: boolean
+}
+
+const save = async (options: SaveOptions = {}): Promise<boolean> => {
+  if (!loaded.value || loading.value || saving.value) {
+    appStore.showError(t('admin.accounts.openAIOAuthImportDefaultsLoadFailed'))
+    return false
+  }
+
   saving.value = true
   try {
     const credentials = parseJsonObject(
@@ -736,8 +748,8 @@ const save = async () => {
     }
     applyCodexImageToolMode(extra, codexImageToolMode.value)
 
-    if (!rejectForbiddenFields(credentials, 'credentials', forbiddenCredentialFields)) return
-    if (!rejectForbiddenFields(extra, 'extra', forbiddenExtraFields)) return
+    if (!rejectForbiddenFields(credentials, 'credentials', forbiddenCredentialFields)) return false
+    if (!rejectForbiddenFields(extra, 'extra', forbiddenExtraFields)) return false
 
     if (openaiPassthrough.value) {
       extra.openai_passthrough = true
@@ -803,13 +815,19 @@ const save = async () => {
       extra: Object.keys(extra).length > 0 ? extra : undefined
     })
     hydrate(updated)
-    appStore.showSuccess(t('admin.accounts.openAIOAuthImportDefaultsSaved'))
+    if (!options.silentSuccess) {
+      appStore.showSuccess(t('admin.accounts.openAIOAuthImportDefaultsSaved'))
+    }
+    return true
   } catch (error: any) {
     appStore.showError(error?.message || t('admin.accounts.openAIOAuthImportDefaultsSaveFailed'))
+    return false
   } finally {
     saving.value = false
   }
 }
+
+defineExpose({ save })
 
 onMounted(() => {
   void load()

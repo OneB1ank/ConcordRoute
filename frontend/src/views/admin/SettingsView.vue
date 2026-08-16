@@ -460,7 +460,7 @@
               <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
                 <button
                   type="button"
-                  @click="saveOpenAI403CooldownSettings"
+                  @click="saveOpenAI403CooldownSettings()"
                   :disabled="openAI403CooldownSaving"
                   class="btn btn-primary btn-sm"
                 >
@@ -495,7 +495,7 @@
           v-show="activeGatewaySection === 'openai'"
           data-testid="gateway-card-openai-oauth-defaults"
         >
-          <OpenAIOAuthImportDefaultsSettings />
+          <OpenAIOAuthImportDefaultsSettings ref="openAIOAuthImportDefaultsRef" />
         </div>
 
         <!-- Rate Limit Cooldown (429) Settings -->
@@ -8845,6 +8845,10 @@ const overloadCooldownForm = reactive({
 // OpenAI OAuth 403 Cooldown 状态
 const openAI403CooldownLoading = ref(true);
 const openAI403CooldownSaving = ref(false);
+const openAI403CooldownLoaded = ref(false);
+const openAIOAuthImportDefaultsRef = ref<
+  InstanceType<typeof OpenAIOAuthImportDefaultsSettings> | null
+>(null);
 const openAI403CooldownForm = reactive({
   enabled: true,
   cooldown_minutes: 10,
@@ -11384,10 +11388,21 @@ async function saveSettings() {
     }
     // Save web search emulation config separately (errors handled internally)
     const wsOk = await saveWebSearchConfig();
+    let openAISpecificOk = true;
+    if (activeTab.value === "gateway" && activeGatewaySection.value === "openai") {
+      const cooldownOk = await saveOpenAI403CooldownSettings({
+        silentSuccess: true,
+      });
+      const oauthDefaultsOk =
+        (await openAIOAuthImportDefaultsRef.value?.save({
+          silentSuccess: true,
+        })) ?? false;
+      openAISpecificOk = cooldownOk && oauthDefaultsOk;
+    }
     // Refresh cached settings so sidebar/header update immediately
     await appStore.fetchPublicSettings(true);
     await adminSettingsStore.fetch(true);
-    if (wsOk) {
+    if (wsOk && openAISpecificOk) {
       appStore.showSuccess(t("admin.settings.settingsSaved"));
     }
   } catch (error: unknown) {
@@ -11605,9 +11620,11 @@ async function saveOverloadCooldownSettings() {
 
 async function loadOpenAI403CooldownSettings() {
   openAI403CooldownLoading.value = true;
+  openAI403CooldownLoaded.value = false;
   try {
     const settings = await adminAPI.settings.getOpenAI403CooldownSettings();
     Object.assign(openAI403CooldownForm, settings);
+    openAI403CooldownLoaded.value = true;
   } catch (_error: unknown) {
     // Silent fail - settings will use defaults
   } finally {
@@ -11615,7 +11632,18 @@ async function loadOpenAI403CooldownSettings() {
   }
 }
 
-async function saveOpenAI403CooldownSettings() {
+interface OpenAISpecificSaveOptions {
+  silentSuccess?: boolean;
+}
+
+async function saveOpenAI403CooldownSettings(
+  options: OpenAISpecificSaveOptions = {},
+): Promise<boolean> {
+  if (!openAI403CooldownLoaded.value || openAI403CooldownLoading.value) {
+    appStore.showError(t("admin.settings.openAI403Cooldown.saveFailed"));
+    return false;
+  }
+
   openAI403CooldownSaving.value = true;
   try {
     const updated = await adminAPI.settings.updateOpenAI403CooldownSettings({
@@ -11626,7 +11654,10 @@ async function saveOpenAI403CooldownSettings() {
       threshold_window_minutes: openAI403CooldownForm.threshold_window_minutes,
     });
     Object.assign(openAI403CooldownForm, updated);
-    appStore.showSuccess(t("admin.settings.openAI403Cooldown.saved"));
+    if (!options.silentSuccess) {
+      appStore.showSuccess(t("admin.settings.openAI403Cooldown.saved"));
+    }
+    return true;
   } catch (error: unknown) {
     appStore.showError(
       extractApiErrorMessage(
@@ -11634,6 +11665,7 @@ async function saveOpenAI403CooldownSettings() {
         t("admin.settings.openAI403Cooldown.saveFailed"),
       ),
     );
+    return false;
   } finally {
     openAI403CooldownSaving.value = false;
   }

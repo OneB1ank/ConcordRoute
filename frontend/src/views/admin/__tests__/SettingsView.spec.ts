@@ -1765,6 +1765,43 @@ describe("admin SettingsView payment visible method controls", () => {
     ).toBe(false);
   });
 
+  it("persists every OpenAI card through the page-level save action", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    await openGatewaySection(wrapper, "openai");
+
+    await wrapper
+      .get('[data-testid="openai-oauth-default-tls-fingerprint-toggle"]')
+      .setValue(true);
+    await flushPromises();
+    await wrapper
+      .get('[data-testid="openai-oauth-default-tls-fingerprint-profile"]')
+      .setValue("9");
+
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateOpenAI403CooldownSettings).toHaveBeenCalledWith({
+      enabled: true,
+      cooldown_minutes: 10,
+      error_on_threshold_enabled: true,
+      threshold_count: 3,
+      threshold_window_minutes: 180,
+    });
+    expect(updateOpenAIOAuthImportDefaults).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extra: expect.objectContaining({
+          enable_tls_fingerprint: true,
+          tls_fingerprint_profile_id: 9,
+        }),
+      }),
+    );
+    expect(showSuccess).toHaveBeenCalledWith("admin.settings.settingsSaved");
+  });
+
   it("supports keyboard navigation between gateway platform sections", async () => {
     const wrapper = mountView();
 
