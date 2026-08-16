@@ -13,7 +13,8 @@ func SupportsHTTP2(profile *Profile) bool {
 		return false
 	}
 	for _, protocol := range effectiveALPNProtocols(profile) {
-		if strings.EqualFold(strings.TrimSpace(protocol), "h2") {
+		// ALPN 协议标识区分大小写，只有字面量 h2 才能协商 HTTP/2。
+		if strings.TrimSpace(protocol) == "h2" {
 			return true
 		}
 	}
@@ -30,10 +31,10 @@ func HTTP1OnlyProfile(profile *Profile) *Profile {
 	hasHTTP1 := false
 	for _, protocol := range effectiveALPNProtocols(profile) {
 		trimmed := strings.TrimSpace(protocol)
-		if trimmed == "" || strings.EqualFold(trimmed, "h2") {
+		if trimmed == "" || trimmed == "h2" {
 			continue
 		}
-		if strings.EqualFold(trimmed, "http/1.1") {
+		if trimmed == "http/1.1" {
 			hasHTTP1 = true
 		}
 		protocols = append(protocols, protocol)

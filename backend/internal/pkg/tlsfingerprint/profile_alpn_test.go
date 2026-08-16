@@ -13,6 +13,7 @@ func TestSupportsHTTP2(t *testing.T) {
 		{name: "nil profile uses http1 default", profile: nil, want: false},
 		{name: "empty profile uses http1 default", profile: &Profile{}, want: false},
 		{name: "explicit h2", profile: &Profile{ALPNProtocols: []string{"h2", "http/1.1"}}, want: true},
+		{name: "alpn is case sensitive", profile: &Profile{ALPNProtocols: []string{"H2", "http/1.1"}}, want: false},
 		{name: "missing alpn extension", profile: &Profile{ALPNProtocols: []string{"h2"}, Extensions: []uint16{0, 10, 43}}, want: false},
 	}
 
