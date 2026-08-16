@@ -117,7 +117,14 @@ func (p *TLSFingerprintProfile) Validate() error {
 			}
 		}
 
-		if containsUint16(p.SupportedVersions, 0x0304) {
+		// supported_versions 留空时，运行时会使用 TLS 1.3 + TLS 1.2 默认值。
+		// 自定义扩展显式包含 43 时，同样要按 TLS 1.3 ClientHello 校验依赖，
+		// 避免配置保存成功后才在握手阶段暴露缺少 key_share/signature_algorithms。
+		tls13Enabled := containsUint16(p.SupportedVersions, 0x0304)
+		if len(p.SupportedVersions) == 0 {
+			_, tls13Enabled = extensions[43]
+		}
+		if tls13Enabled {
 			for _, required := range []uint16{43, 51, 13} {
 				if _, exists := extensions[required]; !exists {
 					return &ValidationError{

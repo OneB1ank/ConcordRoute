@@ -351,4 +351,18 @@ describe('TLSFingerprintProfilesModal', () => {
       extensions: [16]
     }))
   })
+
+  it('使用默认 TLS 1.3 版本时拒绝缺少 key_share 的自定义扩展', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+
+    await wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]').setValue('43, 13')
+    const submitButton = wrapper.findAll('button').find(button => button.text().includes('common.create'))
+    await submitButton!.trigger('click')
+    await flushPromises()
+
+    expect(createProfileMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.form.tls13RequiredExtension')
+  })
 })

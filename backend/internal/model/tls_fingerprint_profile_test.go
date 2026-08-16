@@ -40,6 +40,7 @@ func TestTLSFingerprintProfileValidateRejectsInvalidValuesEarly(t *testing.T) {
 		{name: "unsupported version", profile: TLSFingerprintProfile{Name: "test", SupportedVersions: []uint16{0x0305}}, field: "supported_versions"},
 		{name: "missing alpn extension", profile: TLSFingerprintProfile{Name: "test", ALPNProtocols: []string{"h2"}, Extensions: []uint16{0, 43, 51, 13}}, field: "extensions"},
 		{name: "missing tls13 key share", profile: TLSFingerprintProfile{Name: "test", SupportedVersions: []uint16{0x0304}, Extensions: []uint16{43, 13}}, field: "extensions"},
+		{name: "default tls13 missing key share", profile: TLSFingerprintProfile{Name: "test", Extensions: []uint16{43, 13}}, field: "extensions"},
 	}
 
 	for _, test := range tests {

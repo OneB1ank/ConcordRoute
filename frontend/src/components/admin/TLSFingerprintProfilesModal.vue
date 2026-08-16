@@ -1000,7 +1000,11 @@ const validateTLSProfileRelations = (data: {
       throw new Error(t('admin.tlsFingerprintProfiles.form.requiredExtension', { field, extension }))
     }
   }
-  if (data.supported_versions.includes(0x0304)) {
+  // supported_versions 留空时，后端运行时默认启用 TLS 1.3 + TLS 1.2。
+  // 自定义扩展包含 43 时，前端也必须提前检查 TLS 1.3 的必要扩展。
+  const tls13Enabled = data.supported_versions.includes(0x0304) ||
+    (data.supported_versions.length === 0 && extensionSet.has(43))
+  if (tls13Enabled) {
     for (const extension of [43, 51, 13]) {
       if (!extensionSet.has(extension)) {
         throw new Error(t('admin.tlsFingerprintProfiles.form.tls13RequiredExtension', { extension }))
