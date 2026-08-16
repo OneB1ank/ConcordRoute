@@ -96,7 +96,7 @@ func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredSOCKSProxy(t *testing.T) {
 	require.Equal(t, int64(1), upstreamCalls.Load())
 }
 
-func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
+func TestTLSFingerprintHTTPSProxyKeepsCustomTLSDialer(t *testing.T) {
 	proxyURL, err := url.Parse("https://user:pass@proxy.example:8443")
 	require.NoError(t, err)
 	roundTripper, err := buildUpstreamTransportWithTLSFingerprint(
@@ -108,12 +108,8 @@ func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
 	require.NoError(t, err)
 	transport, ok := roundTripper.(*http.Transport)
 	require.True(t, ok)
-	require.NotNil(t, transport.Proxy)
-	require.Nil(t, transport.DialTLSContext)
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "upstream.example"}}
-	resolved, err := transport.Proxy(req)
-	require.NoError(t, err)
-	require.Equal(t, "https://user:pass@proxy.example:8443", resolved.String())
+	require.Nil(t, transport.Proxy, "CONNECT 与 HTTPS 代理握手由指纹拨号器统一处理")
+	require.NotNil(t, transport.DialTLSContext, "HTTPS 代理不得静默退回标准 Go TLS")
 }
 
 func startTestSOCKS5Proxy(t *testing.T) (string, *atomic.Int64) {

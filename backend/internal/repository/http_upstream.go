@@ -1379,8 +1379,7 @@ func enableOpenAIHTTP2KeepAlive(transport *http.Transport) (*http2.Transport, er
 //
 // 代理类型处理:
 //   - nil/空: 直连，使用 TLSFingerprintDialer
-//   - http: HTTP 代理，使用 HTTPProxyDialer（CONNECT 隧道 + utls 握手）
-//   - https: 指纹拨号器不支持 TLS 代理，回退普通 transport
+//   - http/https: HTTP(S) 代理，使用 HTTPProxyDialer（代理 TLS + CONNECT 隧道 + uTLS 握手）
 //   - socks5: SOCKS5 代理，使用 SOCKS5ProxyDialer（SOCKS5 隧道 + utls 握手）
 func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile, protocolMode string) (http.RoundTripper, error) {
 	useHTTP2 := protocolMode == upstreamProtocolModeOpenAIH2 && tlsfingerprint.SupportsHTTP2(profile)
@@ -1409,10 +1408,7 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 			slog.Debug("tls_fingerprint_transport_socks5", "proxy", proxyURL.Host)
 			socks5Dialer := tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL)
 			dialTLSContext = socks5Dialer.DialTLSContext
-		case "https":
-			// 指纹拨号器发送明文 CONNECT 前导，无法与 HTTPS 代理建 TLS，因此保留普通代理路由。
-			return buildUpstreamTransport(settings, proxyURL, upstreamProtocolModeDefault)
-		case "http":
+		case "http", "https":
 			// HTTP/HTTPS 代理：使用 HTTPProxyDialer（CONNECT 隧道）
 			slog.Debug("tls_fingerprint_transport_http_connect", "proxy", proxyURL.Host)
 			httpDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
