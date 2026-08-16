@@ -20,6 +20,7 @@ type AdminHandlers struct {
 	QoderOAuth            *admin.QoderOAuthHandler
 	GrokOAuth             *admin.GrokOAuthHandler
 	Proxy                 *admin.ProxyHandler
+	ClashProxy            *admin.ClashProxyHandler
 	Redeem                *admin.RedeemHandler
 	Promo                 *admin.PromoHandler
 	Setting               *admin.SettingHandler

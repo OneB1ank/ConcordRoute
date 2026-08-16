@@ -11,6 +11,7 @@ ARG GOLANG_IMAGE=golang:1.26.6-alpine
 ARG ALPINE_IMAGE=alpine:3.20
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
+ARG MIHOMO_VERSION=1.19.30
 
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
@@ -75,6 +76,18 @@ RUN VERSION_VALUE="${VERSION}" && \
     -o /app/sub2api \
     ./cmd/server
 
+FROM ${ALPINE_IMAGE} AS mihomo-downloader
+ARG MIHOMO_VERSION
+RUN apk add --no-cache ca-certificates wget && \
+    case "$(apk --print-arch)" in \
+      x86_64) MIHOMO_ARCH=amd64; MIHOMO_SHA256=cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84 ;; \
+      aarch64) MIHOMO_ARCH=arm64; MIHOMO_SHA256=58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069 ;; \
+      *) echo "unsupported mihomo architecture" >&2; exit 1 ;; \
+    esac && \
+    wget -O /tmp/mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v${MIHOMO_VERSION}/mihomo-linux-${MIHOMO_ARCH}-v${MIHOMO_VERSION}.gz" && \
+    echo "${MIHOMO_SHA256}  /tmp/mihomo.gz" | sha256sum -c - && \
+    gunzip /tmp/mihomo.gz && chmod 0755 /tmp/mihomo && mv /tmp/mihomo /mihomo
+
 # -----------------------------------------------------------------------------
 # Stage 3: Final Runtime Image
 # -----------------------------------------------------------------------------
@@ -102,6 +115,7 @@ WORKDIR /app
 
 # 从构建阶段复制二进制及运行时兜底资源
 COPY --from=backend-builder /app/sub2api /app/sub2api
+COPY --from=mihomo-downloader /mihomo /usr/local/bin/mihomo
 COPY --from=backend-builder --chown=sub2api:sub2api /app/backend/resources /app/resources
 
 # Create data directory

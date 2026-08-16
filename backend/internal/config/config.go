@@ -96,6 +96,7 @@ type Config struct {
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
+	ClashProxy              ClashProxyConfig              `mapstructure:"clash_proxy"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	Team                    TeamConfig                    `mapstructure:"team"`
@@ -167,6 +168,17 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+}
+
+// ClashProxyConfig 控制内置 mihomo 运行时及订阅下载边界。
+type ClashProxyConfig struct {
+	Enabled                   bool   `mapstructure:"enabled"`
+	MihomoBinaryPath          string `mapstructure:"mihomo_binary_path"`
+	RuntimeDir                string `mapstructure:"runtime_dir"`
+	StartupTimeoutSeconds     int    `mapstructure:"startup_timeout_seconds"`
+	SubscriptionMaxBytes      int64  `mapstructure:"subscription_max_bytes"`
+	AllowInsecureSubscription bool   `mapstructure:"allow_insecure_subscription"`
+	AllowPrivateSubscription  bool   `mapstructure:"allow_private_subscription"`
 }
 
 type IdempotencyConfig struct {
@@ -2483,6 +2495,15 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
+
+	// Clash/mihomo 本机代理运行时。
+	viper.SetDefault("clash_proxy.enabled", true)
+	viper.SetDefault("clash_proxy.mihomo_binary_path", "/usr/local/bin/mihomo")
+	viper.SetDefault("clash_proxy.runtime_dir", "/app/data/clash-proxy")
+	viper.SetDefault("clash_proxy.startup_timeout_seconds", 12)
+	viper.SetDefault("clash_proxy.subscription_max_bytes", int64(2<<20))
+	viper.SetDefault("clash_proxy.allow_insecure_subscription", false)
+	viper.SetDefault("clash_proxy.allow_private_subscription", false)
 
 	// sticky escape 使用实际默认值，保留显式 error rate 0，并让显式 TTFT 0
 	// 进入配置校验。配置文件或环境变量仍可覆盖这些值。

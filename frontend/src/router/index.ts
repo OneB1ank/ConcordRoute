@@ -569,6 +569,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/proxies/clash',
+    name: 'AdminClashProxy',
+    component: () => import('@/views/admin/ClashProxyView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Clash Proxy',
+      titleKey: 'admin.clashProxy.title',
+      descriptionKey: 'admin.clashProxy.description'
+    }
+  },
+  {
     path: '/admin/redeem',
     name: 'AdminRedeem',
     component: () => import('@/views/admin/RedeemView.vue'),

@@ -534,6 +534,25 @@ func registerGrokOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	proxies := admin.Group("/proxies")
 	{
+		clash := proxies.Group("/clash")
+		{
+			clash.GET("/nodes", h.Admin.ClashProxy.ListNodes)
+			clash.POST("/nodes", h.Admin.ClashProxy.CreateNode)
+			clash.POST("/nodes/import", h.Admin.ClashProxy.ImportNodes)
+			clash.DELETE("/nodes/:id", h.Admin.ClashProxy.DeleteNode)
+			clash.GET("/profiles", h.Admin.ClashProxy.ListProfiles)
+			clash.POST("/profiles", h.Admin.ClashProxy.CreateProfile)
+			clash.PUT("/profiles/:id", h.Admin.ClashProxy.UpdateProfile)
+			clash.POST("/profiles/:id/start", h.Admin.ClashProxy.StartProfile)
+			clash.POST("/profiles/:id/stop", h.Admin.ClashProxy.StopProfile)
+			clash.POST("/profiles/:id/restart", h.Admin.ClashProxy.RestartProfile)
+			clash.POST("/profiles/:id/test", h.Admin.ClashProxy.TestProfile)
+			clash.GET("/profiles/:id/runtime", h.Admin.ClashProxy.GetProfileRuntime)
+			clash.GET("/runtime/status", h.Admin.ClashProxy.GetRuntimeStatus)
+			clash.GET("/bindings", h.Admin.ClashProxy.ListBindings)
+			clash.POST("/bindings", h.Admin.ClashProxy.CreateBinding)
+			clash.DELETE("/bindings/:id", h.Admin.ClashProxy.DeleteBinding)
+		}
 		proxies.GET("", h.Admin.Proxy.List)
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
 		// 代理导出泄露账号密码原文——要求 step-up 2FA

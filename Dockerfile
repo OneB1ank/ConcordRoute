@@ -14,6 +14,7 @@ ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
 ARG NPM_CONFIG_REGISTRY=
+ARG MIHOMO_VERSION=1.19.30
 
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
@@ -97,7 +98,23 @@ RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
 FROM ${POSTGRES_IMAGE} AS pg-client
 
 # -----------------------------------------------------------------------------
-# Stage 4: Final Runtime Image
+# Stage 4: mihomo（按目标架构下载并校验固定摘要）
+# -----------------------------------------------------------------------------
+FROM --platform=${BUILDPLATFORM} ${ALPINE_IMAGE} AS mihomo-downloader
+ARG TARGETARCH
+ARG MIHOMO_VERSION
+RUN apk add --no-cache ca-certificates wget && \
+    case "${TARGETARCH}" in \
+      amd64) MIHOMO_ARCH=amd64; MIHOMO_SHA256=cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84 ;; \
+      arm64) MIHOMO_ARCH=arm64; MIHOMO_SHA256=58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069 ;; \
+      *) echo "unsupported mihomo architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    wget -O /tmp/mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v${MIHOMO_VERSION}/mihomo-linux-${MIHOMO_ARCH}-v${MIHOMO_VERSION}.gz" && \
+    echo "${MIHOMO_SHA256}  /tmp/mihomo.gz" | sha256sum -c - && \
+    gunzip /tmp/mihomo.gz && chmod 0755 /tmp/mihomo && mv /tmp/mihomo /mihomo
+
+# -----------------------------------------------------------------------------
+# Stage 5: Final Runtime Image
 # -----------------------------------------------------------------------------
 FROM ${ALPINE_IMAGE}
 
@@ -124,6 +141,7 @@ RUN apk add --no-cache \
 COPY --from=pg-client /usr/local/bin/pg_dump /usr/local/bin/pg_dump
 COPY --from=pg-client /usr/local/bin/psql /usr/local/bin/psql
 COPY --from=pg-client /usr/local/lib/libpq.so.5* /usr/local/lib/
+COPY --from=mihomo-downloader /mihomo /usr/local/bin/mihomo
 
 # Create non-root user
 RUN addgroup -g 1000 sub2api && \

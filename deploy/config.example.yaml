@@ -1272,3 +1272,19 @@ update:
   # Leave empty for direct connection (recommended for overseas servers)
   # 留空表示直连（适用于海外服务器）
   proxy_url: ""
+
+# =============================================================================
+# Clash / mihomo Proxy Runtime (Clash 代理运行时)
+# =============================================================================
+clash_proxy:
+  # Docker release images include mihomo at this path.
+  # Docker 发布镜像已内置此路径的 mihomo。
+  enabled: true
+  mihomo_binary_path: "/usr/local/bin/mihomo"
+  runtime_dir: "/app/data/clash-proxy"
+  startup_timeout_seconds: 12
+  subscription_max_bytes: 2097152
+  # Keep both disabled unless private subscriptions are intentionally required.
+  # 默认仅允许公网 HTTPS 订阅；确需内网订阅时再显式开启。
+  allow_insecure_subscription: false
+  allow_private_subscription: false
