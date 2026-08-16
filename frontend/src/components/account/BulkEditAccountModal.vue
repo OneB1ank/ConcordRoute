@@ -1826,7 +1826,7 @@ const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const enableCodexFingerprintMode = ref(false)
-const codexFingerprintMode = ref<CodexFingerprintMode>('session')
+const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -2634,7 +2634,7 @@ const resetBulkEditFormState = () => {
   autoPause7dThreshold.value = null
   autoPause5hDisabled.value = false
   autoPause7dDisabled.value = false
-  codexFingerprintMode.value = 'session'
+  codexFingerprintMode.value = 'cockpit'
   openAICompactMode.value = 'auto'
   openAINativeCompactionV2Mode.value = 'auto'
   openAICompactModelMappings.value = []

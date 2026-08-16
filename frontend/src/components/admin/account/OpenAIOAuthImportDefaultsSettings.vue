@@ -62,6 +62,20 @@
               </div>
               <Toggle v-model="openaiPassthrough" />
             </div>
+            <div class="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div class="min-w-0">
+                <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
+                </p>
+              </div>
+              <Select
+                v-model="codexFingerprintMode"
+                :options="codexFingerprintModeOptions"
+                class="w-full sm:w-64"
+                data-testid="openai-oauth-default-codex-fingerprint-mode"
+              />
+            </div>
             <CodexImageToolModeSelector
               v-model="codexImageToolMode"
               test-id-prefix="openai-oauth-default-codex-image-tool"
@@ -365,6 +379,7 @@ import type { OpenAICompactMode, OpenAIOAuthClientPolicy } from '@/types'
 
 type AutoPauseDefault = 'unset' | 'true' | 'false'
 type NumberInputValue = string | number
+type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 interface ModelMapping {
   from: string
   to: string
@@ -381,6 +396,7 @@ const defaultModelMappings = ref<ModelMapping[]>([])
 const credentialsJson = ref('{}')
 const extraJson = ref('{}')
 const openaiPassthrough = ref(false)
+const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 const codexCLIOnlyAllowClaudeCode = ref(false)
@@ -432,6 +448,7 @@ const structuredExtraKeys = [
   'openai_oauth_client_policy',
   'codex_cli_only',
   'codex_cli_only_allowed_clients',
+  'codex_fingerprint_mode',
   CODEX_IMAGE_GENERATION_BRIDGE_KEY,
   LEGACY_CODEX_IMAGE_GENERATION_BRIDGE_KEY,
   CODEX_IMAGE_GENERATION_POLICY_KEY,
@@ -465,6 +482,14 @@ const openAIOAuthClientPolicyOptions = computed<SelectOption[]>(() => [
     value: 'tls_router_matched_only',
     label: t('admin.accounts.openai.clientPolicyTLSRouterMatchedOnly')
   }
+])
+
+const codexFingerprintModeOptions = computed<SelectOption[]>(() => [
+  { value: 'cockpit', label: t('admin.accounts.openai.codexFingerprintCockpit') },
+  { value: 'session', label: t('admin.accounts.openai.codexFingerprintSession') },
+  { value: 'device', label: t('admin.accounts.openai.codexFingerprintDevice') },
+  { value: 'full', label: t('admin.accounts.openai.codexFingerprintFull') },
+  { value: 'off', label: t('admin.accounts.openai.codexFingerprintOff') }
 ])
 
 const compactModeOptions = computed<SelectOption[]>(() => [
@@ -598,6 +623,12 @@ const normalizeOpenAIOAuthClientPolicy = (
   return legacyCodexCLIOnly === true ? 'codex_only' : 'any'
 }
 
+const normalizeCodexFingerprintMode = (mode: unknown): CodexFingerprintMode => {
+  return mode === 'off' || mode === 'device' || mode === 'session' || mode === 'full'
+    ? mode
+    : 'cockpit'
+}
+
 const hydrate = (defaults: OpenAIOAuthImportDefaults) => {
   const account = defaults.account || {}
   form.notes = typeof account.notes === 'string' ? account.notes : ''
@@ -623,6 +654,7 @@ const hydrate = (defaults: OpenAIOAuthImportDefaults) => {
 
   const extra = { ...(defaults.extra || {}) }
   openaiPassthrough.value = extra.openai_passthrough === true || extra.openai_oauth_passthrough === true
+  codexFingerprintMode.value = normalizeCodexFingerprintMode(extra.codex_fingerprint_mode)
   codexImageToolMode.value = readCodexImageToolMode(extra)
   openAIOAuthClientPolicy.value = normalizeOpenAIOAuthClientPolicy(
     extra.openai_oauth_client_policy,
@@ -754,6 +786,7 @@ const save = async (options: SaveOptions = {}): Promise<boolean> => {
     if (openaiPassthrough.value) {
       extra.openai_passthrough = true
     }
+    extra.codex_fingerprint_mode = codexFingerprintMode.value
     if (wsMode.value !== OPENAI_WS_MODE_OFF) {
       extra.openai_oauth_responses_websockets_v2_mode = wsMode.value
       extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(wsMode.value)

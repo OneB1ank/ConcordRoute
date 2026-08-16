@@ -4309,7 +4309,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('session')
+const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -4695,6 +4695,13 @@ const applyOpenAIOAuthImportDefaultsToForm = () => {
   }
 
   const extra = defaults.extra || {}
+  const defaultFingerprintMode = extra.codex_fingerprint_mode
+  codexFingerprintMode.value = (
+    defaultFingerprintMode === 'off' ||
+    defaultFingerprintMode === 'device' ||
+    defaultFingerprintMode === 'session' ||
+    defaultFingerprintMode === 'full'
+  ) ? defaultFingerprintMode : 'cockpit'
   if (extra.openai_passthrough === true || extra.openai_oauth_passthrough === true) {
     openaiPassthroughEnabled.value = true
   }
@@ -5562,7 +5569,7 @@ const resetForm = () => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
-  codexFingerprintMode.value = 'session'
+  codexFingerprintMode.value = 'cockpit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5735,8 +5742,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.tls_fingerprint_router_id
   }
 
-  // session 是兼容旧账号的默认模式，不写入 extra；cockpit 等其它模式显式保存。
-  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'session') {
+  // Cockpit 是运行时默认模式，不重复写入；其它模式显式保存以覆盖默认值。
+  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'cockpit') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode

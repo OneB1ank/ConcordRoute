@@ -693,7 +693,7 @@ export default {
         codexCLIOnlyAllowClaudeCodeDesc:
           'Only takes effect when the switch above is on. Additionally allows requests from the Claude Code Codex plugin (exact match on originator=Claude Code) without weakening blocking of other non-official clients.',
         codexFingerprintMode: 'Codex fingerprint convergence',
-        codexFingerprintModeDesc: 'Identity convergence for shared OAuth accounts. Device + Session remains the default for existing-account compatibility; Cockpit must be selected explicitly and also stabilizes the per-conversation cache key.',
+        codexFingerprintModeDesc: 'Identity convergence for shared OAuth accounts. Cockpit is the default: it stabilizes the account device and primary session while deriving stable per-conversation threads and cache keys.',
         codexFingerprintOff: 'Off',
         codexFingerprintDevice: 'Device only',
         codexFingerprintSession: 'Device + Session',

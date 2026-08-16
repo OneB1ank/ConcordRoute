@@ -73,7 +73,7 @@ const codexFingerprintModeExtraKey = "codex_fingerprint_mode"
 const CodexFingerprintSeedExtraKey = "codex_fingerprint_seed"
 
 // GetCodexFingerprintMode 从账号 extra JSON 读取指纹收敛模式。
-// 未设置、空值或非法值保持历史 session 行为；cockpit 仅在账号显式选择后启用。
+// 未设置、空值或非法值使用 Cockpit，统一收敛设备、会话和对话缓存键。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	if a == nil || !a.IsOpenAIOAuth() {
 		return codexFingerprintOff
@@ -83,7 +83,7 @@ func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	case codexFingerprintOff, codexFingerprintDevice, codexFingerprintSession, codexFingerprintCockpit, codexFingerprintFull:
 		return codexFingerprintMode(raw)
 	default:
-		return codexFingerprintSession
+		return codexFingerprintCockpit
 	}
 }
 

@@ -716,6 +716,9 @@ func DefaultOpenAIOAuthImportDefaults() *OpenAIOAuthImportDefaults {
 				"gpt-5.5",
 			},
 		},
+		Extra: map[string]any{
+			"codex_fingerprint_mode": string(codexFingerprintCockpit),
+		},
 	}
 }
 

@@ -698,6 +698,17 @@ func fillOpenAIOAuthImportDefaults(settings *OpenAIOAuthImportDefaults) *OpenAIO
 			}
 		}
 	}
+	if len(defaults.Extra) > 0 {
+		if settings.Extra == nil {
+			settings.Extra = map[string]any{}
+		}
+		for key, value := range defaults.Extra {
+			// 旧模板缺少指纹字段时补齐 Cockpit；显式选择继续保持。
+			if _, exists := settings.Extra[key]; !exists {
+				settings.Extra[key] = value
+			}
+		}
+	}
 	return settings
 }
 
