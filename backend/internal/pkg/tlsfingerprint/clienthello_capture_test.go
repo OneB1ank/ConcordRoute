@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	stdtls "crypto/tls"
+	"crypto/x509"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -59,13 +60,13 @@ func TestHTTPSProxyTunnelPreservesTargetUTLSProfile(t *testing.T) {
 			return
 		}
 
-		header, err := rw.Reader.Peek(5)
+		header, err := rw.Peek(5)
 		if err != nil {
 			resultCh <- captureResult{err: err}
 			return
 		}
 		recordLen := int(header[3])<<8 | int(header[4])
-		record, err := rw.Reader.Peek(5 + recordLen)
+		record, err := rw.Peek(5 + recordLen)
 		if err != nil {
 			resultCh <- captureResult{err: err}
 			return
@@ -79,7 +80,9 @@ func TestHTTPSProxyTunnelPreservesTargetUTLSProfile(t *testing.T) {
 	proxyURL, err := url.Parse(proxyServer.URL)
 	require.NoError(t, err)
 	dialer := NewHTTPProxyDialer(profile, proxyURL)
-	dialer.proxyTLSConfig = &stdtls.Config{InsecureSkipVerify: true} // 测试代理使用临时自签证书。
+	proxyRoots := x509.NewCertPool()
+	proxyRoots.AddCert(proxyServer.Certificate())
+	dialer.proxyTLSConfig = &stdtls.Config{RootCAs: proxyRoots, MinVersion: stdtls.VersionTLS12}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

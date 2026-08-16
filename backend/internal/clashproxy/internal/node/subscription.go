@@ -185,23 +185,6 @@ func lookupSubscriptionIPs(ctx context.Context, host string, resolveIP func(cont
 	return ips, nil
 }
 
-func isBlockedSubscriptionHost(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	if host == "" {
-		return true
-	}
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "metadata.google.internal" {
-		return true
-	}
-	if strings.HasSuffix(host, ".metadata.google.internal") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return isBlockedSubscriptionIP(ip)
-	}
-	return false
-}
-
 func isMetadataSubscriptionHost(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 	return host == "metadata.google.internal" || strings.HasSuffix(host, ".metadata.google.internal")

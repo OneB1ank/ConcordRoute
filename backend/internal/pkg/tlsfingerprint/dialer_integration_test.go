@@ -23,19 +23,24 @@ import (
 func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
-		// Check for common network/TLS errors that indicate external service issues
-		errStr := err.Error()
-		if strings.Contains(errStr, "certificate has expired") ||
-			strings.Contains(errStr, "certificate is not yet valid") ||
-			strings.Contains(errStr, "connection refused") ||
-			strings.Contains(errStr, "connection reset") ||
-			strings.Contains(errStr, "broken pipe") ||
-			strings.Contains(errStr, "EOF") ||
-			strings.Contains(errStr, "no such host") ||
-			strings.Contains(errStr, "network is unreachable") ||
-			strings.Contains(errStr, "timeout") ||
-			strings.Contains(errStr, "deadline exceeded") {
-			t.Skipf("skipping test: external service unavailable: %v", err)
+		// 同时覆盖 Unix 的 connection refused 与 Windows connectex/actively refused 文案。
+		errText := strings.ToLower(err.Error())
+		for _, marker := range []string{
+			"certificate has expired",
+			"certificate is not yet valid",
+			"connection refused",
+			"actively refused",
+			"connection reset",
+			"broken pipe",
+			"eof",
+			"no such host",
+			"network is unreachable",
+			"timeout",
+			"deadline exceeded",
+		} {
+			if strings.Contains(errText, marker) {
+				t.Skipf("skipping test: external service unavailable: %v", err)
+			}
 		}
 		t.Fatalf("failed to get fingerprint: %v", err)
 	}

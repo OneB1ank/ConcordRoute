@@ -95,9 +95,13 @@ func TestCompileMapsHTTPSAndShadowsocksToMihomoTypes(t *testing.T) {
 
 	var doc map[string]any
 	require.NoError(t, yaml.Unmarshal(compiled, &doc))
-	proxies := doc["proxies"].([]any)
-	httpsProxy := proxies[0].(map[string]any)
-	ssProxy := proxies[1].(map[string]any)
+	proxies, ok := doc["proxies"].([]any)
+	require.True(t, ok)
+	require.Len(t, proxies, 2)
+	httpsProxy, ok := proxies[0].(map[string]any)
+	require.True(t, ok)
+	ssProxy, ok := proxies[1].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "http", httpsProxy["type"])
 	require.Equal(t, true, httpsProxy["tls"])
 	require.Equal(t, "ss", ssProxy["type"])
