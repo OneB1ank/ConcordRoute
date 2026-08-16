@@ -21,6 +21,8 @@ import (
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	clearGrokResponsesClientToolMapping(c)
 	clearOpenAIResponsesNamespaceNames(c)
+	// 每次账号尝试先清空响应身份映射，故障转移不得沿用上一账号的收敛 ID。
+	stageCodexFingerprintIDs(c, nil)
 	startTime := time.Now()
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
@@ -442,11 +444,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			fingerprintIDs = resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded)
 			// Messages 兼容桥会把 prompt_cache_key 从 Body 移到 Header；Cockpit 模式仍需对该键做账号级稳定派生。
 			if fingerprintIDs != nil && fingerprintIDs.mode == codexFingerprintCockpit && fingerprintIDs.promptCacheKey == "" && codexResult.PromptCacheKey != "" {
+				fingerprintIDs.originalPromptCacheKey = strings.TrimSpace(codexResult.PromptCacheKey)
 				fingerprintIDs.promptCacheKey = resolveConvergedPromptCacheKey(fingerprintAccount, codexResult.PromptCacheKey)
 			}
 			if applyCodexFingerprintClientMetadata(decoded, fingerprintIDs) {
 				markDecodedModified()
 			}
+			stageCodexFingerprintIDs(c, fingerprintIDs)
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel

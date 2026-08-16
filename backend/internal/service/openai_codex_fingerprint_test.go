@@ -690,3 +690,76 @@ func TestStageCodexFingerprintIDs_NilClearsPriorAttempt(t *testing.T) {
 	applyStagedCodexFingerprintHeaders(c, newTestOAuthAccount(12, nil), headers)
 	assert.Equal(t, "client-installation", headers.Get("x-codex-installation-id"))
 }
+
+func TestRestoreCodexFingerprintResponsePayload_ExposesOriginalCockpitIdentity(t *testing.T) {
+	account := newTestOAuthAccount(21, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	headers := http.Header{}
+	headers.Set("session-id", "client-session")
+	headers.Set("x-codex-installation-id", "client-installation")
+	headers.Set("thread-id", "client-thread")
+	headers.Set("x-codex-window-id", "client-window")
+	headers.Set("x-codex-turn-metadata", `{"turn_id":"client-turn","window_id":"client-window"}`)
+	body := map[string]any{
+		"prompt_cache_key": "client-cache",
+		"client_metadata": map[string]any{
+			"thread_id":               "client-thread",
+			"turn_id":                 "client-turn",
+			"x-codex-window-id":       "client-window",
+			"x-codex-installation-id": "client-installation",
+		},
+	}
+
+	ids := resolveCodexFingerprintIDsFromRequest(account, headers, body)
+	require.NotNil(t, ids)
+	require.Equal(t, "client-installation", ids.originalInstallationID)
+	require.Equal(t, "client-session", ids.originalSessionID)
+	require.Equal(t, "client-thread", ids.originalThreadID)
+	require.Equal(t, "client-turn", ids.originalTurnID)
+	require.Equal(t, "client-window", ids.originalWindowID)
+	require.Equal(t, "client-cache", ids.originalPromptCacheKey)
+
+	upstreamPayload, err := json.Marshal(map[string]any{
+		"installation_id":  ids.installationID,
+		"session_id":       ids.sessionID,
+		"thread_id":        ids.threadID,
+		"turn_id":          ids.turnID,
+		"window_id":        ids.windowID,
+		"prompt_cache_key": ids.promptCacheKey,
+	})
+	require.NoError(t, err)
+	restored := restoreCodexFingerprintResponsePayload(upstreamPayload, ids)
+
+	assert.JSONEq(t, `{
+		"installation_id":"client-installation",
+		"session_id":"client-session",
+		"thread_id":"client-thread",
+		"turn_id":"client-turn",
+		"window_id":"client-window",
+		"prompt_cache_key":"client-cache"
+	}`, string(restored))
+}
+
+func TestRestoreCodexFingerprintResponsePayload_WorksForSSEAndOffMode(t *testing.T) {
+	ids := &codexFingerprintIDs{
+		mode:              codexFingerprintCockpit,
+		originalSessionID: "client-session",
+		sessionID:         "upstream-session",
+	}
+	payload := []byte("data: {\"session_id\":\"upstream-session\"}\n\n")
+	restored := restoreCodexFingerprintResponsePayload(payload, ids)
+	assert.Equal(t, "data: {\"session_id\":\"client-session\"}\n\n", string(restored))
+	assert.Equal(t, payload, restoreCodexFingerprintResponsePayload(payload, nil))
+}
+
+func TestRestoreStagedCodexFingerprintResponsePayload_UsesCurrentFailoverAttempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	first := &codexFingerprintIDs{mode: codexFingerprintSession, originalSessionID: "client-first", sessionID: "upstream-first"}
+	second := &codexFingerprintIDs{mode: codexFingerprintSession, originalSessionID: "client-second", sessionID: "upstream-second"}
+
+	stageCodexFingerprintIDs(c, first)
+	stageCodexFingerprintIDs(c, second)
+	restored := restoreStagedCodexFingerprintResponsePayload(c, []byte(`{"session_id":"upstream-second","other":"upstream-first"}`))
+
+	assert.JSONEq(t, `{"session_id":"client-second","other":"upstream-first"}`, string(restored))
+}

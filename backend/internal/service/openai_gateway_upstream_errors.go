@@ -364,7 +364,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			contentType = "application/json"
 		}
 		MarkResponseCommitted(c)
-		c.Data(resp.StatusCode, contentType, body)
+		c.Data(resp.StatusCode, contentType, restoreStagedCodexFingerprintResponsePayload(c, body))
 		if cyberMsg == "" {
 			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
 		}
@@ -446,7 +446,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			contentType = "application/json"
 		}
 		MarkResponseCommitted(c)
-		c.Data(resp.StatusCode, contentType, body)
+		c.Data(resp.StatusCode, contentType, restoreStagedCodexFingerprintResponsePayload(c, body))
 		if upstreamMsg == "" {
 			return nil, fmt.Errorf("upstream request body too large: %d", resp.StatusCode)
 		}
@@ -471,7 +471,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			contentType = "application/json"
 		}
 		MarkResponseCommitted(c)
-		c.Data(http.StatusBadRequest, contentType, body)
+		c.Data(http.StatusBadRequest, contentType, restoreStagedCodexFingerprintResponsePayload(c, body))
 		if upstreamMsg == "" {
 			return nil, fmt.Errorf("upstream invalid request: %d", resp.StatusCode)
 		}

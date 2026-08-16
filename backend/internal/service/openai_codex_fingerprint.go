@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -27,17 +28,27 @@ func stageCodexFingerprintIDs(c *gin.Context, ids *codexFingerprintIDs) {
 	}
 }
 
+// stagedCodexFingerprintIDs 返回当前账号尝试的指纹映射。每次 Forward 开始时会先清空，
+// 因此故障转移到另一账号时不会把上一账号的反向映射带入响应。
+func stagedCodexFingerprintIDs(c *gin.Context) *codexFingerprintIDs {
+	if c == nil {
+		return nil
+	}
+	value, ok := c.Get(codexFingerprintIDsContextKey)
+	if !ok {
+		return nil
+	}
+	ids, _ := value.(*codexFingerprintIDs)
+	return ids
+}
+
 // applyStagedCodexFingerprintHeaders 将透传路径暂存的 ID 应用于出站头。账号
 // 类型校验阻止混合账号故障转移时的残留状态影响 API Key 请求。
 func applyStagedCodexFingerprintHeaders(c *gin.Context, account *Account, h http.Header) {
 	if c == nil || account == nil || account.Type != AccountTypeOAuth {
 		return
 	}
-	value, ok := c.Get(codexFingerprintIDsContextKey)
-	if !ok {
-		return
-	}
-	if ids, ok := value.(*codexFingerprintIDs); ok {
+	if ids := stagedCodexFingerprintIDs(c); ids != nil {
 		applyCodexFingerprintHeaders(h, ids)
 	}
 }
@@ -202,8 +213,12 @@ func resolveConvergedPromptCacheKey(account *Account, promptCacheKey string) str
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
 type codexFingerprintSource struct {
+	installationID       string
 	clientSessionID      string
+	originalSessionID    string
 	threadID             string
+	turnID               string
+	windowID             string
 	promptCacheKey       string
 	promptCacheKeyInBody bool
 }
@@ -212,13 +227,19 @@ type codexFingerprintSource struct {
 // 由 resolveCodexFingerprintIDs 一次性生成，同一个实例在头改写和体改写之间共享，
 // 确保所有载体中的 turn_id 等随机字段一致。
 type codexFingerprintIDs struct {
-	mode           codexFingerprintMode
-	installationID string
-	sessionID      string
-	threadID       string
-	turnID         string
-	windowID       string
-	promptCacheKey string
+	mode                   codexFingerprintMode
+	originalInstallationID string
+	installationID         string
+	originalSessionID      string
+	sessionID              string
+	originalThreadID       string
+	threadID               string
+	originalTurnID         string
+	turnID                 string
+	originalWindowID       string
+	windowID               string
+	originalPromptCacheKey string
+	promptCacheKey         string
 	// promptCacheKeyInBody 区分原请求体字段与仅用于 Header 的兼容缓存键。
 	promptCacheKeyInBody bool
 }
@@ -238,7 +259,21 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		return nil
 	}
 
-	ids := &codexFingerprintIDs{mode: mode}
+	ids := &codexFingerprintIDs{
+		mode:                   mode,
+		originalInstallationID: strings.TrimSpace(source.installationID),
+		originalSessionID:      strings.TrimSpace(source.originalSessionID),
+		originalThreadID:       strings.TrimSpace(source.threadID),
+		originalTurnID:         strings.TrimSpace(source.turnID),
+		originalWindowID:       strings.TrimSpace(source.windowID),
+		originalPromptCacheKey: strings.TrimSpace(source.promptCacheKey),
+	}
+	if ids.originalSessionID == "" {
+		ids.originalSessionID = strings.TrimSpace(source.clientSessionID)
+	}
+	if ids.originalThreadID == "" {
+		ids.originalThreadID = ids.originalSessionID
+	}
 
 	ids.installationID = resolveConvergedInstallationID(account)
 	if ids.installationID == "" {
@@ -304,10 +339,44 @@ func extractCodexStringField(values map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
+// extractCodexTurnMetadataField 从 JSON 字符串形式的回合元数据读取身份字段。
+func extractCodexTurnMetadataField(raw, key string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	return strings.TrimSpace(gjson.Get(raw, key).String())
+}
+
+// firstNonEmptyCodexValue 返回首个非空身份字段。
+func firstNonEmptyCodexValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // extractCockpitFingerprintSource 按 Cockpit 的兼容顺序从头和请求体提取身份来源。
 func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) codexFingerprintSource {
 	source := codexFingerprintSource{clientSessionID: extractClientSessionID(h)}
 	clientMetadata, _ := reqBody["client_metadata"].(map[string]any)
+	embeddedTurnMetadata := extractCodexStringField(clientMetadata, "x-codex-turn-metadata")
+	headerTurnMetadata := ""
+	if h != nil {
+		headerTurnMetadata = h.Get("x-codex-turn-metadata")
+	}
+	source.installationID = firstNonEmptyCodexValue(
+		h.Get("x-codex-installation-id"),
+		extractCodexStringField(clientMetadata, "x-codex-installation-id"),
+	)
+	source.originalSessionID = firstNonEmptyCodexValue(
+		source.clientSessionID,
+		extractCodexStringField(reqBody, "session_id"),
+		extractCodexStringField(reqBody, "session-id"),
+		extractCodexStringField(clientMetadata, "session_id"),
+	)
 
 	if source.clientSessionID == "" {
 		for _, value := range []string{
@@ -326,8 +395,24 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 
 	source.threadID = extractCodexStringField(clientMetadata, "thread_id")
 	if source.threadID == "" {
-		source.threadID = extractCodexStringField(reqBody, "thread_id")
+		source.threadID = firstNonEmptyCodexValue(
+			extractCodexStringField(reqBody, "thread_id"),
+			h.Get("thread-id"),
+			h.Get("x-client-request-id"),
+		)
 	}
+	source.turnID = firstNonEmptyCodexValue(
+		extractCodexStringField(clientMetadata, "turn_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "turn_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "turn_id"),
+	)
+	source.windowID = firstNonEmptyCodexValue(
+		extractCodexStringField(clientMetadata, "x-codex-window-id"),
+		extractCodexStringField(reqBody, "window_id"),
+		h.Get("x-codex-window-id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "window_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "window_id"),
+	)
 	source.promptCacheKey = extractCodexStringField(reqBody, "prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
 	return source
@@ -340,6 +425,21 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 	read := func(path string) string {
 		return strings.TrimSpace(gjson.GetBytes(body, path).String())
 	}
+	embeddedTurnMetadata := read("client_metadata.x-codex-turn-metadata")
+	headerTurnMetadata := ""
+	if h != nil {
+		headerTurnMetadata = h.Get("x-codex-turn-metadata")
+	}
+	source.installationID = firstNonEmptyCodexValue(
+		h.Get("x-codex-installation-id"),
+		read("client_metadata.x-codex-installation-id"),
+	)
+	source.originalSessionID = firstNonEmptyCodexValue(
+		source.clientSessionID,
+		read("session_id"),
+		read("session-id"),
+		read("client_metadata.session_id"),
+	)
 
 	if source.clientSessionID == "" {
 		for _, value := range []string{
@@ -358,8 +458,20 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 
 	source.threadID = read("client_metadata.thread_id")
 	if source.threadID == "" {
-		source.threadID = read("thread_id")
+		source.threadID = firstNonEmptyCodexValue(read("thread_id"), h.Get("thread-id"), h.Get("x-client-request-id"))
 	}
+	source.turnID = firstNonEmptyCodexValue(
+		read("client_metadata.turn_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "turn_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "turn_id"),
+	)
+	source.windowID = firstNonEmptyCodexValue(
+		read("client_metadata.x-codex-window-id"),
+		read("window_id"),
+		h.Get("x-codex-window-id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "window_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "window_id"),
+	)
 	source.promptCacheKey = read("prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
 	return source
@@ -386,14 +498,16 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 	if mode == codexFingerprintOff {
 		return nil
 	}
-	if mode == codexFingerprintCockpit {
-		var reqBody map[string]any
-		if len(reqBodies) > 0 {
-			reqBody = reqBodies[0]
-		}
-		return resolveCodexFingerprintIDsWithSource(account, extractCockpitFingerprintSource(clientHeaders, reqBody), mode)
+	var reqBody map[string]any
+	if len(reqBodies) > 0 {
+		reqBody = reqBodies[0]
 	}
-	return resolveCodexFingerprintIDs(account, extractClientSessionID(clientHeaders), mode)
+	source := extractCockpitFingerprintSource(clientHeaders, reqBody)
+	if mode != codexFingerprintCockpit {
+		// session 模式继续只使用标准请求头派生线程，避免改变既有拓扑。
+		source.clientSessionID = extractClientSessionID(clientHeaders)
+	}
+	return resolveCodexFingerprintIDsWithSource(account, source, mode)
 }
 
 // resolveCodexFingerprintIDsFromRawRequest 为透传路径从原始请求体提取 Cockpit 会话来源。
@@ -405,10 +519,40 @@ func resolveCodexFingerprintIDsFromRawRequest(account *Account, clientHeaders ht
 	if mode == codexFingerprintOff {
 		return nil
 	}
-	if mode == codexFingerprintCockpit {
-		return resolveCodexFingerprintIDsWithSource(account, extractCockpitFingerprintSourceRaw(clientHeaders, body), mode)
+	source := extractCockpitFingerprintSourceRaw(clientHeaders, body)
+	if mode != codexFingerprintCockpit {
+		source.clientSessionID = extractClientSessionID(clientHeaders)
 	}
-	return resolveCodexFingerprintIDs(account, extractClientSessionID(clientHeaders), mode)
+	return resolveCodexFingerprintIDsWithSource(account, source, mode)
+}
+
+// restoreCodexFingerprintResponsePayload 将上游回显的收敛身份恢复为客户端原始身份。
+// 映射仅保存在单次账号尝试内，既不会跨账号共享，也不会影响内部调度与缓存键。
+func restoreCodexFingerprintResponsePayload(payload []byte, ids *codexFingerprintIDs) []byte {
+	if len(payload) == 0 || ids == nil || ids.mode == codexFingerprintOff {
+		return payload
+	}
+	for _, pair := range [][2]string{
+		{ids.windowID, ids.originalWindowID},
+		{ids.promptCacheKey, ids.originalPromptCacheKey},
+		{ids.turnID, ids.originalTurnID},
+		{ids.installationID, ids.originalInstallationID},
+		{ids.sessionID, ids.originalSessionID},
+		{ids.threadID, ids.originalThreadID},
+	} {
+		from := strings.TrimSpace(pair[0])
+		to := strings.TrimSpace(pair[1])
+		if from == "" || to == "" || from == to || !bytes.Contains(payload, []byte(from)) {
+			continue
+		}
+		payload = bytes.ReplaceAll(payload, []byte(from), []byte(to))
+	}
+	return payload
+}
+
+// restoreStagedCodexFingerprintResponsePayload 使用当前 Gin 请求暂存的账号级映射。
+func restoreStagedCodexFingerprintResponsePayload(c *gin.Context, payload []byte) []byte {
+	return restoreCodexFingerprintResponsePayload(payload, stagedCodexFingerprintIDs(c))
 }
 
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。

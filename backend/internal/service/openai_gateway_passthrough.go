@@ -750,7 +750,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	if clientInvalidRequest {
 		// 参数型 400 使用安全响应头并透传完整脱敏错误对象，不再改写成 upstream_error。
 		writeOpenAIPassthroughErrorHeaders(c.Writer.Header(), resp.Header)
-		c.Data(http.StatusBadRequest, "application/json; charset=utf-8", body)
+		c.Data(http.StatusBadRequest, "application/json; charset=utf-8", restoreStagedCodexFingerprintResponsePayload(c, body))
 		return fmt.Errorf("upstream invalid request: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
@@ -1370,7 +1370,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			responseID:       responseID,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
-			responseBody:     cloneDataSharingRequestBody(finalResponseBody),
+			responseBody:     cloneDataSharingRequestBody(restoreStagedCodexFingerprintResponsePayload(c, finalResponseBody)),
 		}
 	}
 
@@ -1512,6 +1512,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				dataBytes = sanitizedData
 				trimmedData = strings.TrimSpace(string(sanitizedData))
 				line = "data: " + string(sanitizedData)
+			}
+			// 写客户端前恢复原始身份，避免暴露账号级收敛值。
+			if exposedData := restoreStagedCodexFingerprintResponsePayload(c, dataBytes); !bytes.Equal(exposedData, dataBytes) {
+				dataBytes = exposedData
+				trimmedData = strings.TrimSpace(string(exposedData))
+				line = "data: " + string(exposedData)
+				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
 			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
 			if lineStartsClientOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
@@ -1657,6 +1664,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", err)
 	}
+	body = restoreStagedCodexFingerprintResponsePayload(c, body)
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -1734,6 +1742,8 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(ctx context.Context, r
 		}
 		body = []byte(bodyText)
 	}
+	body = restoreStagedCodexFingerprintResponsePayload(c, body)
+	bodyText = string(body)
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 

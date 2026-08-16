@@ -331,7 +331,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
 			searchCount:      searchCounter,
-			responseBody:     cloneDataSharingRequestBody(finalResponseBody),
+			responseBody:     cloneDataSharingRequestBody(restoreStagedCodexFingerprintResponsePayload(c, finalResponseBody)),
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -587,6 +587,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				dataBytes = sanitizedData
 				data = string(sanitizedData)
 				line = "data: " + data
+			}
+			// 客户端只看到原始身份；账号级收敛值仅在当前上游请求内存在。
+			if exposedData := restoreStagedCodexFingerprintResponsePayload(c, dataBytes); !bytes.Equal(exposedData, dataBytes) {
+				dataBytes = exposedData
+				data = string(exposedData)
+				line = "data: " + data
+				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
@@ -1293,6 +1300,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI namespace response: %w", err)
 	}
+	body = restoreStagedCodexFingerprintResponsePayload(c, body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	s.relayOpenAICodexTurnState(c, account, resp.Header)
 
@@ -1401,6 +1409,8 @@ func (s *OpenAIGatewayService) handleSSEToJSON(ctx context.Context, resp *http.R
 		}
 		body = []byte(bodyText)
 	}
+	body = restoreStagedCodexFingerprintResponsePayload(c, body)
+	bodyText = string(body)
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	s.relayOpenAICodexTurnState(c, account, resp.Header)
