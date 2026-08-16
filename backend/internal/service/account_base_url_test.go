@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/errors"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/xai"
 	"github.com/stretchr/testify/require"
 )
@@ -160,6 +161,85 @@ func TestGetGeminiBaseURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHasGeminiThirdPartyBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		account  Account
+		expected bool
+	}{
+		{
+			name: "custom Gemini-compatible endpoint",
+			account: Account{
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					GeminiProviderTypeCredentialKey: GeminiProviderTypeThirdParty,
+					"base_url":                      "https://provider.example.test/v1beta",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "missing base URL",
+			account: Account{
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					GeminiProviderTypeCredentialKey: GeminiProviderTypeThirdParty,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "official Gemini endpoint",
+			account: Account{
+				Platform: PlatformGemini,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					GeminiProviderTypeCredentialKey: GeminiProviderTypeThirdParty,
+					"base_url":                      "https://generativelanguage.googleapis.com/v1beta",
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, tt.account.HasGeminiThirdPartyBaseURL())
+		})
+	}
+}
+
+func TestBuildAccountForCreateRequiresCustomGeminiThirdPartyBaseURL(t *testing.T) {
+	invalidInput := &CreateAccountInput{
+		Name:     "third-party Gemini",
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			GeminiProviderTypeCredentialKey: GeminiProviderTypeThirdParty,
+			"base_url":                      "https://generativelanguage.googleapis.com",
+		},
+	}
+
+	_, err := buildAccountForCreate(invalidInput, nil)
+	require.Error(t, err)
+	require.Equal(t, "GEMINI_THIRD_PARTY_BASE_URL_REQUIRED", infraerrors.Reason(err))
+
+	validInput := &CreateAccountInput{
+		Name:     "third-party Gemini",
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			GeminiProviderTypeCredentialKey: GeminiProviderTypeThirdParty,
+			"base_url":                      "https://provider.example.test",
+		},
+	}
+	account, err := buildAccountForCreate(validInput, nil)
+	require.NoError(t, err)
+	require.NotNil(t, account)
 }
 
 func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {

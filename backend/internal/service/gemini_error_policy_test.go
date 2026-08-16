@@ -427,6 +427,34 @@ func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldown(t 
 	require.True(t, repo.lastRateLimitReset.Before(after.Add(5*time.Minute).Add(2*time.Second)))
 }
 
+func TestHandleGeminiUpstreamError_ThirdPartyAPIKeyIgnoresOfficialQuotaMessage(t *testing.T) {
+	repo := &rateLimit429AccountRepoStub{}
+	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
+	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
+	svc := &GeminiMessagesCompatService{
+		accountRepo:      repo,
+		rateLimitService: rlSvc,
+	}
+	account := &Account{
+		ID:       512,
+		Platform: PlatformGemini,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			GeminiProviderTypeCredentialKey: GeminiProviderTypeThirdParty,
+		},
+	}
+
+	before := time.Now()
+	svc.handleGeminiUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"code":429,"message":"Quota exceeded: 20 requests per day"}}`))
+	after := time.Now()
+
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Equal(t, int64(512), repo.lastRateLimitID)
+	require.WithinDuration(t, before.Add(5*time.Minute), repo.lastRateLimitReset, 2*time.Second)
+	require.True(t, repo.lastRateLimitReset.After(before))
+	require.True(t, repo.lastRateLimitReset.Before(after.Add(5*time.Minute).Add(2*time.Second)))
+}
+
 // TestGeminiPoolMode429BypassesLocalRateLimit 验证池模式不再被当作自定义未命中，
 // 也不会继续执行 Gemini 默认 429 限流写入。
 func TestGeminiPoolMode429BypassesLocalRateLimit(t *testing.T) {

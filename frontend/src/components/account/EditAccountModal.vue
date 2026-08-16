@@ -72,6 +72,7 @@
             v-model="editBaseUrl"
             type="text"
             class="input"
+            data-testid="edit-account-base-url"
             :placeholder="
               account.platform === 'openai'
                 ? 'https://api.openai.com'
@@ -91,6 +92,15 @@
             @select="editBaseUrl = $event"
           />
         </div>
+        <div v-if="account.platform === 'gemini'">
+          <label class="input-label">{{ t('admin.accounts.gemini.providerType.label') }}</label>
+          <Select
+            v-model="geminiProviderType"
+            :options="geminiProviderTypeOptions"
+            data-testid="edit-gemini-provider-type"
+          />
+          <p class="input-hint">{{ geminiProviderTypeHint }}</p>
+        </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
           <input
@@ -105,7 +115,9 @@
               account.platform === 'openai'
                 ? 'sk-proj-...'
                 : account.platform === 'gemini'
-                  ? 'AIza...'
+                  ? geminiProviderType === 'third_party'
+                    ? 'api-key-...'
+                    : 'AIza...'
                   : account.platform === 'antigravity'
                     ? 'sk-...'
                     : account.platform === 'grok'
@@ -114,6 +126,16 @@
             "
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+        </div>
+
+        <div v-if="account.platform === 'gemini' && geminiProviderType === 'official'" data-testid="edit-gemini-tier">
+          <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
+          <Select
+            v-model="geminiAIStudioTier"
+            :options="geminiAIStudioTierOptions"
+            data-testid="edit-gemini-tier-select"
+          />
+          <p class="input-hint">{{ t('admin.accounts.gemini.tier.aiStudioHint') }}</p>
         </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
@@ -2791,6 +2813,9 @@ const handleOllamaCloudUsageUpdated = (state: OllamaCloudUsageState) => {
 const baseUrlHint = computed(() => {
   if (!props.account) return t('admin.accounts.baseUrlHint')
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
+  if (props.account.platform === 'gemini' && geminiProviderType.value === 'third_party') {
+    return t('admin.accounts.gemini.providerType.thirdPartyBaseUrlHint')
+  }
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (props.account.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
@@ -2816,6 +2841,32 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
+type GeminiProviderType = 'official' | 'third_party'
+const geminiProviderType = ref<GeminiProviderType>('official')
+const geminiAIStudioTier = ref<'aistudio_free' | 'aistudio_paid'>('aistudio_free')
+const geminiProviderTypeOptions = computed(() => [
+  { value: 'official', label: t('admin.accounts.gemini.providerType.official') },
+  { value: 'third_party', label: t('admin.accounts.gemini.providerType.thirdParty') }
+])
+const geminiAIStudioTierOptions = computed(() => [
+  { value: 'aistudio_free', label: t('admin.accounts.gemini.tier.aiStudio.free') },
+  { value: 'aistudio_paid', label: t('admin.accounts.gemini.tier.aiStudio.paid') }
+])
+const geminiProviderTypeHint = computed(() =>
+  geminiProviderType.value === 'third_party'
+    ? t('admin.accounts.gemini.providerType.thirdPartyHint')
+    : t('admin.accounts.gemini.providerType.officialHint')
+)
+
+const isGeminiThirdPartyBaseUrl = (value: string) => {
+  const normalized = value.trim()
+  if (!normalized) return false
+  try {
+    return new URL(normalized).hostname.toLowerCase() !== 'generativelanguage.googleapis.com'
+  } catch {
+    return false
+  }
+}
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -3294,6 +3345,14 @@ const defaultBaseUrl = computed(() => {
   return 'https://api.anthropic.com'
 })
 
+watch(geminiProviderType, (providerType) => {
+  if (props.account?.platform !== 'gemini' || providerType !== 'third_party') return
+  // 切换到第三方来源时，不能把官方默认端点误当成第三方地址提交。
+  if (!isGeminiThirdPartyBaseUrl(editBaseUrl.value)) {
+    editBaseUrl.value = ''
+  }
+})
+
 const mixedChannelWarningMessageText = computed(() => {
   if (mixedChannelWarningDetails.value) {
     return t('admin.accounts.mixedChannelWarning', mixedChannelWarningDetails.value)
@@ -3463,6 +3522,14 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
+  geminiProviderType.value = 'official'
+  geminiAIStudioTier.value = 'aistudio_free'
+  if (newAccount.platform === 'gemini' && newAccount.type === 'apikey') {
+    geminiProviderType.value = credentials?.provider_type === 'third_party' ? 'third_party' : 'official'
+    if (credentials?.tier_id === 'aistudio_paid') {
+      geminiAIStudioTier.value = 'aistudio_paid'
+    }
+  }
   qoderSite.value = newAccount.platform === 'qoder' && credentials?.site === 'cn' ? 'cn' : 'global'
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
   autoPauseOnExpired.value = newAccount.auto_pause_on_expired === true
@@ -4426,7 +4493,16 @@ const handleSubmit = async () => {
     // For apikey type, handle credentials update
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
-      const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
+      const enteredBaseUrl = editBaseUrl.value.trim()
+      if (
+        props.account.platform === 'gemini' &&
+        geminiProviderType.value === 'third_party' &&
+        !isGeminiThirdPartyBaseUrl(enteredBaseUrl)
+      ) {
+        appStore.showError(t('admin.accounts.gemini.providerType.thirdPartyBaseUrlRequired'))
+        return
+      }
+      const newBaseUrl = enteredBaseUrl || defaultBaseUrl.value
       const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
 
       // API Key 类型始终提交 credentials，以便同步模型映射变更。
@@ -4447,6 +4523,16 @@ const handleSubmit = async () => {
       } else if (!hasExistingApiKey) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         return
+      }
+
+      if (props.account.platform === 'gemini') {
+        newCredentials.provider_type = geminiProviderType.value
+        if (geminiProviderType.value === 'third_party') {
+          // tier_id 不是敏感字段，删除后会随本次完整凭据更新一起清除。
+          delete newCredentials.tier_id
+        } else {
+          newCredentials.tier_id = geminiAIStudioTier.value
+        }
       }
 
       // Add model mapping if configured（OpenAI 开启自动透传时保留现有映射，不再编辑）

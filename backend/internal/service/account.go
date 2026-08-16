@@ -111,6 +111,12 @@ const (
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
 
+const (
+	GeminiProviderTypeCredentialKey = "provider_type"
+	GeminiProviderTypeThirdParty    = "third_party"
+	geminiOfficialAPIHost           = "generativelanguage.googleapis.com"
+)
+
 // GrokMediaEligibleExtraKey 是 accounts.extra 中可选的账号级覆盖：true 强制允许
 // 媒体调度，false 禁用，缺失或 null 时使用上游观测自动判断。
 const GrokMediaEligibleExtraKey = "grok_media_eligible"
@@ -280,6 +286,29 @@ func (a *Account) GeminiOAuthType() string {
 func (a *Account) GeminiTierID() string {
 	tierID := strings.TrimSpace(a.GetCredential("tier_id"))
 	return tierID
+}
+
+// IsGeminiThirdPartyProvider 判断 Gemini API Key 是否通过第三方提供商接入。
+// 该标记只影响本地官方配额模拟，不改变 Gemini 请求的认证和转发协议。
+func (a *Account) IsGeminiThirdPartyProvider() bool {
+	if a == nil || a.Platform != PlatformGemini || a.Type != AccountTypeAPIKey {
+		return false
+	}
+	return strings.EqualFold(a.GetCredential(GeminiProviderTypeCredentialKey), GeminiProviderTypeThirdParty)
+}
+
+// HasGeminiThirdPartyBaseURL 判断第三方 Gemini API Key 是否配置了非官方端点。
+// 第三方来源不能依赖官方默认地址，否则会在关闭官方模拟配额的同时仍请求 Google 端点。
+func (a *Account) HasGeminiThirdPartyBaseURL() bool {
+	if !a.IsGeminiThirdPartyProvider() {
+		return false
+	}
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+		return false
+	}
+	return !strings.EqualFold(parsed.Hostname(), geminiOfficialAPIHost)
 }
 
 func (a *Account) IsGeminiCodeAssist() bool {

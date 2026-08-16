@@ -373,6 +373,10 @@ func geminiQuotaTierKeyForAccount(account *Account) string {
 	if account == nil || account.Platform != PlatformGemini {
 		return ""
 	}
+	// 第三方提供商没有 Google 官方账号等级，不能套用本地模拟配额。
+	if account.IsGeminiThirdPartyProvider() {
+		return ""
+	}
 
 	// Note: GeminiOAuthType() already defaults legacy (project_id present) to code_assist.
 	oauthType := strings.ToLower(strings.TrimSpace(account.GeminiOAuthType()))

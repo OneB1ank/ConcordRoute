@@ -1366,6 +1366,16 @@ export default {
           'All model requests are forwarded directly to the Gemini API without model restrictions or mappings.',
         baseUrlHint: 'Leave default for official Gemini API',
         apiKeyHint: 'Your Gemini API Key (starts with AIza)',
+        providerType: {
+          label: 'Provider Source',
+          official: 'Official Gemini API',
+          thirdParty: 'Third-party Provider',
+          officialHint: 'Uses a Google AI Studio API key and the account tier for local simulated quota.',
+          thirdPartyHint: 'Uses a Gemini-compatible endpoint from a third-party provider without Google account tiers or local simulated quota.',
+          thirdPartyBaseUrlHint: 'Enter the Gemini-compatible Base URL provided by the third-party provider.',
+          thirdPartyBaseUrlRequired: 'A third-party provider requires a non-Google Gemini API Base URL.',
+          thirdPartyApiKeyHint: 'Enter the API key provided by the third-party provider.'
+        },
         tier: {
           label: 'Account Tier',
           hint: 'Tip: The system will try to auto-detect the tier first; if auto-detection is unavailable or fails, your selected tier is used as a fallback (simulated quota).',
@@ -1388,8 +1398,8 @@ export default {
         accountType: {
           oauthTitle: 'OAuth (Gemini)',
           oauthDesc: 'Authorize with your Google account and choose an OAuth type.',
-          apiKeyTitle: 'API Key (AI Studio)',
-          apiKeyDesc: 'Fastest setup. Use an AIza API key.',
+          apiKeyTitle: 'API Key',
+          apiKeyDesc: 'Connect to the official Gemini API or a third-party provider with a Base URL and API key.',
           apiKeyNote:
             'Best for light testing. Free tier has strict rate limits and data may be used for training.',
           apiKeyLink: 'Get API Key',

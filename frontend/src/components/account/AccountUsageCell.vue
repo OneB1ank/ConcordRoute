@@ -599,8 +599,9 @@
 
   <!-- Non-OAuth/Setup-Token accounts -->
   <div ref="rootRef" v-else>
+    <div v-if="isGeminiThirdPartyProvider" class="text-xs text-gray-400">-</div>
     <!-- Gemini API Key accounts: show quota info -->
-    <AccountQuotaInfo v-if="account.platform === 'gemini'" :account="account" />
+    <AccountQuotaInfo v-else-if="account.platform === 'gemini'" :account="account" />
     <!-- Key/Bedrock accounts: show today stats + optional quota bars -->
     <div v-else class="space-y-1">
       <OllamaCloudUsageCell
@@ -739,10 +740,16 @@ let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
 let visibilityObserver: IntersectionObserver | null = null
 
+const isGeminiThirdPartyProvider = computed(() => {
+  if (props.account.platform !== 'gemini' || props.account.type !== 'apikey') return false
+  const credentials = props.account.credentials as GeminiCredentials | undefined
+  return credentials?.provider_type === 'third_party'
+})
+
 // Show usage windows for OAuth and Setup Token accounts
 const showUsageWindows = computed(() => {
-  // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
-  if (props.account.platform === 'gemini') return true
+  // 第三方 Gemini 账号没有官方等级，不能展示或请求本地模拟配额。
+  if (props.account.platform === 'gemini') return !isGeminiThirdPartyProvider.value
   if (props.account.platform === 'qoder') return true
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
@@ -752,7 +759,7 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
   if (props.account.platform === 'gemini') {
-    return true
+    return !isGeminiThirdPartyProvider.value
   }
   if (props.account.platform === 'antigravity') {
     return props.account.type === 'oauth'

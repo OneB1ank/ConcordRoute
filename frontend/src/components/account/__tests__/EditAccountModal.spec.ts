@@ -1113,6 +1113,70 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_key')
   })
 
+  it('updates a Gemini API Key to a third-party provider and clears its tier', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'gemini',
+      credentials: {
+        api_key: 'AIza-test',
+        base_url: 'https://generativelanguage.googleapis.com',
+        tier_id: 'aistudio_free'
+      }
+    }
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="edit-gemini-tier"]').exists()).toBe(true)
+    await wrapper.get<HTMLSelectElement>('[data-testid="edit-gemini-provider-type"]').setValue('third_party')
+    expect(wrapper.find('[data-testid="edit-gemini-tier"]').exists()).toBe(false)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+
+    await wrapper.get<HTMLInputElement>('[data-testid="edit-account-base-url"]').setValue('https://provider.example.test')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      provider_type: 'third_party',
+      base_url: 'https://provider.example.test'
+    })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('tier_id')
+  })
+
+  it('treats historical Gemini API Key accounts as official when switching back from a third-party provider', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'gemini',
+      credentials: {
+        api_key: 'provider-key',
+        base_url: 'https://provider.example.test'
+      }
+    }
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+
+    const providerType = wrapper.get<HTMLSelectElement>('[data-testid="edit-gemini-provider-type"]')
+    expect(providerType.element.value).toBe('official')
+    await providerType.setValue('third_party')
+    await providerType.setValue('official')
+    await wrapper.get<HTMLSelectElement>('[data-testid="edit-gemini-tier-select"]').setValue('aistudio_paid')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      provider_type: 'official',
+      tier_id: 'aistudio_paid'
+    })
+  })
+
   it('allows saving apikey account against legacy backend without credentials_status', async () => {
     // 新前端 + 旧后端：credentials_status 缺失，但 credentials.api_key 仍是明文，应允许保存。
     const account = buildAccount()

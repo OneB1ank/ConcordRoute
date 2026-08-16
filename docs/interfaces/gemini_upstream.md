@@ -17,10 +17,10 @@ Gemini 正式支持：
 | 类型 | 当前契约 |
 | --- | --- |
 | `oauth` | 支持 `code_assist`、`google_one` 和 `ai_studio` 变体；前两者使用内置 Gemini CLI 客户端，AI Studio 需要配置的 OAuth client |
-| `apikey` | 使用 Google AI Studio key 和 base URL 直连；不参与 OAuth refresh |
+| `apikey` | 使用 Base URL 和 API Key 直连；`credentials.provider_type=third_party` 表示 Gemini 兼容第三方提供商，缺失或 `official` 表示 Google AI Studio 官方接入 |
 | `service_account` | 使用 Google Service Account 换取 Vertex token，并解析 project/location 上下文 |
 
-Code Assist/Google One 需要有效 project；AI Studio 的 project 可选并使用选择的 tier。OAuth refresh 会重试并兼容历史 client 元数据；token provider 使用过期前偏移和并发锁，避免同账号重复刷新。其它导入类型没有 Gemini 正式转发契约，见[上游账号能力矩阵](upstream_account_matrix.md)。
+Code Assist/Google One 需要有效 project；AI Studio 的 project 可选并使用选择的 tier。第三方 API Key 保持 `type=apikey` 和 Gemini 兼容请求形状，但必须配置非 Google 官方域名的 Base URL；它没有 Google 官方账号等级，因此不写 `tier_id`，也不参与本地模拟 RPD/RPM 预检或用量窗口。第三方上游实际返回 `429` 时始终使用通用冷却，不解析 Google 日配额的重置语义。OAuth refresh 会重试并兼容历史 client 元数据；token provider 使用过期前偏移和并发锁，避免同账号重复刷新。其它导入类型没有 Gemini 正式转发契约，见[上游账号能力矩阵](upstream_account_matrix.md)。
 
 <a id="gemini_protocol_dispatch"></a>
 ## 协议分派

@@ -736,7 +736,10 @@ const accountSupportsBatchUsage = (account: Account) => {
   if (account.platform === 'anthropic') {
     return account.type === 'oauth' || account.type === 'setup-token'
   }
-  if (account.platform === 'gemini') return true
+  if (account.platform === 'gemini') {
+    const credentials = account.credentials as Record<string, unknown> | undefined
+    return !(account.type === 'apikey' && credentials?.provider_type === 'third_party')
+  }
   if (account.platform === 'antigravity') return account.type === 'oauth'
   if (account.platform === 'openai') return account.type === 'oauth'
   if (account.platform === 'grok') return account.type === 'oauth'

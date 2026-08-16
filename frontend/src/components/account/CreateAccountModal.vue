@@ -112,6 +112,7 @@
           <button
             type="button"
             @click="form.platform = 'gemini'"
+            data-testid="create-account-platform-gemini"
             :class="[
               'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
               form.platform === 'gemini'
@@ -474,6 +475,7 @@
           <button
             type="button"
             @click="accountCategory = 'apikey'"
+            data-testid="create-gemini-apikey-type"
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
               accountCategory === 'apikey'
@@ -545,7 +547,7 @@
         </div>
 
         <div
-          v-if="accountCategory === 'apikey'"
+          v-if="accountCategory === 'apikey' && geminiProviderType === 'official'"
           class="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-800 dark:border-purple-800/40 dark:bg-purple-900/20 dark:text-purple-200"
         >
           <p>{{ t('admin.accounts.gemini.accountType.apiKeyNote') }}</p>
@@ -767,7 +769,7 @@
         </div>
 
         <!-- Tier selection (used as fallback when auto-detection is unavailable/fails) -->
-        <div v-if="accountCategory !== 'service_account'" class="mt-4">
+        <div v-if="accountCategory === 'oauth-based'" class="mt-4">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <div class="mt-2">
             <Select
@@ -1409,17 +1411,29 @@
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+        <div v-if="form.platform === 'gemini'">
+          <label class="input-label">{{ t('admin.accounts.gemini.providerType.label') }}</label>
+          <Select
+            v-model="geminiProviderType"
+            :options="geminiProviderTypeOptions"
+            data-testid="create-gemini-provider-type"
+          />
+          <p class="input-hint">{{ geminiProviderTypeHint }}</p>
+        </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="apiKeyBaseUrl"
             type="text"
             class="input"
+            data-testid="create-account-base-url"
             :placeholder="
               form.platform === 'openai'
                 ? 'https://api.openai.com'
                 : form.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
+                  ? geminiProviderType === 'third_party'
+                    ? 'https://'
+                    : 'https://generativelanguage.googleapis.com'
                   : form.platform === 'grok'
                     ? 'https://api.x.ai/v1'
                     : 'https://api.anthropic.com'
@@ -1443,7 +1457,9 @@
               form.platform === 'openai'
                 ? 'sk-proj-...'
                 : form.platform === 'gemini'
-                  ? 'AIza...'
+                  ? geminiProviderType === 'third_party'
+                    ? 'api-key-...'
+                    : 'AIza...'
                   : form.platform === 'grok'
                     ? 'xai-...'
                     : 'sk-ant-...'
@@ -1453,9 +1469,9 @@
         </div>
 
         <!-- Gemini API Key tier selection -->
-        <div v-if="form.platform === 'gemini'">
+        <div v-if="form.platform === 'gemini' && geminiProviderType === 'official'" data-testid="create-gemini-tier">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
-          <Select v-model="geminiTierAIStudio" :options="geminiAIStudioTierOptions" />
+          <Select v-model="geminiTierAIStudio" :options="geminiAIStudioTierOptions" data-testid="create-gemini-tier-select" />
           <p class="input-hint">{{ t('admin.accounts.gemini.tier.aiStudioHint') }}</p>
         </div>
 
@@ -4022,6 +4038,9 @@ const oauthStepTitle = computed(() => {
 // Platform-specific hints for API Key type
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
+  if (form.platform === 'gemini' && geminiProviderType.value === 'third_party') {
+    return t('admin.accounts.gemini.providerType.thirdPartyBaseUrlHint')
+  }
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
@@ -4029,6 +4048,9 @@ const baseUrlHint = computed(() => {
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
+  if (form.platform === 'gemini' && geminiProviderType.value === 'third_party') {
+    return t('admin.accounts.gemini.providerType.thirdPartyApiKeyHint')
+  }
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
   if (form.platform === 'grok') return ''
   return t('admin.accounts.apiKeyHint')
@@ -4049,6 +4071,27 @@ const geminiAIStudioTierOptions = computed(() => [
   { value: 'aistudio_free', label: t('admin.accounts.gemini.tier.aiStudio.free') },
   { value: 'aistudio_paid', label: t('admin.accounts.gemini.tier.aiStudio.paid') }
 ])
+
+const geminiProviderTypeOptions = computed(() => [
+  { value: 'official', label: t('admin.accounts.gemini.providerType.official') },
+  { value: 'third_party', label: t('admin.accounts.gemini.providerType.thirdParty') }
+])
+
+const geminiProviderTypeHint = computed(() =>
+  geminiProviderType.value === 'third_party'
+    ? t('admin.accounts.gemini.providerType.thirdPartyHint')
+    : t('admin.accounts.gemini.providerType.officialHint')
+)
+
+const isGeminiThirdPartyBaseUrl = (value: string) => {
+  const normalized = value.trim()
+  if (!normalized) return false
+  try {
+    return new URL(normalized).hostname.toLowerCase() !== 'generativelanguage.googleapis.com'
+  } catch {
+    return false
+  }
+}
 
 const vertexLocationOptions = groupedAccountSelectOptions(VERTEX_LOCATION_OPTIONS)
 const bedrockRegionOptions = groupedAccountSelectOptions(BEDROCK_REGION_OPTIONS)
@@ -4481,13 +4524,17 @@ const customBaseUrlEnabled = ref(false)
 const customBaseUrl = ref('')
 
 // Gemini tier selection (used as fallback when auto-detection is unavailable/fails)
+type GeminiProviderType = 'official' | 'third_party'
+const geminiProviderType = ref<GeminiProviderType>('official')
 const geminiTierGoogleOne = ref<'google_one_free' | 'google_ai_pro' | 'google_ai_ultra'>('google_one_free')
 const geminiTierGcp = ref<'gcp_standard' | 'gcp_enterprise'>('gcp_standard')
 const geminiTierAIStudio = ref<'aistudio_free' | 'aistudio_paid'>('aistudio_free')
 
 const geminiSelectedTier = computed(() => {
   if (form.platform !== 'gemini') return ''
-  if (accountCategory.value === 'apikey') return geminiTierAIStudio.value
+  if (accountCategory.value === 'apikey') {
+    return geminiProviderType.value === 'official' ? geminiTierAIStudio.value : ''
+  }
   switch (geminiOAuthType.value) {
     case 'google_one':
       return geminiTierGoogleOne.value
@@ -4941,7 +4988,9 @@ watch(
       (newPlatform === 'openai')
         ? 'https://api.openai.com'
         : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
+          ? geminiProviderType.value === 'third_party'
+            ? ''
+            : 'https://generativelanguage.googleapis.com'
           : newPlatform === 'grok'
             ? 'https://api.x.ai/v1'
             : 'https://api.anthropic.com'
@@ -5039,6 +5088,14 @@ watch(
     grokOAuth.resetState()
   }
 )
+
+watch(geminiProviderType, (providerType) => {
+  if (form.platform !== 'gemini' || providerType !== 'third_party') return
+  // 切换到第三方来源时，不能把官方默认端点误当成第三方地址提交。
+  if (!isGeminiThirdPartyBaseUrl(apiKeyBaseUrl.value)) {
+    apiKeyBaseUrl.value = ''
+  }
+})
 
 watch(qoderSite, (newSite, oldSite) => {
   if (newSite === oldSite || form.platform !== 'qoder') return
@@ -5549,6 +5606,7 @@ const resetForm = () => {
   tempUnschedEnabled.value = false
   tempUnschedRules.value = []
   geminiOAuthType.value = 'code_assist'
+  geminiProviderType.value = 'official'
   geminiTierGoogleOne.value = 'google_one_free'
   geminiTierGcp.value = 'gcp_standard'
   geminiTierAIStudio.value = 'aistudio_free'
@@ -6021,6 +6079,16 @@ const handleSubmit = async () => {
     return
   }
 
+  const enteredBaseUrl = apiKeyBaseUrl.value.trim()
+  if (
+    form.platform === 'gemini' &&
+    geminiProviderType.value === 'third_party' &&
+    !isGeminiThirdPartyBaseUrl(enteredBaseUrl)
+  ) {
+    appStore.showError(t('admin.accounts.gemini.providerType.thirdPartyBaseUrlRequired'))
+    return
+  }
+
   // Determine default base URL based on platform
   const defaultBaseUrl =
     form.platform === 'openai'
@@ -6033,11 +6101,14 @@ const handleSubmit = async () => {
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
-    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
+    base_url: enteredBaseUrl || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
   }
   if (form.platform === 'gemini') {
-    credentials.tier_id = geminiTierAIStudio.value
+    credentials.provider_type = geminiProviderType.value
+    if (geminiProviderType.value === 'official') {
+      credentials.tier_id = geminiTierAIStudio.value
+    }
   }
 
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）

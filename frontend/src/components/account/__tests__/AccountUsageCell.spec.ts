@@ -113,6 +113,38 @@ describe('AccountUsageCell', () => {
     expect(getUsage).not.toHaveBeenCalled()
   })
 
+  it('does not request or display simulated usage for third-party Gemini API Key accounts', async () => {
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9010,
+          platform: 'gemini',
+          type: 'apikey',
+          credentials: {
+            provider_type: 'third_party',
+            base_url: 'https://provider.example.test'
+          }
+        }),
+        requestBatchedUsage
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: {
+            template: '<div>official Gemini quota</div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).not.toHaveBeenCalled()
+    expect(requestBatchedUsage).not.toHaveBeenCalled()
+    expect(wrapper.text().trim()).toBe('-')
+  })
+
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
     getUsage.mockResolvedValue({
       antigravity_quota: {

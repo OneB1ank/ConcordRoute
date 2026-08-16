@@ -279,3 +279,39 @@ describe('CreateAccountModal OpenAI account options', () => {
   })
 
 })
+
+describe('CreateAccountModal Gemini API Key provider source', () => {
+  beforeEach(() => {
+    createAccountMock.mockReset().mockResolvedValue({ id: 43, platform: 'gemini', type: 'apikey' })
+  })
+
+  it('creates a third-party Gemini API Key without an official tier', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="create-account-platform-gemini"]').trigger('click')
+    await wrapper.get('[data-testid="create-gemini-apikey-type"]').trigger('click')
+
+    expect(wrapper.findAll('[data-testid="create-gemini-tier"]').length).toBe(1)
+
+    await wrapper.get<HTMLSelectElement>('[data-testid="create-gemini-provider-type"]').setValue('third_party')
+    expect(wrapper.find('[data-testid="create-gemini-tier"]').exists()).toBe(false)
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Third-party Gemini')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('provider-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).not.toHaveBeenCalled()
+
+    await wrapper.get<HTMLInputElement>('[data-testid="create-account-base-url"]').setValue('https://provider.example.test')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      provider_type: 'third_party',
+      base_url: 'https://provider.example.test',
+      api_key: 'provider-key'
+    })
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).not.toHaveProperty('tier_id')
+  })
+})

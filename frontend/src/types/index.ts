@@ -1122,6 +1122,8 @@ export interface ProxyQualityCheckResult {
 export interface GeminiCredentials {
   // API Key authentication
   api_key?: string
+  // Gemini API Key 的接入来源；缺失值兼容历史官方 AI Studio 账号。
+  provider_type?: 'official' | 'third_party'
 
   // OAuth authentication
   access_token?: string

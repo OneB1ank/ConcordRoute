@@ -507,7 +507,21 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		}
 		account.LoadFactor = input.LoadFactor
 	}
+	if err := validateGeminiThirdPartyBaseURL(account); err != nil {
+		return nil, err
+	}
 	return account, nil
+}
+
+// validateGeminiThirdPartyBaseURL 阻止第三方来源回退到官方 Gemini 默认端点。
+func validateGeminiThirdPartyBaseURL(account *Account) error {
+	if account == nil || !account.IsGeminiThirdPartyProvider() || account.HasGeminiThirdPartyBaseURL() {
+		return nil
+	}
+	return infraerrors.BadRequest(
+		"GEMINI_THIRD_PARTY_BASE_URL_REQUIRED",
+		"Gemini third-party API Key accounts require a non-Google base_url",
+	)
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
@@ -658,6 +672,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		// 移除不得与 OAuth token 一同保存的 SSO 和密码残留。
 		account.Credentials = SanitizeStoredCredentials(account.Platform, account.Credentials)
+		if err := validateGeminiThirdPartyBaseURL(account); err != nil {
+			return nil, err
+		}
 	}
 	// Extra 使用 map：需要区分“未提供(nil)”与“显式清空({})”。
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库；只有废弃键时则不替换。
@@ -927,6 +944,24 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 批量更新可能混合平台，因此始终移除临时 SSO、密码和 cookie 字段。
 	if input.Credentials != nil {
 		input.Credentials = SanitizeStoredCredentials("", input.Credentials)
+	}
+	if len(input.Credentials) > 0 {
+		for _, account := range cachedTargets {
+			if account == nil {
+				continue
+			}
+			prospective := *account
+			prospective.Credentials = maps.Clone(account.Credentials)
+			if prospective.Credentials == nil {
+				prospective.Credentials = make(map[string]any, len(input.Credentials))
+			}
+			for key, value := range input.Credentials {
+				prospective.Credentials[key] = value
+			}
+			if err := validateGeminiThirdPartyBaseURL(&prospective); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Prepare bulk updates for columns and JSONB fields.

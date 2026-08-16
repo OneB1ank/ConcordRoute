@@ -3022,6 +3022,18 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
 	isCodeAssist := account.IsGeminiCodeAssist()
 
+	if account.IsGeminiThirdPartyProvider() {
+		// 第三方兼容端点不得解析 Google 官方日配额文案，始终使用通用 429 冷却。
+		cooldown := 5 * time.Minute
+		if s.rateLimitService != nil {
+			cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
+		}
+		ra := time.Now().Add(cooldown)
+		_ = s.accountRepo.SetRateLimited(ctx, account.ID, ra)
+		logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (third-party API Key) rate limited, cooldown=%v", account.ID, time.Until(ra).Truncate(time.Second))
+		return
+	}
+
 	resetAt := ParseGeminiRateLimitResetTime(body)
 	if resetAt == nil {
 		// 根据账号类型使用不同的默认重置时间
