@@ -115,6 +115,8 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account == nil {
 		return service.ErrAccountNilInput
 	}
+	// 新账号在首次落库前生成随机指纹种子，后续所有稳定身份均以该持久化值派生。
+	service.PrepareCodexFingerprintSeedForCreate(account)
 	discardDeprecatedAccountExtra(account.Extra)
 
 	builder := client.Account.Create().
@@ -2374,6 +2376,8 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	discardDeprecatedAccountExtra(updates)
+	// 随机指纹种子只允许在创建和数据库迁移时写入，运行态增量更新不得轮换身份。
+	delete(updates, service.CodexFingerprintSeedExtraKey)
 	if len(updates) == 0 {
 		return nil
 	}

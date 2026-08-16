@@ -13,12 +13,14 @@ import (
 )
 
 func newTestOAuthAccount(id int64, extra map[string]any) *Account {
-	return &Account{
+	account := &Account{
 		ID:       id,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra:    extra,
 	}
+	EnsureCodexFingerprintSeed(account)
+	return account
 }
 
 // --- deriveStableUUIDv4 ---
@@ -43,16 +45,54 @@ func TestDeriveStableUUIDv4_ValidFormat(t *testing.T) {
 	assert.Equal(t, uuid.RFC4122, parsed.Variant(), "应为 RFC4122 变体")
 }
 
-func TestCodexFingerprintStableAccountID_ShadowUsesParent(t *testing.T) {
+func TestCodexFingerprintSeed_ShadowUsesParentSeed(t *testing.T) {
 	parentID := int64(42)
-	shadow := newTestOAuthAccount(99, nil)
-	shadow.ParentAccountID = &parentID
 	parent := newTestOAuthAccount(parentID, nil)
+	shadow := newTestOAuthAccount(99, map[string]any{
+		CodexFingerprintSeedExtraKey: parent.GetExtraString(CodexFingerprintSeedExtraKey),
+	})
+	shadow.ParentAccountID = &parentID
 
-	assert.Equal(t, parentID, codexFingerprintStableAccountID(shadow))
 	assert.Equal(t, resolveConvergedInstallationID(parent), resolveConvergedInstallationID(shadow))
 	assert.Equal(t, resolveConvergedSessionID(parent), resolveConvergedSessionID(shadow))
 	assert.Equal(t, resolveConvergedThreadID(parent, "client-session"), resolveConvergedThreadID(shadow, "client-session"))
+}
+
+func TestEnsureCodexFingerprintSeed_StableAndUnique(t *testing.T) {
+	a := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	b := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	seedA := EnsureCodexFingerprintSeed(a)
+	seedAAgain := EnsureCodexFingerprintSeed(a)
+	seedB := EnsureCodexFingerprintSeed(b)
+
+	require.NotEmpty(t, seedA)
+	require.NoError(t, uuid.Validate(seedA))
+	assert.Equal(t, seedA, seedAAgain, "同一账号对象不得重复轮换种子")
+	assert.NotEqual(t, seedA, seedB, "相同本地账号 ID 的独立记录必须获得不同随机种子")
+}
+
+func TestPrepareCodexFingerprintSeedForCreate_RootRotatesIncomingShadowPreservesParent(t *testing.T) {
+	incoming := uuid.NewString()
+	root := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra:    map[string]any{CodexFingerprintSeedExtraKey: incoming},
+	}
+	parentID := int64(7)
+	shadow := &Account{
+		Platform:        PlatformOpenAI,
+		Type:            AccountTypeOAuth,
+		ParentAccountID: &parentID,
+		Extra:           map[string]any{CodexFingerprintSeedExtraKey: incoming},
+	}
+
+	rootSeed := PrepareCodexFingerprintSeedForCreate(root)
+	shadowSeed := PrepareCodexFingerprintSeedForCreate(shadow)
+
+	require.NoError(t, uuid.Validate(rootSeed))
+	assert.NotEqual(t, incoming, rootSeed, "新建根账号不得接受外部复用的种子")
+	assert.Equal(t, incoming, shadowSeed, "影子账号必须继承父账号种子")
 }
 
 // --- GetCodexFingerprintMode ---
@@ -88,18 +128,36 @@ func TestResolveConvergedInstallationID_UsesDeviceID(t *testing.T) {
 	assert.Equal(t, "real-device-id", resolveConvergedInstallationID(account))
 }
 
-func TestResolveConvergedInstallationID_DerivesFromAccountID(t *testing.T) {
-	account := newTestOAuthAccount(42, nil)
+func TestResolveConvergedInstallationID_DerivesFromPersistedSeed(t *testing.T) {
+	account := newTestOAuthAccount(42, map[string]any{CodexFingerprintSeedExtraKey: uuid.NewString()})
 	result := resolveConvergedInstallationID(account)
 	_, err := uuid.Parse(result)
 	require.NoError(t, err, "派生值应为合法 UUID")
 	assert.Equal(t, result, resolveConvergedInstallationID(account), "确定性")
 }
 
-func TestResolveConvergedInstallationID_DifferentAccounts(t *testing.T) {
-	a := resolveConvergedInstallationID(newTestOAuthAccount(1, nil))
-	b := resolveConvergedInstallationID(newTestOAuthAccount(2, nil))
+func TestResolveConvergedInstallationID_SameLocalIDDifferentSeeds(t *testing.T) {
+	a := resolveConvergedInstallationID(newTestOAuthAccount(1, map[string]any{
+		CodexFingerprintSeedExtraKey: uuid.NewString(),
+	}))
+	b := resolveConvergedInstallationID(newTestOAuthAccount(1, map[string]any{
+		CodexFingerprintSeedExtraKey: uuid.NewString(),
+	}))
 	assert.NotEqual(t, a, b)
+}
+
+func TestResolveConvergedIDs_MissingSeedDoesNotFallbackToLocalID(t *testing.T) {
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	assert.Empty(t, resolveConvergedInstallationID(account))
+	assert.Empty(t, resolveConvergedSessionID(account))
+	assert.Empty(t, resolveConvergedThreadID(account, "client-session"))
+	assert.Empty(t, resolveConvergedPromptCacheKey(account, "cache-key"))
+	assert.Nil(t, resolveCodexFingerprintIDsFromRequest(account, http.Header{"session-id": []string{"client-session"}}))
+
+	account.Extra = map[string]any{"openai_device_id": "explicit-device"}
+	assert.Nil(t, resolveCodexFingerprintIDsFromRequest(account, http.Header{"session-id": []string{"client-session"}}),
+		"session 模式即使有显式设备 ID，也必须取得持久化种子后才能生成完整会话身份")
 }
 
 // --- resolveConvergedThreadID ---

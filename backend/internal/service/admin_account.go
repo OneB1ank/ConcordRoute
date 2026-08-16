@@ -153,6 +153,8 @@ func cloneAccountJSONMap(value map[string]any) (map[string]any, error) {
 var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	// 重试标识只属于创建当前复制件的操作，不得传递给后续复制件。
 	duplicateAccountOperationIDExtraKey: {},
+	// 复制账号必须获得独立随机指纹种子，不能继承源账号的设备和会话身份。
+	CodexFingerprintSeedExtraKey: {},
 	// 外部同步标识只属于一个本地账号。
 	"crs_account_id": {},
 	"crs_kind":       {},
@@ -680,6 +682,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库；只有废弃键时则不替换。
 	if shouldReplaceExtra {
 		DiscardDeprecatedAccountExtra(normalizedExtra)
+		// 客户端提交的系统种子一律丢弃；若账号已有种子，下方再从持久化值恢复。
+		delete(normalizedExtra, CodexFingerprintSeedExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -694,6 +698,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OllamaCloudUsageSessionExtraKey,
 			OllamaCloudUsageAutoRefreshExtraKey,
 			OllamaCloudUsageSnapshotExtraKey,
+			CodexFingerprintSeedExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -833,6 +838,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对账号 Extra JSONB 做 key 级合并，避免覆盖运行态或持久化配置键。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	DiscardDeprecatedAccountExtra(updates)
+	// 指纹种子是系统生成的持久化身份，普通增量编辑不得覆盖或删除。
+	delete(updates, CodexFingerprintSeedExtraKey)
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
@@ -847,6 +854,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
 	// 受管会话状态只能通过专用类型接口更新，废弃账号扩展字段直接丢弃。
 	DiscardDeprecatedAccountExtra(input.Extra)
+	delete(input.Extra, CodexFingerprintSeedExtraKey)
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
@@ -1255,6 +1263,8 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 		Priority:        priority,
 		Concurrency:     concurrency,
 		Schedulable:     true,
+		// 影子账号与父账号共享 OAuth 凭据，因此共享父账号已持久化的指纹种子。
+		Extra: map[string]any{CodexFingerprintSeedExtraKey: parent.GetExtraString(CodexFingerprintSeedExtraKey)},
 	}
 
 	// 5. 持久化（Create 填充 shadow.ID）。并发竞态:预查(步骤2)放行后另一请求抢先建成,本次会撞

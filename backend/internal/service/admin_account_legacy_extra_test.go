@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/xai"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +76,74 @@ func TestBulkUpdateAccountsDiscardsDeprecatedBillingProbeExtra(t *testing.T) {
 	require.Len(t, repo.bulkUpdates, 1)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, deprecatedUpstreamBillingProbeEnabledExtraKey)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, deprecatedUpstreamBillingProbeExtraKey)
+	require.Equal(t, "value", repo.bulkUpdates[0].Extra["custom"])
+}
+
+func TestUpdateAccountPreservesCodexFingerprintSeed(t *testing.T) {
+	accountID := int64(113)
+	seed := uuid.NewString()
+	repo := &accountServiceTestRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Status:   StatusActive,
+			Extra: map[string]any{
+				CodexFingerprintSeedExtraKey: seed,
+			},
+		},
+	}}
+
+	updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Extra: map[string]any{
+			CodexFingerprintSeedExtraKey: "forged-seed",
+			"custom":                     "value",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, seed, updated.Extra[CodexFingerprintSeedExtraKey])
+	require.Equal(t, "value", updated.Extra["custom"])
+}
+
+func TestUpdateAccountDiscardsIncomingCodexFingerprintSeedWhenLegacyAccountHasNone(t *testing.T) {
+	accountID := int64(114)
+	repo := &accountServiceTestRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Status:   StatusActive,
+			Extra:    map[string]any{},
+		},
+	}}
+
+	updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Extra: map[string]any{
+			CodexFingerprintSeedExtraKey: "forged-seed",
+			"custom":                     "value",
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotContains(t, updated.Extra, CodexFingerprintSeedExtraKey)
+	require.Equal(t, "value", updated.Extra["custom"])
+}
+
+func TestBulkUpdateAccountsDiscardsCodexFingerprintSeed(t *testing.T) {
+	repo := &accountServiceTestRepo{}
+	result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		Extra: map[string]any{
+			CodexFingerprintSeedExtraKey: "forged-seed",
+			"custom":                     "value",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Success)
+	require.Len(t, repo.bulkUpdates, 1)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, CodexFingerprintSeedExtraKey)
 	require.Equal(t, "value", repo.bulkUpdates[0].Extra["custom"])
 }
 
