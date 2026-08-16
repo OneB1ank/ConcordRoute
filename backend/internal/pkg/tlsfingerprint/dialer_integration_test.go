@@ -28,9 +28,11 @@ func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 		for _, marker := range []string{
 			"certificate has expired",
 			"certificate is not yet valid",
+			"certificate signed by unknown authority",
 			"connection refused",
 			"actively refused",
 			"connection reset",
+			"forcibly closed by the remote host",
 			"broken pipe",
 			"eof",
 			"no such host",
