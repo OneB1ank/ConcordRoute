@@ -93,6 +93,12 @@ func normalizeCodexFingerprintSeed(raw string) (string, bool) {
 	return parsed.String(), true
 }
 
+// CanonicalCodexFingerprintSeed exposes the persistence validator to repository
+// code that must preserve seed ownership while holding the account row lock.
+func CanonicalCodexFingerprintSeed(raw string) (string, bool) {
+	return normalizeCodexFingerprintSeed(raw)
+}
+
 // ShouldEnsureCodexFingerprintSeedForExtraUpdates 判断一次 extra 增量更新是否
 // 显式启用了指纹收敛。仓储层据此在同一数据库事务内补齐随机种子。
 func ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates map[string]any) bool {

@@ -38,8 +38,8 @@ func TestLockAndMergeAccountManagedExtraProtectsOllamaFields(t *testing.T) {
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(int64(29), service.PlatformAnthropic, service.AccountTypeAPIKey, `{"api_key":"key","base_url":"https://ollama.com"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"ollama_group_unchanged", "ollama_proxy_unchanged", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(tt.groupIdentityMatches, tt.proxyIdentityMatches, []byte(`"local-ciphertext"`), []byte(`true`), []byte(`{"status":"ok"}`)))
+				WillReturnRows(sqlmock.NewRows([]string{"ollama_group_unchanged", "ollama_proxy_unchanged", "ollama_session", "ollama_auto", "ollama_snapshot", "codex_fingerprint_seed"}).
+					AddRow(tt.groupIdentityMatches, tt.proxyIdentityMatches, []byte(`"local-ciphertext"`), []byte(`true`), []byte(`{"status":"ok"}`), nil))
 
 			account := &service.Account{
 				ID: 29, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
@@ -69,6 +69,63 @@ func TestLockAndMergeAccountManagedExtraProtectsOllamaFields(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func TestLockAndMergeAccountManagedExtraPreservesRowLockedCodexSeed(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+
+	const persistedSeed = "11111111-1111-4111-8111-111111111111"
+	const concurrentRequestSeed = "22222222-2222-4222-8222-222222222222"
+	mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
+		WithArgs(int64(31), service.PlatformOpenAI, service.AccountTypeOAuth, `{}`, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"ollama_group_unchanged", "ollama_proxy_unchanged", "ollama_session", "ollama_auto", "ollama_snapshot", "codex_fingerprint_seed"}).
+			AddRow(false, true, nil, nil, nil, persistedSeed))
+
+	account := &service.Account{
+		ID: 31, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{},
+		Extra: map[string]any{
+			service.CodexFingerprintSeedExtraKey: concurrentRequestSeed,
+			"codex_fingerprint_mode":             "cockpit",
+		},
+	}
+	got, err := lockAndMergeAccountManagedExtra(context.Background(), client, account)
+
+	require.NoError(t, err)
+	require.Equal(t, persistedSeed, got[service.CodexFingerprintSeedExtraKey])
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLockAndMergeAccountManagedExtraAcceptsGeneratedSeedWhenPersistedSeedInvalid(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+
+	const generatedSeed = "22222222-2222-4222-8222-222222222222"
+	mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
+		WithArgs(int64(32), service.PlatformOpenAI, service.AccountTypeOAuth, `{}`, nil).
+		WillReturnRows(sqlmock.NewRows([]string{"ollama_group_unchanged", "ollama_proxy_unchanged", "ollama_session", "ollama_auto", "ollama_snapshot", "codex_fingerprint_seed"}).
+			AddRow(false, true, nil, nil, nil, "malformed"))
+
+	account := &service.Account{
+		ID: 32, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{},
+		Extra: map[string]any{
+			service.CodexFingerprintSeedExtraKey: generatedSeed,
+			"codex_fingerprint_mode":             "cockpit",
+		},
+	}
+	got, err := lockAndMergeAccountManagedExtra(context.Background(), client, account)
+
+	require.NoError(t, err)
+	require.Equal(t, generatedSeed, got[service.CodexFingerprintSeedExtraKey])
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestUpdateExtraDiscardsDeprecatedAccountExtraKeys(t *testing.T) {

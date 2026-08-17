@@ -615,7 +615,8 @@ func lockAndMergeAccountManagedExtra(ctx context.Context, client *dbent.Client, 
 			proxy_id IS NOT DISTINCT FROM $5,
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
-			extra -> 'ollama_cloud_usage_snapshot'
+			extra -> 'ollama_cloud_usage_snapshot',
+			extra ->> 'codex_fingerprint_seed'
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -637,6 +638,7 @@ func lockAndMergeAccountManagedExtra(ctx context.Context, client *dbent.Client, 
 		currentOllamaSession         []byte
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
+		currentCodexFingerprintSeed  sql.NullString
 	)
 	if err := rows.Scan(
 		&ollamaGroupIdentityUnchanged,
@@ -644,6 +646,7 @@ func lockAndMergeAccountManagedExtra(ctx context.Context, client *dbent.Client, 
 		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
+		&currentCodexFingerprintSeed,
 	); err != nil {
 		return nil, err
 	}
@@ -653,6 +656,22 @@ func lockAndMergeAccountManagedExtra(ctx context.Context, client *dbent.Client, 
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
 	discardDeprecatedAccountExtra(extra)
+	requestedCodexFingerprintSeed := ""
+	if value, ok := extra[service.CodexFingerprintSeedExtraKey].(string); ok {
+		requestedCodexFingerprintSeed = value
+	}
+	delete(extra, service.CodexFingerprintSeedExtraKey)
+	if account.IsOpenAIOAuth() {
+		// The row-locked database value owns the identity. A concurrently generated
+		// request seed is only accepted while the persisted value is still invalid.
+		seed, ok := service.CanonicalCodexFingerprintSeed(currentCodexFingerprintSeed.String)
+		if !ok {
+			seed, ok = service.CanonicalCodexFingerprintSeed(requestedCodexFingerprintSeed)
+		}
+		if ok {
+			extra[service.CodexFingerprintSeedExtraKey] = seed
+		}
+	}
 	for _, key := range []string{
 		service.OllamaCloudUsageSessionExtraKey,
 		service.OllamaCloudUsageAutoRefreshExtraKey,
