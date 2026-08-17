@@ -3490,13 +3490,7 @@ const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>
       }
     } else {
       // OpenAI OAuth 与普通账号一样，将请求映射和最终白名单分开保存。
-      const persisted = buildPersistedModelRestriction(allowedModels.value, modelMappings.value)
-      if (persisted.modelMapping) {
-        credentials.model_mapping = persisted.modelMapping
-      } else {
-        delete credentials.model_mapping
-      }
-      credentials.model_whitelist = persisted.modelWhitelist
+      applyPersistedModelRestriction(credentials)
     }
   } else if (!credentials.model_mapping) {
     delete credentials.model_mapping

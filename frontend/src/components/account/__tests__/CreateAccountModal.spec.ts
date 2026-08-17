@@ -62,6 +62,43 @@ const BaseDialogStub = defineComponent({
   template: '<div v-if="show"><slot /><slot name="footer" /></div>',
 })
 
+const ModelWhitelistSelectorStub = defineComponent({
+  name: 'ModelWhitelistSelector',
+  props: {
+    modelValue: {
+      type: Array,
+      default: () => [],
+    },
+    platform: {
+      type: String,
+      default: '',
+    },
+    syncCredentials: {
+      type: Object,
+      default: undefined,
+    },
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <div>
+      <button
+        type="button"
+        data-testid="set-openai-model-whitelist"
+        @click="$emit('update:modelValue', ['gpt-5.4'])"
+      >
+        set whitelist
+      </button>
+      <button
+        type="button"
+        data-testid="clear-openai-model-whitelist"
+        @click="$emit('update:modelValue', [])"
+      >
+        clear whitelist
+      </button>
+    </div>
+  `,
+})
+
 const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
   props: {
@@ -121,7 +158,7 @@ function mountModal() {
         ProxySelector: true,
         ProxyAdBanner: true,
         GroupSelector: true,
-        ModelWhitelistSelector: true,
+        ModelWhitelistSelector: ModelWhitelistSelectorStub,
         QuotaLimitCard: true,
       },
     },
@@ -246,6 +283,40 @@ describe('CreateAccountModal OpenAI account options', () => {
 
     expect(createOpenAICodexPATMock).toHaveBeenCalledTimes(1)
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBeUndefined()
+  })
+
+  it.each([
+    ['Session', 'import-codex-session', importCodexSessionMock],
+    ['PAT', 'import-codex-pat', createOpenAICodexPATMock],
+  ])('为 Codex %s 导入独立保存最终模型白名单', async (_name, triggerTestId, apiMock) => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="set-openai-model-whitelist"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get(`[data-testid="${triggerTestId}"]`).trigger('click')
+    await flushPromises()
+
+    expect(apiMock).toHaveBeenCalledTimes(1)
+    expect(apiMock.mock.calls[0]?.[0]?.credential_extras).toMatchObject({
+      model_whitelist: ['gpt-5.4'],
+    })
+    expect(apiMock.mock.calls[0]?.[0]?.credential_extras).not.toHaveProperty('model_mapping')
+  })
+
+  it('为 Codex Session 导入显式保存空模型白名单', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="clear-openai-model-whitelist"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.credential_extras).toMatchObject({
+      model_whitelist: [],
+    })
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.credential_extras).not.toHaveProperty('model_mapping')
   })
 
   it('defaults Codex fingerprint convergence to cockpit for OAuth imports', async () => {

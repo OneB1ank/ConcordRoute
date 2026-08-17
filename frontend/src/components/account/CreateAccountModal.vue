@@ -6906,10 +6906,8 @@ const OPENAI_MOBILE_RT_CLIENT_ID = 'app_LlGpXReQgckcGGUo2JrYvtJK'
 const buildOpenAICodexImportCredentialExtras = (): Record<string, unknown> | null => {
   const credentials: Record<string, unknown> = {}
   if (!isOpenAIModelRestrictionDisabled.value) {
-    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
-    if (modelMapping) {
-      credentials.model_mapping = modelMapping
-    }
+    // 与其他 OpenAI OAuth 创建方式保持一致：映射和最终白名单分别保存。
+    applyPersistedModelRestriction(credentials)
   }
 
   const compactModelMapping = buildOpenAICompactModelMapping()
