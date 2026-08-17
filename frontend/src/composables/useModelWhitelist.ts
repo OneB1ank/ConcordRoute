@@ -657,9 +657,17 @@ export function splitPersistedModelRestriction(
   const parsedMapping = splitModelMappingObject(existingMappings)
 
   if (Array.isArray(rawWhitelist)) {
+    // 独立 model_whitelist 出现后，model_mapping 的每一项都是请求侧映射。
+    // 不能再把精确自映射当作旧格式白名单，否则保存后重新打开会丢失这类映射。
+    const modelMappings = Object.entries(existingMappings || {}).flatMap(([rawFrom, rawTo]) => {
+      const from = rawFrom.trim()
+      const to = String(rawTo).trim()
+      return from && to ? [{ from, to }] : []
+    })
+
     return {
       allowedModels: normalizeModelWhitelist(rawWhitelist),
-      modelMappings: parsedMapping.modelMappings
+      modelMappings
     }
   }
 
