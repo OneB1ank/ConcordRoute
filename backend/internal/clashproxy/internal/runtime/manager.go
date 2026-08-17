@@ -63,6 +63,12 @@ func (m *ProcessManager) EnsureRunning(ctx context.Context, prof profile.Profile
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// ProcessManager may be constructed directly in tests or by future callers
+	// instead of through the service factory. Keep the zero value safe so the
+	// first profile start does not panic when recording the child process.
+	if m.processes == nil {
+		m.processes = make(map[int64]*processState)
+	}
 
 	if state := m.processes[prof.ID]; state != nil && state.cmd != nil && state.cmd.Process != nil {
 		if existing, err := m.Instances.GetRunningRuntime(ctx, prof.ID); err == nil && existing != nil {
