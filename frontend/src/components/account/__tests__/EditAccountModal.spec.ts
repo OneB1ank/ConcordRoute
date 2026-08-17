@@ -638,10 +638,40 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
       email: 'oauth@example.com',
       plan_type: 'free',
-      model_mapping: {
-        'gpt-5.4': 'gpt-5.4'
-      }
+      model_whitelist: ['gpt-5.4']
     })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toBeUndefined()
+  })
+
+  it('OpenAI OAuth 编辑白名单时提交独立 model_whitelist', async () => {
+    const account = buildOpenAIOAuthAccount()
+    account.credentials = {
+      ...account.credentials,
+      model_mapping: {
+        'codex-alias': 'gpt-5.4'
+      },
+      model_whitelist: ['gpt-5.4']
+    }
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const whitelistButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('admin.accounts.modelWhitelist'))
+    expect(whitelistButton).toBeTruthy()
+
+    await whitelistButton!.trigger('click')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.4')
+    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
+      'codex-alias': 'gpt-5.4'
+    })
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_whitelist).toEqual([
+      'gpt-5.2-2025-12-11'
+    ])
   })
 
   it('loads and submits the Codex fingerprint mode for OpenAI OAuth accounts', async () => {

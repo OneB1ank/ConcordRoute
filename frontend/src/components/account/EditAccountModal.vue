@@ -3480,11 +3480,23 @@ const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>
   const shouldApplyModelMapping = !openaiPassthroughEnabled.value
 
   if (shouldApplyModelMapping) {
-    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
-    if (modelMapping) {
-      credentials.model_mapping = modelMapping
+    if (isSparkShadow.value) {
+      // Spark 影子账号只允许持久化请求侧映射，不能写入独立白名单字段。
+      const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+      if (modelMapping) {
+        credentials.model_mapping = modelMapping
+      } else {
+        delete credentials.model_mapping
+      }
     } else {
-      delete credentials.model_mapping
+      // OpenAI OAuth 与普通账号一样，将请求映射和最终白名单分开保存。
+      const persisted = buildPersistedModelRestriction(allowedModels.value, modelMappings.value)
+      if (persisted.modelMapping) {
+        credentials.model_mapping = persisted.modelMapping
+      } else {
+        delete credentials.model_mapping
+      }
+      credentials.model_whitelist = persisted.modelWhitelist
     }
   } else if (!credentials.model_mapping) {
     delete credentials.model_mapping
