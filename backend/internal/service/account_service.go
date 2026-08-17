@@ -144,6 +144,9 @@ type AccountBulkUpdate struct {
 	Schedulable    *bool
 	Credentials    map[string]any
 	Extra          map[string]any
+	// EnsureCodexFingerprintSeed 要求仓储层在同一事务内为启用收敛的
+	// OpenAI OAuth 账号补齐独立随机种子。
+	EnsureCodexFingerprintSeed bool
 }
 
 // CreateAccountRequest 创建账号请求

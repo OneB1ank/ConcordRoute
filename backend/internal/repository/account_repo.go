@@ -84,6 +84,44 @@ var schedulerNeutralExtraKeys = map[string]struct{}{
 
 const postgresParameterBatchSize = 50000
 
+const (
+	codexFingerprintSeedCanonicalPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+	codexFingerprintSeedCompactPattern   = "^[0-9a-f]{32}$"
+	codexFingerprintSeedURNPattern       = "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+	codexFingerprintSeedBracedPattern    = "^\\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\}$"
+	codexFingerprintNilSeedHex           = "00000000000000000000000000000000"
+)
+
+var codexFingerprintSeedAcceptedPatterns = []string{
+	codexFingerprintSeedCanonicalPattern,
+	codexFingerprintSeedCompactPattern,
+	codexFingerprintSeedURNPattern,
+	codexFingerprintSeedBracedPattern,
+}
+
+// codexFingerprintSeedValidSQL 生成与 google/uuid.Parse 兼容的 UUID 格式检查，
+// 同时排除 nil UUID，避免损坏数据让多个账号共享同一身份。
+func codexFingerprintSeedValidSQL(extraExpr string) string {
+	value := "BTRIM(COALESCE((" + extraExpr + " ->> 'codex_fingerprint_seed'), ''))"
+	formats := make([]string, 0, len(codexFingerprintSeedAcceptedPatterns))
+	for _, pattern := range codexFingerprintSeedAcceptedPatterns {
+		formats = append(formats, value+" ~* '"+pattern+"'")
+	}
+	normalizedHex := "regexp_replace(LOWER(" + value + "), '^(urn:uuid:)|[{}-]', '', 'g')"
+	return "((" + strings.Join(formats, " OR ") + ") AND " + normalizedHex + " <> '" + codexFingerprintNilSeedHex + "')"
+}
+
+// ensureCodexFingerprintSeedSQL 在账号更新与 scheduler outbox 的同一事务内补种子。
+// 已有有效值保持不变，缺失、格式错误或 nil UUID 才生成新值。
+func ensureCodexFingerprintSeedSQL(extraExpr string) string {
+	wrapped := "(" + extraExpr + ")"
+	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
+		"jsonb_set(" + wrapped + ", '{codex_fingerprint_seed}', " +
+		"CASE WHEN " + codexFingerprintSeedValidSQL(wrapped) +
+		" THEN to_jsonb(" + wrapped + " ->> 'codex_fingerprint_seed') ELSE to_jsonb(gen_random_uuid()::text) END, true) " +
+		"ELSE " + wrapped + " END"
+}
+
 // NewAccountRepository 创建账户仓储实例。
 // 这是对外暴露的构造函数，返回接口类型以便于依赖注入。
 func NewAccountRepository(client *dbent.Client, sqlDB *sql.DB, schedulerCache service.SchedulerCache) service.AccountRepository {
@@ -2376,9 +2414,10 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	discardDeprecatedAccountExtra(updates)
+	ensureCodexFingerprintSeed := service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates)
 	// 随机指纹种子只允许在创建和数据库迁移时写入，运行态增量更新不得轮换身份。
 	delete(updates, service.CodexFingerprintSeedExtraKey)
-	if len(updates) == 0 {
+	if len(updates) == 0 && !ensureCodexFingerprintSeed {
 		return nil
 	}
 
@@ -2406,6 +2445,9 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		}
 	}
 	extraExpression := "(COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled') || $1::jsonb"
+	if ensureCodexFingerprintSeed {
+		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
+	}
 	result, err := client.ExecContext(
 		ctx,
 		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL",
@@ -2515,6 +2557,8 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		return 0, nil
 	}
 	discardDeprecatedAccountExtra(updates.Extra)
+	// 调用方只能请求仓储生成种子，不能通过批量 payload 注入指定身份。
+	delete(updates.Extra, service.CodexFingerprintSeedExtraKey)
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
@@ -2596,7 +2640,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND "+ollamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" {
+	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled'"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -2631,6 +2675,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" ELSE " + extraExpression + " END"
 		} else if snapshotIdentityChanged != "" {
 			extraExpression = "CASE WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot' ELSE " + extraExpression + " END"
+		}
+		if updates.EnsureCodexFingerprintSeed {
+			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}

@@ -99,6 +99,50 @@ func TestSameOpenAIWSPrewarmTargetKeepsRoutingHintSoftAndTLSHard(t *testing.T) {
 	require.False(t, sameOpenAIWSPrewarmTarget(base, betaChanged), "beta feature 变化必须使预热拨号失效")
 }
 
+func TestSameOpenAIWSPrewarmTargetRejectsChangedCodexFingerprintIdentity(t *testing.T) {
+	accountA := newTestOAuthAccount(77, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+		CodexFingerprintSeedExtraKey: "11111111-1111-4111-8111-111111111111",
+	})
+	accountB := newTestOAuthAccount(77, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+		CodexFingerprintSeedExtraKey: "22222222-2222-4222-8222-222222222222",
+	})
+	headersA := make(http.Header)
+	headersB := make(http.Header)
+	applyCodexFingerprintHeaders(headersA, resolveCodexFingerprintIDs(accountA, "client-session", codexFingerprintCockpit))
+	applyCodexFingerprintHeaders(headersB, resolveCodexFingerprintIDs(accountB, "client-session", codexFingerprintCockpit))
+
+	base := openAIWSAcquireRequest{
+		Account: accountA,
+		WSURL:   "wss://example.com/v1/responses",
+		Headers: headersA,
+	}
+	changed := openAIWSAcquireRequest{
+		Account: accountB,
+		WSURL:   base.WSURL,
+		Headers: headersB,
+	}
+
+	require.False(t, sameOpenAIWSPrewarmTarget(base, changed), "账号持久身份变化后不得复用旧预热连接")
+}
+
+func TestNormalizeOpenAIWSHandshakeCompatibilityUsesExplicitDeviceWithoutSeed(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: "device",
+			"openai_device_id":           "explicit-installation-id",
+		},
+	}
+
+	key := normalizeOpenAIWSHandshakeCompatibility(account, nil)
+
+	require.Equal(t, codexFingerprintDevice, key.fingerprintMode)
+	require.Equal(t, "explicit-installation-id", key.codexInstallationID)
+}
+
 func TestOpenAIWSConnLease_WriteJSONAndGuards(t *testing.T) {
 	conn := newOpenAIWSConn("lease_write", 1, &openAIWSFakeConn{}, nil, nil, "")
 	lease := &openAIWSConnLease{conn: conn}

@@ -83,6 +83,34 @@ const codexFingerprintModeExtraKey = "codex_fingerprint_mode"
 // 避免不同部署中相同的本地自增账号 ID 派生出相同的设备和会话标识。
 const CodexFingerprintSeedExtraKey = "codex_fingerprint_seed"
 
+// normalizeCodexFingerprintSeed 校验系统持久化的账号种子并统一为 canonical UUID。
+// nil UUID 不能作为有效身份，否则多个损坏账号会再次收敛到同一个固定值。
+func normalizeCodexFingerprintSeed(raw string) (string, bool) {
+	parsed, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == uuid.Nil {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+// ShouldEnsureCodexFingerprintSeedForExtraUpdates 判断一次 extra 增量更新是否
+// 显式启用了指纹收敛。仓储层据此在同一数据库事务内补齐随机种子。
+func ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates map[string]any) bool {
+	if updates == nil {
+		return false
+	}
+	raw, ok := updates[codexFingerprintModeExtraKey]
+	if !ok {
+		return false
+	}
+	switch codexFingerprintMode(strings.TrimSpace(fmt.Sprint(raw))) {
+	case codexFingerprintDevice, codexFingerprintSession, codexFingerprintCockpit, codexFingerprintFull:
+		return true
+	default:
+		return false
+	}
+}
+
 // GetCodexFingerprintMode 从账号 extra JSON 读取指纹收敛模式。
 // 未设置、空值或非法值使用 Cockpit，统一收敛设备、会话和对话缓存键。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
@@ -119,7 +147,11 @@ func EnsureCodexFingerprintSeed(account *Account) string {
 	if account == nil || !account.IsOpenAIOAuth() {
 		return ""
 	}
-	if seed := strings.TrimSpace(account.GetExtraString(CodexFingerprintSeedExtraKey)); seed != "" {
+	if seed, ok := normalizeCodexFingerprintSeed(account.GetExtraString(CodexFingerprintSeedExtraKey)); ok {
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra[CodexFingerprintSeedExtraKey] = seed
 		return seed
 	}
 	if account.Extra == nil {
@@ -153,7 +185,11 @@ func resolveCodexFingerprintSeed(account *Account) string {
 	if account == nil || !account.IsOpenAIOAuth() {
 		return ""
 	}
-	return strings.TrimSpace(account.GetExtraString(CodexFingerprintSeedExtraKey))
+	seed, ok := normalizeCodexFingerprintSeed(account.GetExtraString(CodexFingerprintSeedExtraKey))
+	if !ok {
+		return ""
+	}
+	return seed
 }
 
 // resolveConvergedInstallationID 返回账号级恒定的 installation_id。

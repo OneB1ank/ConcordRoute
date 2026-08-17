@@ -72,6 +72,52 @@ func TestEnsureCodexFingerprintSeed_StableAndUnique(t *testing.T) {
 	assert.NotEqual(t, seedA, seedB, "相同本地账号 ID 的独立记录必须获得不同随机种子")
 }
 
+func TestEnsureCodexFingerprintSeed_NormalizesSupportedUUIDForms(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			CodexFingerprintSeedExtraKey: "urn:uuid:11111111-1111-4111-8111-111111111111",
+		},
+	}
+
+	seed := EnsureCodexFingerprintSeed(account)
+
+	require.Equal(t, "11111111-1111-4111-8111-111111111111", seed)
+	require.Equal(t, seed, account.Extra[CodexFingerprintSeedExtraKey])
+}
+
+func TestEnsureCodexFingerprintSeed_ReplacesInvalidAndNilUUID(t *testing.T) {
+	for _, invalid := range []string{"broken", uuid.Nil.String()} {
+		t.Run(invalid, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Extra:    map[string]any{CodexFingerprintSeedExtraKey: invalid},
+			}
+
+			seed := EnsureCodexFingerprintSeed(account)
+
+			require.NotEqual(t, invalid, seed)
+			require.NoError(t, uuid.Validate(seed))
+			require.NotEqual(t, uuid.Nil.String(), seed)
+		})
+	}
+}
+
+func TestShouldEnsureCodexFingerprintSeedForExtraUpdates(t *testing.T) {
+	for _, mode := range []string{"device", "session", "cockpit", "full"} {
+		require.True(t, ShouldEnsureCodexFingerprintSeedForExtraUpdates(map[string]any{
+			codexFingerprintModeExtraKey: mode,
+		}), mode)
+	}
+	require.False(t, ShouldEnsureCodexFingerprintSeedForExtraUpdates(nil))
+	require.False(t, ShouldEnsureCodexFingerprintSeedForExtraUpdates(map[string]any{}))
+	require.False(t, ShouldEnsureCodexFingerprintSeedForExtraUpdates(map[string]any{
+		codexFingerprintModeExtraKey: "off",
+	}))
+}
+
 func TestPrepareCodexFingerprintSeedForCreate_RootRotatesIncomingShadowPreservesParent(t *testing.T) {
 	incoming := uuid.NewString()
 	root := &Account{

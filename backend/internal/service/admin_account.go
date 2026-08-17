@@ -735,6 +735,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
 	DiscardDeprecatedAccountExtra(account.Extra)
+	// 仅修复已有损坏种子，或在请求显式启用收敛时补种子。历史无种子账号的
+	// 普通编辑仍保持原状，防止伪造 seed 的输入借由更新路径触发身份变化。
+	_, hasPersistedSeed := account.Extra[CodexFingerprintSeedExtraKey]
+	if hasPersistedSeed || ShouldEnsureCodexFingerprintSeedForExtraUpdates(account.Extra) {
+		EnsureCodexFingerprintSeed(account)
+	}
 	if account.Extra != nil {
 		if !IsOllamaCloudUsageAccount(account) {
 			delete(account.Extra, OllamaCloudUsageSessionExtraKey)
@@ -974,8 +980,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// Prepare bulk updates for columns and JSONB fields.
 	repoUpdates := AccountBulkUpdate{
-		Credentials: input.Credentials,
-		Extra:       input.Extra,
+		Credentials:                input.Credentials,
+		Extra:                      input.Extra,
+		EnsureCodexFingerprintSeed: ShouldEnsureCodexFingerprintSeedForExtraUpdates(input.Extra),
 	}
 	if input.Name != "" {
 		repoUpdates.Name = &input.Name
