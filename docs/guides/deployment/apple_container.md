@@ -1,6 +1,6 @@
 # Apple container 部署指南
 
-TokenRouter 可以通过 Apple 的 `container` CLI 运行原生三服务栈。该方式直接运行已发布的 TokenRouter、PostgreSQL 和 Redis OCI 镜像，不需要 Docker Desktop 或兼容 Docker 的守护进程。
+ConcordRoute 可以通过 Apple 的 `container` CLI 运行原生三服务栈。该方式直接运行已发布的 ConcordRoute、PostgreSQL 和 Redis OCI 镜像，不需要 Docker Desktop 或兼容 Docker 的守护进程。
 
 其他部署方式见 [部署指南](index.md)，工程约束见 [部署与数据库迁移 Project Doc](../../operations/deployment_and_migrations.md)。
 
@@ -27,8 +27,8 @@ container --version
 ## 快速开始
 
 ```bash
-git clone https://github.com/TokenFlux/TokenRouter.git
-cd TokenRouter/deploy
+git clone -b cockpit-sync https://github.com/OneB1ank/ConcordRoute.git
+cd ConcordRoute/deploy
 
 # 创建 .env，并随机生成 PostgreSQL、JWT 和 TOTP 密钥。
 ./apple-container.sh init
@@ -36,7 +36,7 @@ cd TokenRouter/deploy
 # 启动前检查可选设置。
 nano .env
 
-# 创建卷、网络和容器，等待依赖就绪后启动 TokenRouter。
+# 创建卷、网络和容器，等待依赖就绪后启动 ConcordRoute。
 ./apple-container.sh up
 
 # 检查 PostgreSQL、Redis 和应用端点。
@@ -63,7 +63,7 @@ nano .env
 # 停止容器，保留全部资源和数据。
 ./apple-container.sh down
 
-# 按依赖顺序重启 PostgreSQL、Redis 和 TokenRouter。
+# 按依赖顺序重启 PostgreSQL、Redis 和 ConcordRoute。
 ./apple-container.sh restart
 
 # 显示资源状态并执行实时健康探测。
@@ -102,7 +102,7 @@ export SUB2API_ENV_FILE=/absolute/path/to/sub2api.env
 可以单独覆盖 Apple 容器使用的镜像：
 
 ```dotenv
-APPLE_CONTAINER_SUB2API_IMAGE=ghcr.io/tokenflux/tokenrouter:latest
+APPLE_CONTAINER_SUB2API_IMAGE=ghcr.io/tokenflux/concordroute:latest
 APPLE_CONTAINER_POSTGRES_IMAGE=postgres:18-alpine
 APPLE_CONTAINER_REDIS_IMAGE=redis:8-alpine
 ```
@@ -115,10 +115,10 @@ Apple 工作流对共用设置的处理如下：
 
 | 设置 | Apple 工作流行为 |
 |---|---|
-| 应用和网关变量 | 从 `.env` 传给 TokenRouter |
+| 应用和网关变量 | 从 `.env` 传给 ConcordRoute |
 | `BIND_HOST`、`SERVER_PORT` | 用于 macOS 公开端口 |
 | `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB` | 仅用于 PostgreSQL 首次初始化 |
-| `REDIS_PASSWORD` | 同时应用到 Redis 和 TokenRouter |
+| `REDIS_PASSWORD` | 同时应用到 Redis 和 ConcordRoute |
 | `DATABASE_PORT`、`REDIS_PORT` | 内部端口固定为 5432 和 6379 |
 | `POSTGRES_MAX_*`、`REDIS_MAXCLIENTS` | 当前不会应用到数据库或缓存服务 |
 
@@ -132,11 +132,11 @@ Apple 工作流对共用设置的处理如下：
 | 网络 | `sub2api-apple` |
 | 卷 | `sub2api-apple-data`、`sub2api-apple-postgres-data`、`sub2api-apple-redis-data` |
 
-PostgreSQL 卷挂载到 `/var/lib/postgresql`，从而保留 PostgreSQL 18 默认的子数据目录。TokenRouter 和 Redis 也把数据保存在各自 Apple 卷挂载点下的子目录中。Apple 命名卷不具备 Docker 的初始内容复制和挂载点所有权行为，因此必须采用这种目录结构。
+PostgreSQL 卷挂载到 `/var/lib/postgresql`，从而保留 PostgreSQL 18 默认的子数据目录。ConcordRoute 和 Redis 也把数据保存在各自 Apple 卷挂载点下的子目录中。Apple 命名卷不具备 Docker 的初始内容复制和挂载点所有权行为，因此必须采用这种目录结构。
 
 ## 网络
 
-Apple `container` 1.1 不提供 Compose 风格的网络内服务别名。PostgreSQL 和 Redis 启动后，脚本通过 `container inspect` 读取它们当前的私有网络 IPv4 地址，将地址注入新创建的应用容器，再启动 TokenRouter。脚本不会修改 `~/.config/container/config.toml` 或 macOS 宿主机解析器。
+Apple `container` 1.1 不提供 Compose 风格的网络内服务别名。PostgreSQL 和 Redis 启动后，脚本通过 `container inspect` 读取它们当前的私有网络 IPv4 地址，将地址注入新创建的应用容器，再启动 ConcordRoute。脚本不会修改 `~/.config/container/config.toml` 或 macOS 宿主机解析器。
 
 三个服务只连接到私有 `sub2api-apple` 网络。只有应用发布宿主机端口，数据库和 Redis 端口不会公开。
 
@@ -177,12 +177,12 @@ container exec sub2api-apple sh -c 'tar -C "$DATA_DIR" -czf - .' \
 
 # 只删除应用容器，以便辅助容器挂载它的命名卷。
 container delete sub2api-apple
-TOKENROUTER_IMAGE=ghcr.io/tokenflux/tokenrouter:latest # 应与 .env 中的 APPLE_CONTAINER_SUB2API_IMAGE 一致。
+CONCORDROUTE_IMAGE=ghcr.io/tokenflux/concordroute:latest # 应与 .env 中的 APPLE_CONTAINER_SUB2API_IMAGE 一致。
 container run --rm --name sub2api-apple-data-restore \
   --entrypoint /bin/sh \
   --volume sub2api-apple-data:/restore \
   --volume "$PWD/backups:/backup:ro" \
-  "$TOKENROUTER_IMAGE" \
+  "$CONCORDROUTE_IMAGE" \
   -c 'rm -rf /restore/data && mkdir -p /restore/data && tar -xzf /backup/sub2api-data.tar.gz -C /restore/data'
 
 # 在应用不存在时恢复 PostgreSQL 逻辑备份。
@@ -219,5 +219,5 @@ container system start
 - 健康探测只在 `up`、`restart` 和 `status` 期间运行；Apple `container` 不会持续调度探测。
 - Docker Compose、Testcontainers、Buildx 以及依赖 `/var/run/docker.sock` 的工具不能直接使用该运行时。
 - 将该工作流用于重要数据前，必须验证命名卷的备份和恢复流程。
-- 脚本面向原生 `linux/arm64` 镜像，TokenRouter 正常发布物包含 arm64 版本。
+- 脚本面向原生 `linux/arm64` 镜像，ConcordRoute 正常发布物包含 arm64 版本。
 - 包括凭据在内的运行环境值会保留在 Apple container 配置中，能够检查本地运行时的用户可以看到这些值。

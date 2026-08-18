@@ -95,8 +95,8 @@ FROM ${ALPINE_IMAGE}
 
 # Labels
 LABEL maintainer="TokenFlux <github.com/TokenFlux>"
-LABEL description="TokenRouter - AI API Gateway Platform"
-LABEL org.opencontainers.image.source="https://github.com/OneB1ank/TokenRouter-cockpit"
+LABEL description="ConcordRoute - AI API Gateway Platform"
+LABEL org.opencontainers.image.source="https://github.com/OneB1ank/ConcordRoute"
 
 # Install runtime dependencies
 RUN apk add --no-cache \

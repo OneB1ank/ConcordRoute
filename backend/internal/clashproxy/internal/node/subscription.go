@@ -42,7 +42,7 @@ func DownloadSubscription(ctx context.Context, rawURL string, opts SubscriptionD
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/x-yaml,text/yaml,text/plain,*/*")
-	req.Header.Set("User-Agent", "TokenRouter-ClashProxy/1.0")
+	req.Header.Set("User-Agent", "ConcordRoute-ClashProxy/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {

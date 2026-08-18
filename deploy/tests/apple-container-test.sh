@@ -48,7 +48,7 @@ assert_exists "${STATE_DIR}/containers/sub2api-apple"
 assert_exists "${STATE_DIR}/containers/sub2api-apple-postgres"
 assert_exists "${STATE_DIR}/containers/sub2api-apple-redis"
 assert_exists "${STATE_DIR}/running/sub2api-apple"
-grep -Fq 'ghcr.io/oneb1ank/tokenrouter:latest' "${STATE_DIR}/commands.log" || fail "up did not use the TokenRouter application image"
+grep -Fq 'ghcr.io/oneb1ank/concordroute:latest' "${STATE_DIR}/commands.log" || fail "up did not use the ConcordRoute application image"
 "${SCRIPT}" status >/dev/null
 
 "${SCRIPT}" up --recreate

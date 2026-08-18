@@ -83,7 +83,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("escapes_html_in_site_name", func(t *testing.T) {
-		html := []byte(`<html><head><title>TokenRouter - AI API Gateway</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>ConcordRoute - AI API Gateway</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":"</title><script>alert(1)</script><title>"}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -93,7 +93,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("escapes_ampersand_in_site_name", func(t *testing.T) {
-		html := []byte(`<html><head><title>TokenRouter</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>ConcordRoute</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":"A&B"}`)
 
 		result := injectSiteTitle(html, settingsJSON)

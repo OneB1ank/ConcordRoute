@@ -266,7 +266,7 @@ func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetri
 	createCalls := 0
 	stage.createTemp = func() (*os.File, error) {
 		createCalls++
-		return os.CreateTemp("", "tokenrouter-openai-first-output-fallback-*")
+		return os.CreateTemp("", "concordroute-openai-first-output-fallback-*")
 	}
 	removeCalls := 0
 	stage.removeFile = func(path string) error {

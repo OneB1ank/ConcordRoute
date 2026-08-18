@@ -1,14 +1,14 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="TokenRouter Continuity" width="112" />
+  <img src="assets/logo.svg" alt="ConcordRoute" width="112" />
 
-  <h1>TokenRouter Continuity</h1>
+  <h1>ConcordRoute</h1>
 
   <p><strong>基于 TokenRouter 的身份、传输与出口一致性增强分支</strong></p>
 
   <p>
-    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml"><img src="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/releases"><img src="https://img.shields.io/github/v/release/OneB1ank/TokenRouter-cockpit?display_name=tag" alt="Release" /></a>
-    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io%2Foneb1ank%2Ftokenrouter-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
+    <a href="https://github.com/OneB1ank/ConcordRoute/actions/workflows/backend-ci.yml"><img src="https://github.com/OneB1ank/ConcordRoute/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/OneB1ank/ConcordRoute/releases"><img src="https://img.shields.io/github/v/release/OneB1ank/ConcordRoute?display_name=tag" alt="Release" /></a>
+    <a href="https://github.com/OneB1ank/ConcordRoute/pkgs/container/concordroute"><img src="https://img.shields.io/badge/container-ghcr.io%2Foneb1ank%2Fconcordroute-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0--or--later-4c1.svg" alt="License: LGPL-3.0-or-later" /></a>
   </p>
 
@@ -17,11 +17,11 @@
 
 ## 项目定位
 
-TokenRouter Continuity 主要修改自 [TokenRouter](https://github.com/TokenFlux/TokenRouter)，保留其 AI API 网关、账号调度、用量统计、订阅计费和管理后台能力，并重点增强 Codex/OpenAI 多账号场景下的身份、协议和网络出口一致性。
+ConcordRoute 主要修改自 [TokenRouter](https://github.com/TokenFlux/TokenRouter)，保留其 AI API 网关、账号调度、用量统计、订阅计费和管理后台能力，并重点增强 Codex/OpenAI 多账号场景下的身份、协议和网络出口一致性。
 
 本分支关注的“额度异常”并不是提高账号额度，而是减少账号切换、会话漂移、缓存键变化、客户端特征不一致、代理出口频繁变化以及日志口径不统一所造成的额外请求、缓存失效、错误探针和用量观测偏差。账号的真实额度、限流和动态策略仍由上游服务决定。
 
-## Continuity 特性
+## ConcordRoute 特性
 
 - **Cockpit 身份收敛**：每个账号保持稳定 installation/device 与主 session，不同对话使用独立且稳定的 thread、window 和 prompt cache key。
 - **账号切换隔离**：会话标识按账号作用域派生，调度切换账号时不会直接继承另一个账号的上游身份。
@@ -38,7 +38,7 @@ TokenRouter Continuity 主要修改自 [TokenRouter](https://github.com/TokenFlu
 4. **默认使用 Cockpit 模式**：它在账号级稳定设备和主会话，在对话级隔离 thread 与缓存键。已有特殊客户端集成可按实际情况选择 session、full 或 off。
 5. **根据观测调整**：结合请求错误、TTFT、缓存命中、429/529、代理健康和账号用量判断问题，不把单一指标直接解释为额度变化。
 
-更详细的配置原则见 [身份、TLS 与出口一致性指南](docs/guides/continuity.md)。
+更详细的差异和配置原则见 [指纹、身份与出口一致性说明](docs/guides/fingerprint-consistency.md)。
 
 ## 上游与致谢
 

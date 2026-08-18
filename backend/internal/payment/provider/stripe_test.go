@@ -79,7 +79,7 @@ func TestBuildStripeCheckoutSessionCreateParamsUsesDashboardPaymentMethods(t *te
 	expiresAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	params := buildStripeCheckoutSessionCreateParams("cus_123", payment.CreatePaymentRequest{
 		OrderID:   "sub2_order_123",
-		Subject:   "TokenRouter Balance",
+		Subject:   "ConcordRoute Balance",
 		ReturnURL: "https://app.example.com/payment/result?order_id=101",
 		ExpiresAt: expiresAt,
 		BillingInfo: &payment.BillingInfo{
@@ -133,7 +133,7 @@ func TestBuildStripeCheckoutSessionCreateParamsUsesDashboardPaymentMethods(t *te
 	if lineItem.PriceData.UnitAmount == nil || *lineItem.PriceData.UnitAmount != 1292 {
 		t.Fatalf("unit_amount = %#v, want 1292", lineItem.PriceData.UnitAmount)
 	}
-	if lineItem.PriceData.ProductData == nil || lineItem.PriceData.ProductData.Name == nil || *lineItem.PriceData.ProductData.Name != "TokenRouter Balance" {
+	if lineItem.PriceData.ProductData == nil || lineItem.PriceData.ProductData.Name == nil || *lineItem.PriceData.ProductData.Name != "ConcordRoute Balance" {
 		t.Fatalf("product data = %#v", lineItem.PriceData.ProductData)
 	}
 	if params.ExpiresAt == nil || *params.ExpiresAt != expiresAt.Unix() {
@@ -280,7 +280,7 @@ func TestBuildStripeCustomerCreateParamsPreservesApplicationBillingDetails(t *te
 
 	req := payment.CreatePaymentRequest{
 		OrderID:   "sub2_order_hk_company",
-		Subject:   "TokenRouter Subscription",
+		Subject:   "ConcordRoute Subscription",
 		UserEmail: "account@example.com",
 		BillingInfo: &payment.BillingInfo{
 			Name:  " HK SYC Limited ",

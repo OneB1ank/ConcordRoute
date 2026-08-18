@@ -37,7 +37,7 @@ type CodexInviteResetService struct {
 	httpUpstream        HTTPUpstream
 	openAITokenProvider *OpenAITokenProvider
 	tlsFPProfileService *TLSFingerprintProfileService
-	tlsFPRouterReader   OpenAIOAuthTokenRouterReader
+	tlsFPRouterReader   OpenAIOAuthTLSRouterReader
 }
 
 // NewCodexInviteResetService 创建 Codex 邀请重置服务。
@@ -46,7 +46,7 @@ func NewCodexInviteResetService(
 	httpUpstream HTTPUpstream,
 	openAITokenProvider *OpenAITokenProvider,
 	tlsFPProfileService *TLSFingerprintProfileService,
-	tlsFPRouterReader OpenAIOAuthTokenRouterReader,
+	tlsFPRouterReader OpenAIOAuthTLSRouterReader,
 ) *CodexInviteResetService {
 	return &CodexInviteResetService{
 		adminService:        adminService,

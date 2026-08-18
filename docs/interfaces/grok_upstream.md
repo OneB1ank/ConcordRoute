@@ -1,6 +1,6 @@
 # Grok / xAI 上游
 
-TokenRouter 支持 Grok OAuth 订阅账号和标准 xAI API Key 账号，并通过 OpenAI 兼容的 Responses、Chat Completions、Messages 和 WebSocket 入口转发请求。Grok 分组还支持图片生成/编辑、视频生成/编辑/扩展、视频状态查询、原生搜索和 Voice API。
+ConcordRoute 支持 Grok OAuth 订阅账号和标准 xAI API Key 账号，并通过 OpenAI 兼容的 Responses、Chat Completions、Messages 和 WebSocket 入口转发请求。Grok 分组还支持图片生成/编辑、视频生成/编辑/扩展、视频状态查询、原生搜索和 Voice API。
 
 本文覆盖账号凭据、聊天/媒体转发、媒体资格、异步视频归属、模型目录和运行时变量，不定义 xAI 套餐价格，也不把上游当前返回的所有动态模型固化为兼容承诺。
 
@@ -49,7 +49,7 @@ OAuth 访问令牌 JWT 的数字或字符串 `tier` 是账号档位的首选信�
 
 ## 媒体请求格式
 
-JSON 图片编辑和视频生成请求可在 `image`、`images`、`reference_images` 与 `mask` 对象中提供参考图片。与 xAI 直接兼容的请求应使用 `url` 字段；历史 `image_url` 字段仍可使用，TokenRouter 会在转发前把它规范化为 `url`。如果两者同时存在，则保留非空的 `url`；空白 `url` 会回退使用 `image_url`。multipart 图片编辑中的上传文件也会转换为 `url` 形式的 data URL。
+JSON 图片编辑和视频生成请求可在 `image`、`images`、`reference_images` 与 `mask` 对象中提供参考图片。与 xAI 直接兼容的请求应使用 `url` 字段；历史 `image_url` 字段仍可使用，ConcordRoute 会在转发前把它规范化为 `url`。如果两者同时存在，则保留非空的 `url`；空白 `url` 会回退使用 `image_url`。multipart 图片编辑中的上传文件也会转换为 `url` 形式的 data URL。
 
 ## 媒体账号资格
 
@@ -77,9 +77,9 @@ OAuth 凭据失效、账号资格变化和上游限流使用带凭据快照的�
 
 ## 客户端配置
 
-用户可在 API Key 页面通过“使用密钥”生成 Grok Build CLI、Codex CLI 或 OpenCode 配置。现有 `config.toml` 应先备份，再合并新模型配置。Codex 配置使用环境变量保存 TokenRouter Key，显式设置 `requires_openai_auth=false`，并以 HTTP/SSE Responses 模式关闭 WebSocket；不能要求用户再登录 ChatGPT，也不能把密钥写进仓库。
+用户可在 API Key 页面通过“使用密钥”生成 Grok Build CLI、Codex CLI 或 OpenCode 配置。现有 `config.toml` 应先备份，再合并新模型配置。Codex 配置使用环境变量保存 ConcordRoute Key，显式设置 `requires_openai_auth=false`，并以 HTTP/SSE Responses 模式关闭 WebSocket；不能要求用户再登录 ChatGPT，也不能把密钥写进仓库。
 
-Grok Build CLI 的模型配置必须指向 TokenRouter 对外地址（以 `/v1` 结尾），不能直接使用 `api.x.ai` 或内部 OAuth 代理地址。OAuth 流量默认转发到 Grok CLI 订阅代理。
+Grok Build CLI 的模型配置必须指向 ConcordRoute 对外地址（以 `/v1` 结尾），不能直接使用 `api.x.ai` 或内部 OAuth 代理地址。OAuth 流量默认转发到 Grok CLI 订阅代理。
 
 ## 默认模型目录
 

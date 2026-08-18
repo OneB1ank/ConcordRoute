@@ -34,7 +34,7 @@ Antigravity 账号的 `platform` 为 `antigravity`。管理端通过 `/api/v1/ad
 | `GET /antigravity/v1/models`、`/usage` | Claude 风格自省 | 模型与 Key 用量 |
 | `/antigravity/v1beta/models/*` | Gemini v1beta | list/get/generate/stream/countTokens 等 Gemini 形状 |
 
-Claude Code 可把 base URL 指向部署地址的 `/antigravity`，认证值仍是 TokenRouter API Key。Gemini 入口中的 `x-goog-api-key` 同样接收 TokenRouter Key，不是 Google 上游 key。
+Claude Code 可把 base URL 指向部署地址的 `/antigravity`，认证值仍是 ConcordRoute API Key。Gemini 入口中的 `x-goog-api-key` 同样接收 ConcordRoute Key，不是 Google 上游 key。
 
 专用路由仍执行请求体限制、client request ID、Ops error logger、endpoint 归一化、分组和订阅/余额准入。强制平台只限制候选账号，不能绕过 Key、团队、分组或模型权限。
 

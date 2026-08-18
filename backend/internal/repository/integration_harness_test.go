@@ -142,14 +142,14 @@ func dockerIsAvailable(ctx context.Context) bool {
 
 // selectDockerImage 为集成测试框架解析容器镜像。
 //
-// TOKENROUTER_TEST_POSTGRES_IMAGE 可覆盖 PostgreSQL 镜像，使测试能在文档声明的
+// CONCORDROUTE_TEST_POSTGRES_IMAGE 可覆盖 PostgreSQL 镜像，使测试能在文档声明的
 // 最低支持版本上运行，而不只验证最新版本。这对跨大版本行为不同的 SQL 很重要：
 // PostgreSQL 17 起 jsonpath .datetime() 才接受 ISO-8601 的 "Z" 标识，
 // 固定使用 18 的测试无法发现 14–16 上的故障。
 //
-//	TOKENROUTER_TEST_POSTGRES_IMAGE=postgres:15-alpine go test -tags integration ./internal/repository/
+//	CONCORDROUTE_TEST_POSTGRES_IMAGE=postgres:15-alpine go test -tags integration ./internal/repository/
 func selectDockerImage(ctx context.Context, preferred string) string {
-	if override := strings.TrimSpace(os.Getenv("TOKENROUTER_TEST_POSTGRES_IMAGE")); override != "" &&
+	if override := strings.TrimSpace(os.Getenv("CONCORDROUTE_TEST_POSTGRES_IMAGE")); override != "" &&
 		strings.HasPrefix(preferred, "postgres:") {
 		return override
 	}

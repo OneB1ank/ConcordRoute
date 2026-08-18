@@ -118,7 +118,7 @@ func (s *S3BackupStore) uploadBackupMultipart(ctx context.Context, key string, b
 
 // uploadBackupSpooledPut 先写入权限受限的临时文件，再以已知长度执行兼容性更好的 PutObject。
 func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, body io.Reader, contentType string) (sizeBytes int64, err error) {
-	tmp, err := os.CreateTemp("", "tokenrouter-backup-upload-*.tmp")
+	tmp, err := os.CreateTemp("", "concordroute-backup-upload-*.tmp")
 	if err != nil {
 		return 0, fmt.Errorf("create backup upload temp file: %w", err)
 	}

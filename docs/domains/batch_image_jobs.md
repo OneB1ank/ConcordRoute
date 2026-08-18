@@ -1,6 +1,6 @@
 # 批量图片作业
 
-TokenRouter 通过统一 API 提供异步 Gemini 批量图片生成，底层由 Redis worker、PostgreSQL 状态和提供商专用批处理后端共同实现。
+ConcordRoute 通过统一 API 提供异步 Gemini 批量图片生成，底层由 Redis worker、PostgreSQL 状态和提供商专用批处理后端共同实现。
 
 本文覆盖公共资源形状、持久化作业生命周期、队列协调、计费预留、提供商执行、清理、安全边界、配置和验证。不定义生产价格、特定部署的 Google Cloud IAM 策略或普通同步图片生成。
 
@@ -9,7 +9,7 @@ TokenRouter 通过统一 API 提供异步 Gemini 批量图片生成，底层由 
 - `gemini_api`
 - `vertex`
 
-API 用户不会看到 Gemini 文件名、Vertex 作业名、GCS 路径、签名 URL、API Key 或服务账号材料。当前实现通过 TokenRouter 代理下载。
+API 用户不会看到 Gemini 文件名、Vertex 作业名、GCS 路径、签名 URL、API Key 或服务账号材料。当前实现通过 ConcordRoute 代理下载。
 
 ## 章节导航
 
@@ -70,7 +70,7 @@ DELETE /v1/images/batches/{id}/outputs
 
 - `gemini-2.5-flash-image` 和其他 Flash Image 别名：每个条目最多 3 张参考图片。
 - `gemini-3-pro-image` 和其他 Pro Image 别名：每个条目最多 14 张参考图片。
-- 每个批量作业：所有条目按 `output_count` 展开后，参考图片附件总数最多 1000。这是 TokenRouter 用于控制请求大小和成本的内部限制，不是生成图片上限，也不是 Pro Image 单条目能力。每个作业的生成结果上限为 200 张图片。
+- 每个批量作业：所有条目按 `output_count` 展开后，参考图片附件总数最多 1000。这是 ConcordRoute 用于控制请求大小和成本的内部限制，不是生成图片上限，也不是 Pro Image 单条目能力。每个作业的生成结果上限为 200 张图片。
 - 每个批量作业：解码后的内联参考图片数据总计最多 128 MB。大批量或重复参考图应优先使用 `gs://` `file_uri`，也可以拆分为多个作业。
 
 每个条目的 `output_count` 可选，默认为 `1`。它表示“用同一提示词和参考图集合重复 N 次”，而不是依赖 Gemini 在一次上游请求中返回多张图片。后端会把每次重复展开为独立提供商 JSONL 行，并使用 `cover_001_01`、`cover_001_02` 等带后缀的自定义 ID。当前限制：
@@ -219,7 +219,7 @@ DELETE /v1/images/batches/{id}/outputs
 - 支持配置了 API Key 的 Gemini `apikey` 上游账号。
 - 结果文件引用只在内部使用。
 - 永不返回 API Key。
-- 管理员配置符合条件的 Gemini API Key 上游账号后，可以通过 TokenRouter 选择并提交该提供商。
+- 管理员配置符合条件的 Gemini API Key 上游账号后，可以通过 ConcordRoute 选择并提交该提供商。
 
 `vertex`：
 
@@ -234,21 +234,21 @@ DELETE /v1/images/batches/{id}/outputs
 
 ## 启用 Google 官方能力
 
-运维人员为任何分组开启 TokenRouter 批量图片前，必须先在 Google 官方控制台启用 Gemini 或 Vertex 能力。TokenRouter 功能开关和分组开关不会自动创建 Google 侧访问权限。
+运维人员为任何分组开启 ConcordRoute 批量图片前，必须先在 Google 官方控制台启用 Gemini 或 Vertex 能力。ConcordRoute 功能开关和分组开关不会自动创建 Google 侧访问权限。
 
 推荐生产路径：
 
 - 使用已启用结算的 Google Cloud 项目。
 - 为项目启用相应 Gemini API 或 Vertex AI API。
-- TokenRouter 运行时使用服务账号或应用默认凭据。
+- ConcordRoute 运行时使用服务账号或应用默认凭据。
 - 为批量图片输入输出创建固定 Cloud Storage 存储桶，并向运行时和 Vertex 服务代理授予最低必要存储桶权限。
-- 在 TokenRouter 中配置项目 ID、区域、受管存储桶、提供商账号、模型白名单和价格。
+- 在 ConcordRoute 中配置项目 ID、区域、受管存储桶、提供商账号、模型白名单和价格。
 - 全局启用 `BATCH_IMAGE_ENABLED`，在目标 Gemini 分组上启用图片生成，再为该分组启用 `allow_batch_image_generation`。非 Gemini 分组不支持批量图片；只有 Gemini 分组先启用图片生成后，管理界面才显示批量图片开关。
 
 API Key 路径：
 
 - Google API Key 适合 Gemini API 开发和受支持的 Gemini 方法。
-- TokenRouter 的 `x-goog-api-key` 兼容请求头仍要求 TokenRouter Key，而不是普通 Google Key。
+- ConcordRoute 的 `x-goog-api-key` 兼容请求头仍要求 ConcordRoute Key，而不是普通 Google Key。
 - 不应把普通 Google API Key 记录为 Vertex 服务账号批量作业的默认生产凭据。
 - 管理员配置 Gemini API Key 上游账号后，应在 Google 账号具备必要结算或预付状态时执行一次低成本批量图片验证。没有预付时，只能记录提供商可被选择和调用，以及提交失败会释放预留，不应推断更多能力。
 

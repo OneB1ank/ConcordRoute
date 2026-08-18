@@ -21,6 +21,7 @@ import (
 
 const (
 	// grokGatewayUserAgent 标识本服务转发到 xAI/Grok 上游的网关请求。
+	// 保持既有上游协议标识，避免仅因界面品牌变化而改变请求指纹。
 	grokGatewayUserAgent = "tokenrouter-grok/1.0"
 	// Composer 图片桥接使用 Grok Build 生成简洁描述，限制输出长度以控制额外用量。
 	grokComposerImageBridgeVisionModel     = "grok-build-0.1"

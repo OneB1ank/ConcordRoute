@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 该键已经写入现有实例的设置表，重命名会让升级后的进程读不到原配置。
 const forwardedIPSettingsKey = "tokenrouter.forwarded_ip_settings"
 
 type forwardedIPSettings struct {

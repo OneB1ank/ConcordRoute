@@ -93,7 +93,7 @@ func TestUpdateServiceUsesForkReleaseChannel(t *testing.T) {
 	require.Equal(t, "0.2.100", info.CurrentVersion)
 	require.Equal(t, "0.2.100", info.LatestVersion)
 	require.False(t, info.HasUpdate)
-	require.Equal(t, "OneB1ank/TokenRouter-cockpit", client.latestRepo)
+	require.Equal(t, "OneB1ank/ConcordRoute", client.latestRepo)
 }
 
 func TestUpdateServiceRejectsReleaseVersionSuffix(t *testing.T) {
@@ -204,7 +204,7 @@ func TestUpdateServiceListRollbackVersionsSortsUnorderedInput(t *testing.T) {
 func TestUpdateServiceListRollbackVersionsRejectsNonSemverTags(t *testing.T) {
 	releases := []*GitHubRelease{
 		{TagName: "v0.1.146"},
-		{TagName: "v0.1.145;$(touch /tmp/tokenrouter-pwned)"},
+		{TagName: "v0.1.145;$(touch /tmp/concordroute-pwned)"},
 		{TagName: "release-0.1.144"},
 		{TagName: "v0.1.0143"},
 		{TagName: "v0.1.142+meta"},
@@ -263,7 +263,7 @@ func TestUpdateServiceRollbackToVersionRejectsDisallowedTargets(t *testing.T) {
 		"0.1.148",  // 更新版本
 		"0.1.142",  // 超出最近 3 个版本
 		"9.9.9",    // 不存在的版本
-		"0.1.146;$(touch /tmp/tokenrouter-pwned)", // 非法 shell 字符
+		"0.1.146;$(touch /tmp/concordroute-pwned)", // 非法 shell 字符
 	} {
 		err := svc.RollbackToVersion(context.Background(), target)
 		require.ErrorIs(t, err, ErrRollbackVersionNotAllowed, "target %q should be rejected", target)

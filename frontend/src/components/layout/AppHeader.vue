@@ -135,7 +135,7 @@
 
                 <a
                   v-if="authStore.isAdmin"
-                  href="https://github.com/OneB1ank/TokenRouter-cockpit"
+                  href="https://github.com/OneB1ank/ConcordRoute"
                   target="_blank"
                   rel="noopener noreferrer"
                   @click="closeDropdown"

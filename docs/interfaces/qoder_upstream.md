@@ -1,8 +1,8 @@
 # Qoder 原生上游
 
-TokenRouter 通过 Qoder COSY 网关路径支持 Qoder 原生上游账号。面向请求公开的别名会映射到 Qoder 路由键，原始路由键仍可作为直接请求模型，以满足兼容和运维需要。
+ConcordRoute 通过 Qoder COSY 网关路径支持 Qoder 原生上游账号。面向请求公开的别名会映射到 Qoder 路由键，原始路由键仍可作为直接请求模型，以满足兼容和运维需要。
 
-本文拥有 Qoder 账号、站点、模型能力、请求适配、定价、配额和失败边界。TokenRouter 的共用调度与账本语义不在本文定义范围内；实现中尚不存在的 Qoder 企业登录变体也不在支持承诺内。
+本文拥有 Qoder 账号、站点、模型能力、请求适配、定价、配额和失败边界。ConcordRoute 的共用调度与账本语义不在本文定义范围内；实现中尚不存在的 Qoder 企业登录变体也不在支持承诺内。
 
 ## 章节导航
 
@@ -112,7 +112,7 @@ Qoder 账号的 `model_mapping` 与其他平台使用相同的重写规则：
 - Responses：读取 `reasoning.effort`，兼容回退到 `reasoning_effort`。
 - Anthropic Messages：读取 `output_config.effort`、`thinking.type` 和 `thinking.budget_tokens`。
 
-显式 `thinking.type=disabled` 或强度 `none` 始终优先。否则，显式有效强度优先于正数预算，其次是 `enabled` 或 `adaptive`；字段缺失或无效时保持关闭。可切换模型在关闭时使用 Qoder 的 `reasoning_effort=none` 覆盖，避免请求回退到上游默认值。虽然 Qoder 把 Qwen3.8-Max 的思考标记为默认开启，这一规则仍保持 TokenRouter 的显式控制契约。未知强度字符串会被忽略，不会拒绝请求。
+显式 `thinking.type=disabled` 或强度 `none` 始终优先。否则，显式有效强度优先于正数预算，其次是 `enabled` 或 `adaptive`；字段缺失或无效时保持关闭。可切换模型在关闭时使用 Qoder 的 `reasoning_effort=none` 覆盖，避免请求回退到上游默认值。虽然 Qoder 把 Qwen3.8-Max 的思考标记为默认开启，这一规则仍保持 ConcordRoute 的显式控制契约。未知强度字符串会被忽略，不会拒绝请求。
 
 ## 上下文窗口
 
@@ -130,7 +130,7 @@ Qoder 账号的 `model_mapping` 与其他平台使用相同的重写规则：
 
 存在官方运行时 `contextConfig` 的路由，会把所选上限写入 `model_config.max_input_tokens`、`chat_context.extra.ideModelConfigOverride.max_input_tokens` 和 `parameters.context_length`。最大值固定的路由只写入 `model_config.max_input_tokens`。未知、隐藏或已移除的原始路由键继续透传，使用保守的 200,000 Token 回退值，并且不会收到虚构的运行时上下文选择。
 
-TokenRouter 不读取客户端声明的上下文上限。Chat Completions、Responses 和 Anthropic Messages 的输出 Token 字段仍只控制输出。客户端继续拥有自己的模型目录、压缩阈值和截断行为；`/v1/models` 和 `/models` 不公开非标准上下文元数据。
+ConcordRoute 不读取客户端声明的上下文上限。Chat Completions、Responses 和 Anthropic Messages 的输出 Token 字段仍只控制输出。客户端继续拥有自己的模型目录、压缩阈值和截断行为；`/v1/models` 和 `/models` 不公开非标准上下文元数据。
 
 ## 计费范围
 
@@ -140,7 +140,7 @@ Qoder 内置公开别名及其路由键只能使用手工定价。没有配置�
 - `nil` 价格字段表示未配置。
 - 指针值为 `0` 表示显式免费，属于有效手工价格。
 - 空 Qoder 渠道定价行在计费时视为未配置，不会遮蔽别名级手工价格。
-- 非 Qoder 请求模型名称，例如映射到 Qoder 路由键的自定义 `gpt-5.4`，在没有有效 Qoder 手工价格时仍使用普通 TokenRouter 请求模型定价，即使渠道计费模型来源为 `upstream`。
+- 非 Qoder 请求模型名称，例如映射到 Qoder 路由键的自定义 `gpt-5.4`，在没有有效 Qoder 手工价格时仍使用普通 ConcordRoute 请求模型定价，即使渠道计费模型来源为 `upstream`。
 
 Qoder 计费定价优先级：
 
@@ -153,7 +153,7 @@ Qoder 计费定价优先级：
 
 ## 上游账号用量
 
-Qoder 有独立的上游月度 Credits 配额。TokenRouter 只把它作为账号用量和容量信息，它与 TokenRouter 用户余额、订阅以及用户与平台维度的美元配额相互独立。
+Qoder 有独立的上游月度 Credits 配额。ConcordRoute 只把它作为账号用量和容量信息，它与 ConcordRoute 用户余额、订阅以及用户与平台维度的美元配额相互独立。
 
 账号用量界面会查询所选站点的 Gateway `/api/v2/quota/usage` 端点，并把最近成功快照保存到 `account.extra.qoder_quota_snapshot`。国际站请求始终使用 COSY 签名；中国站的 `qodercn20` 和 PAT 账号同样使用 COSY 签名，旧版或导入的 COSY 会话则按官方客户端行为使用 `security_oauth_token` Bearer 鉴权。中国站请求会在可用时携带缓存的 `orgId`，1.24.2 的常规配额查询不发送 `quota_key`。实时查询失败时，管理界面可以同时显示缓存快照和降级用量错误。完整上游月度 Credit 余额是 `userQuota`、`addOnQuota` 与 `orgResourcePackage` 或 `sharedQuota` 之和，与 qodercli 用量视图一致。对于非个人零配额账号，`isQuotaExceeded=true` 或已耗尽的正数合计配额会把正常账号 `rate_limited_until` 调度信号设置到 Qoder 的 `expiresAt`；仍有附加或组织 Credit 时会阻止或清除过期配额锁。观测到的 `personal_standard` 结构如果 `total=0`、`remaining=0` 且 `expiresAt` 极远，只用于展示，直到真实请求错误确认限制。请求时的错误码 `115`、`agentLimitResetTime` 或 HTTP 429 仍走正常账号限流冷却路径。
 

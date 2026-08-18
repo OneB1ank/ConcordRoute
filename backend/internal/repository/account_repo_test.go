@@ -18,7 +18,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 )
 
-const parameterLimitTestDriverName = "tokenrouter_param_limit_test"
+const parameterLimitTestDriverName = "concordroute_param_limit_test"
 
 var registerParameterLimitTestDriverOnce sync.Once
 

@@ -4,7 +4,7 @@
 # Copy this file to /etc/sub2api/config.yaml and modify as needed
 # 复制此文件到 /etc/sub2api/config.yaml 并根据需要修改
 #
-# Documentation / 文档: https://github.com/OneB1ank/TokenRouter-cockpit
+# Documentation / 文档: https://github.com/OneB1ank/ConcordRoute
 
 # =============================================================================
 # Server Configuration
@@ -78,10 +78,10 @@ server:
 # 填写浏览器访问使用的完整 Origin。
 webauthn:
   enabled: false
-  rp_display_name: "TokenRouter"
-  # 示例: "tokenrouter.example.com"
+  rp_display_name: "ConcordRoute"
+  # 示例: "concordroute.example.com"
   rp_id: ""
-  # 示例: ["https://tokenrouter.example.com"]
+  # 示例: ["https://concordroute.example.com"]
   rp_origins: []
 
 # =============================================================================

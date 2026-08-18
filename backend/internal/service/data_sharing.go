@@ -19,7 +19,8 @@ const (
 	DataShareQualityInvalid   = "invalid"
 	// DataShareQualityFilterNonInvalid 是列表筛选专用的虚拟质量状态，不会写入数据库。
 	DataShareQualityFilterNonInvalid = "non_invalid"
-	defaultDataShareDataset          = "tokenrouter-agent"
+	// 数据集名称属于持久化协议，继续沿用旧值以兼容已有采集记录。
+	defaultDataShareDataset = "tokenrouter-agent"
 )
 
 type dataShareCaptureMode string

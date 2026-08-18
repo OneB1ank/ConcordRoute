@@ -1,9 +1,9 @@
-# TokenRouter Docker 镜像
+# ConcordRoute Docker 镜像
 
-TokenRouter 会向 GitHub Container Registry 发布多架构镜像：
+ConcordRoute 会向 GitHub Container Registry 发布多架构镜像：
 
 ```text
-ghcr.io/oneb1ank/tokenrouter:latest
+ghcr.io/oneb1ank/concordroute:latest
 ```
 
 应用依赖 PostgreSQL 和 Redis。推荐使用 Docker Compose 提供完整的运行配置、持久化存储、健康检查和依赖启动顺序。
@@ -14,10 +14,10 @@ ghcr.io/oneb1ank/tokenrouter:latest
 
 | 文件 | 服务 | 存储 | 适用场景 |
 | --- | --- | --- | --- |
-| [`docker-compose.local.yml`](docker-compose.local.yml) | TokenRouter、PostgreSQL、Redis | 本地目录 | 侧重简单备份和迁移的生产部署 |
-| [`docker-compose.yml`](docker-compose.yml) | TokenRouter、PostgreSQL、Redis | Docker 命名卷 | 使用 Docker 卷管理的生产部署 |
-| [`docker-compose.standalone.yml`](docker-compose.standalone.yml) | 仅 TokenRouter | Docker 命名卷 | 已有外部 PostgreSQL 和 Redis 的环境 |
-| [`docker-compose.dev.yml`](docker-compose.dev.yml) | 本地构建的 TokenRouter、PostgreSQL、Redis | 本地目录 | 开发和源码测试 |
+| [`docker-compose.local.yml`](docker-compose.local.yml) | ConcordRoute、PostgreSQL、Redis | 本地目录 | 侧重简单备份和迁移的生产部署 |
+| [`docker-compose.yml`](docker-compose.yml) | ConcordRoute、PostgreSQL、Redis | Docker 命名卷 | 使用 Docker 卷管理的生产部署 |
+| [`docker-compose.standalone.yml`](docker-compose.standalone.yml) | 仅 ConcordRoute | Docker 命名卷 | 已有外部 PostgreSQL 和 Redis 的环境 |
+| [`docker-compose.dev.yml`](docker-compose.dev.yml) | 本地构建的 ConcordRoute、PostgreSQL、Redis | 本地目录 | 开发和源码测试 |
 
 完整步骤见 [部署指南](../docs/guides/deployment/index.md)，环境变量示例见 [`.env.example`](.env.example)。
 
@@ -53,5 +53,5 @@ ghcr.io/oneb1ank/tokenrouter:latest
 
 ## 相关链接
 
-- [GitHub 仓库](https://github.com/OneB1ank/TokenRouter-cockpit)
+- [GitHub 仓库](https://github.com/OneB1ank/ConcordRoute)
 - [部署指南](../docs/guides/deployment/index.md)

@@ -202,7 +202,7 @@ func TestBuildProviderCreatePaymentRequestCopiesExpiresAt(t *testing.T) {
 		&payment.InstanceSelection{SupportedTypes: "stripe"},
 		"sub2_123",
 		"10.00",
-		"TokenRouter Balance",
+		"ConcordRoute Balance",
 		expiresAt,
 	)
 

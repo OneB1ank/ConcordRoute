@@ -1,4 +1,4 @@
-# TokenRouter Continuity 使用与运维指南
+# ConcordRoute 使用与运维指南
 
 这里收录面向部署者、管理员和外部系统集成方的操作手册。它们提供逐步命令、配置示例和使用说明，不属于 Project Doc 的工程事实索引；需要理解代码边界、架构和长期约束时，请从 [Project Doc 总目录](../index.md) 开始。
 
@@ -11,7 +11,7 @@
 
 ## 身份与传输一致性
 
-- [TokenRouter Continuity：身份、TLS 与出口一致性指南](continuity.md)
+- [ConcordRoute 与上游差异：指纹、身份与出口一致性](fingerprint-consistency.md)
 
 ## 支付
 

@@ -149,12 +149,12 @@ func ProvideOpenAIOAuthService(
 	oauthClient OpenAIOAuthClient,
 	privacyClientFactory PrivacyClientFactory,
 	settingService *SettingService,
-	tokenRouterReader OpenAIOAuthTokenRouterReader,
+	tlsRouterReader OpenAIOAuthTLSRouterReader,
 	tokenProfileResolver OpenAIOAuthTokenProfileResolver,
 ) *OpenAIOAuthService {
 	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
-	svc.SetTokenTLSRouterDeps(settingService, tokenRouterReader, tokenProfileResolver)
+	svc.SetTokenTLSRouterDeps(settingService, tlsRouterReader, tokenProfileResolver)
 	return svc
 }
 
@@ -838,7 +838,7 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
 	NewOAuthService,
 	ProvideOpenAIOAuthService,
-	wire.Bind(new(OpenAIOAuthTokenRouterReader), new(*TLSFingerprintRouterService)),
+	wire.Bind(new(OpenAIOAuthTLSRouterReader), new(*TLSFingerprintRouterService)),
 	wire.Bind(new(OpenAIOAuthTokenProfileResolver), new(*TLSFingerprintProfileService)),
 	wire.Bind(new(OpenAIQuotaAutoPauseSettingsReader), new(*SettingService)),
 	ProvideGrokOAuthService,

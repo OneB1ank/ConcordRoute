@@ -1,6 +1,6 @@
 [Unit]
 Description=Sub2API - AI API Gateway Platform
-Documentation=https://github.com/OneB1ank/TokenRouter-cockpit
+Documentation=https://github.com/OneB1ank/ConcordRoute
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 

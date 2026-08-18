@@ -390,6 +390,7 @@ type VisibleMarketplaceGroup = MarketplaceGroup
 type PricingFilter = 'all' | 'token' | 'image' | 'unpriced'
 type MarketplaceDisplayMode = 'model-group' | 'group-model'
 
+// 保留历史键，升级后继续读取用户已经选择的展示模式。
 const MARKETPLACE_DISPLAY_MODE_STORAGE_KEY = 'tokenrouter:model-marketplace:view-mode'
 
 interface PricingRow {

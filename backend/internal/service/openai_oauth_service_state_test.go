@@ -115,7 +115,7 @@ func TestOpenAIOAuthService_ExchangeCode_UsesRequestTLSRouterConfig(t *testing.T
 	client := &openaiOAuthClientStateStub{}
 	svc := NewOpenAIOAuthService(nil, client)
 	defer svc.Stop()
-	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		7: {
 			ID:                                       7,
 			Enabled:                                  true,

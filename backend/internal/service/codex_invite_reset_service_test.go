@@ -265,7 +265,7 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetUserAgent(t *testing.T) 
 		codexInviteResetJSONResponse(`{"rules":[]}`),
 		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
 	}}
-	routerReader := &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:                        9,
 			Enabled:                   true,
@@ -295,7 +295,7 @@ func TestCodexInviteResetServiceDoesNotReuseTokenUserAgent(t *testing.T) {
 		codexInviteResetJSONResponse(`{"rules":[]}`),
 		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
 	}}
-	routerReader := &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:                         9,
 			Enabled:                    true,
@@ -328,7 +328,7 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile(t *testing.T)
 		codexInviteResetJSONResponse(`{"rules":[]}`),
 		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
 	}}
-	routerReader := &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:                                      9,
 			Enabled:                                 true,

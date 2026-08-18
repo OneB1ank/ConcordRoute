@@ -602,7 +602,7 @@ func generateTLSFingerprintCollectorCertificate(host string) (tls.Certificate, s
 	now := time.Now()
 	caTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(now.UnixNano()),
-		Subject:               pkix.Name{CommonName: "TokenRouter TLS Fingerprint Collector CA"},
+		Subject:               pkix.Name{CommonName: "ConcordRoute TLS Fingerprint Collector CA"},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              now.Add(24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,

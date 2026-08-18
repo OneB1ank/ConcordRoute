@@ -107,7 +107,7 @@ type OpenAIQuotaService struct {
 	httpUpstream        HTTPUpstream
 	openAITokenProvider *OpenAITokenProvider
 	tlsFPProfileService *TLSFingerprintProfileService
-	tlsFPRouterReader   OpenAIOAuthTokenRouterReader
+	tlsFPRouterReader   OpenAIOAuthTLSRouterReader
 	accountRepo         AccountRepository
 	agentIdentityTaskMu sync.Mutex
 	agentIdentityWS     agentIdentityWSConnectionInvalidator
@@ -118,7 +118,7 @@ func NewOpenAIQuotaService(
 	httpUpstream HTTPUpstream,
 	openAITokenProvider *OpenAITokenProvider,
 	tlsFPProfileService *TLSFingerprintProfileService,
-	tlsFPRouterReader OpenAIOAuthTokenRouterReader,
+	tlsFPRouterReader OpenAIOAuthTLSRouterReader,
 ) *OpenAIQuotaService {
 	return &OpenAIQuotaService{
 		adminService:        adminService,

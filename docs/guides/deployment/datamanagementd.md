@@ -1,14 +1,14 @@
 # datamanagementd 部署说明（数据管理）
 
-本文说明如何把可选的 `datamanagementd` 进程接入 TokenRouter，以启用管理后台的“数据管理”功能。
+本文说明如何把可选的 `datamanagementd` 进程接入 ConcordRoute，以启用管理后台的“数据管理”功能。
 
-> 当前仓库不包含 `datamanagement/` 源码目录，也不发布该进程的构建产物。因此，不能直接在本仓库执行 `make build-datamanagementd`，`install-datamanagementd.sh --source` 也会因缺少源码目录而失败。只有在另行取得与当前 TokenRouter 版本兼容的二进制或完整源码后，才能部署此功能。
+> 当前仓库不包含 `datamanagement/` 源码目录，也不发布该进程的构建产物。因此，不能直接在本仓库执行 `make build-datamanagementd`，`install-datamanagementd.sh --source` 也会因缺少源码目录而失败。只有在另行取得与当前 ConcordRoute 版本兼容的二进制或完整源码后，才能部署此功能。
 
 ## 运行边界
 
-- TokenRouter 固定探测 `/tmp/sub2api-datamanagement.sock`。
+- ConcordRoute 固定探测 `/tmp/sub2api-datamanagement.sock`。
 - 只有 Unix Socket 可连接且健康检查成功时，后台才会启用数据管理。
-- `datamanagementd` 使用 SQLite 保存自身元数据，不使用 TokenRouter 的 PostgreSQL 主库。
+- `datamanagementd` 使用 SQLite 保存自身元数据，不使用 ConcordRoute 的 PostgreSQL 主库。
 - 宿主机需要提供 `pg_dump`、`redis-cli`；使用 `source_mode=docker_exec` 时还需要 `docker`。
 
 ## 使用现成二进制安装
@@ -31,7 +31,7 @@ sudo test -S /tmp/sub2api-datamanagement.sock
 
 ## Docker 联动
 
-TokenRouter 运行在 Docker 容器中时，需要把宿主机 Socket 映射到容器内的同一路径。应在 `datamanagementd` 已启动并创建 Socket 后再启动应用容器：
+ConcordRoute 运行在 Docker 容器中时，需要把宿主机 Socket 映射到容器内的同一路径。应在 `datamanagementd` 已启动并创建 Socket 后再启动应用容器：
 
 ```yaml
 services:

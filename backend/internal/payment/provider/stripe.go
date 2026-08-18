@@ -187,7 +187,7 @@ func buildStripeCheckoutPaymentIntentDataParams(req payment.CreatePaymentRequest
 func buildStripeCheckoutLineItems(req payment.CreatePaymentRequest, amountInMinorUnit int64, currency string) []*stripe.CheckoutSessionCreateLineItemParams {
 	productName := strings.TrimSpace(req.Subject)
 	if productName == "" {
-		productName = "TokenRouter payment"
+		productName = "ConcordRoute payment"
 	}
 	return []*stripe.CheckoutSessionCreateLineItemParams{{
 		Quantity: stripe.Int64(1),

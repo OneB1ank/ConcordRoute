@@ -1057,38 +1057,38 @@ function generateCompatibleCodexFiles(
     contextWindow: number
   }> = {
     anthropic: {
-      provider: 'tokenrouter_anthropic',
-      name: 'TokenRouter Anthropic',
+      provider: 'concordroute_anthropic',
+      name: 'ConcordRoute Anthropic',
       model: 'claude-sonnet-4-6',
       contextWindow: 200000
     },
     openai: {
-      provider: 'tokenrouter_openai',
-      name: 'TokenRouter OpenAI',
+      provider: 'concordroute_openai',
+      name: 'ConcordRoute OpenAI',
       model: OPENAI_CODEX_DEFAULT_MODEL,
       contextWindow: 1050000
     },
     gemini: {
-      provider: 'tokenrouter_gemini',
-      name: 'TokenRouter Gemini',
+      provider: 'concordroute_gemini',
+      name: 'ConcordRoute Gemini',
       model: 'gemini-2.5-pro',
       contextWindow: 2097152
     },
     antigravity: {
-      provider: 'tokenrouter_antigravity',
-      name: 'TokenRouter Antigravity',
+      provider: 'concordroute_antigravity',
+      name: 'ConcordRoute Antigravity',
       model: 'claude-sonnet-4-6',
       contextWindow: 200000
     },
     qoder: {
-      provider: 'tokenrouter_qoder',
-      name: 'TokenRouter Qoder',
+      provider: 'concordroute_qoder',
+      name: 'ConcordRoute Qoder',
       model: 'auto',
       contextWindow: 400000
     },
     grok: {
-      provider: 'tokenrouter_grok',
-      name: 'TokenRouter Grok',
+      provider: 'concordroute_grok',
+      name: 'ConcordRoute Grok',
       model: 'grok-4.5',
       contextWindow: 1000000
     }
@@ -1102,15 +1102,15 @@ disable_response_storage = true
 [model_providers.${config.provider}]
 name = "${config.name}"
 base_url = "${baseUrl}"
-env_key = "TOKENROUTER_API_KEY"
+env_key = "CONCORDROUTE_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false
 
 [features]
 goals = true`
   const environmentContent = isWindows
-    ? `$env:TOKENROUTER_API_KEY="${apiKey}"`
-    : `export TOKENROUTER_API_KEY="${apiKey}"`
+    ? `$env:CONCORDROUTE_API_KEY="${apiKey}"`
+    : `export CONCORDROUTE_API_KEY="${apiKey}"`
 
   return [
     {
@@ -1288,28 +1288,28 @@ function generateGrokCodexFiles(baseUrl: string, apiKey: string): FileConfig[] {
 	switch (shell) {
 		case 'cmd':
 			envPath = 'Command Prompt'
-			envContent = `set TOKENROUTER_API_KEY=${apiKey}`
+			envContent = `set CONCORDROUTE_API_KEY=${apiKey}`
 			break
 		case 'powershell':
 		case 'windows':
 			envPath = 'PowerShell'
-			envContent = `$env:TOKENROUTER_API_KEY="${apiKey}"`
+			envContent = `$env:CONCORDROUTE_API_KEY="${apiKey}"`
 			break
 		default:
 			envPath = 'Terminal'
-			envContent = `export TOKENROUTER_API_KEY="${apiKey}"`
+			envContent = `export CONCORDROUTE_API_KEY="${apiKey}"`
 	}
 
-	const configContent = `model_provider = "tokenrouter_grok"
+	const configContent = `model_provider = "concordroute_grok"
 model = "grok-4.5"
 review_model = "grok-4.5"
 model_reasoning_effort = "xhigh"
 model_context_window = 1000000
 
-[model_providers.tokenrouter_grok]
-name = "TokenRouter Grok"
+[model_providers.concordroute_grok]
+name = "ConcordRoute Grok"
 base_url = "${baseUrl}"
-env_key = "TOKENROUTER_API_KEY"
+env_key = "CONCORDROUTE_API_KEY"
 wire_api = "responses"
 # API-key providers: do not require ChatGPT OAuth login
 requires_openai_auth = false

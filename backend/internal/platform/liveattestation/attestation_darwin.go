@@ -113,9 +113,9 @@ func (p *darwinProvider) Generate(ctx context.Context) (string, error) {
 	command := exec.CommandContext(runCtx, nodePath, "-e", deviceCheckScript)
 	command.Env = []string{
 		"PATH=/usr/bin:/bin",
-		"TOKENROUTER_DEVICECHECK_MODULE=" + modulePath,
-		"TOKENROUTER_ATTESTATION_BUNDLE_ID=" + bundleID,
-		"TOKENROUTER_ATTESTATION_SIGNALS=" + string(signalsJSON),
+		"CONCORDROUTE_DEVICECHECK_MODULE=" + modulePath,
+		"CONCORDROUTE_ATTESTATION_BUNDLE_ID=" + bundleID,
+		"CONCORDROUTE_ATTESTATION_SIGNALS=" + string(signalsJSON),
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -231,9 +231,9 @@ func truncateSignal(value string, limit int, fallback string) string {
 
 // deviceCheckScript 使用 ChatGPT App 原生模块生成 token，并编码其要求的 CBOR 载荷。
 const deviceCheckScript = `
-const addon = require(process.env.TOKENROUTER_DEVICECHECK_MODULE);
-const signals = JSON.parse(process.env.TOKENROUTER_ATTESTATION_SIGNALS);
-const bundleID = process.env.TOKENROUTER_ATTESTATION_BUNDLE_ID;
+const addon = require(process.env.CONCORDROUTE_DEVICECHECK_MODULE);
+const signals = JSON.parse(process.env.CONCORDROUTE_ATTESTATION_SIGNALS);
+const bundleID = process.env.CONCORDROUTE_ATTESTATION_BUNDLE_ID;
 
 function head(major, value) {
   if (value < 24) return Buffer.from([major + value]);

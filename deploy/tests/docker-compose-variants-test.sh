@@ -10,7 +10,7 @@ fail() {
   exit 1
 }
 
-tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tokenrouter-compose-variants.XXXXXX")
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/concordroute-compose-variants.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 # 只提取应用服务的 KEY=value 环境变量，忽略注释和其他服务。

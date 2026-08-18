@@ -27,8 +27,8 @@ RUN apk add --no-cache ca-certificates wget && \
 FROM ${ALPINE_IMAGE}
 
 LABEL maintainer="TokenFlux <github.com/TokenFlux>"
-LABEL description="TokenRouter - AI API Gateway Platform"
-LABEL org.opencontainers.image.source="https://github.com/TokenFlux/TokenRouter"
+LABEL description="ConcordRoute - AI API Gateway Platform"
+LABEL org.opencontainers.image.source="https://github.com/OneB1ank/ConcordRoute"
 
 # Install runtime dependencies
 RUN apk add --no-cache \

@@ -26,6 +26,7 @@ func newLiveAttestationCipher(cfg *config.Config) SecretEncryptor {
 		return nil
 	}
 	return &liveAttestationAES{
+		// 加密域属于持久化格式，保留旧值才能解密升级前保存的证明数据。
 		key: sha256.Sum256([]byte("tokenrouter/live-attestation/v1\x00" + cfg.JWT.Secret)),
 	}
 }
@@ -73,7 +74,7 @@ func (c *liveAttestationAES) Decrypt(ciphertext string) (string, error) {
 func (s *OpenAIGatewayService) prepareLiveAttestation(ctx context.Context) (string, string, error) {
 	if s == nil || s.liveAttestation == nil {
 		return "", "", &LiveAttestationUnavailableError{
-			Reason: "TokenRouter has no platform DeviceCheck provider",
+			Reason: "ConcordRoute has no platform DeviceCheck provider",
 		}
 	}
 	if s.liveAttestationCipher == nil {

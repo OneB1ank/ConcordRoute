@@ -57,7 +57,7 @@ Usage: ./apple-container.sh <command> [options]
 
 Commands:
   init                  Create .env and generate required secrets
-  up [--recreate]       Create and start the complete TokenRouter stack
+  up [--recreate]       Create and start the complete ConcordRoute stack
   down                  Stop the stack and preserve all data
   restart               Restart the stack in dependency order
   status                Show container and workload health
@@ -98,7 +98,7 @@ acquire_lock() {
             rm -rf "${LOCK_DIR}"
             mkdir "${LOCK_DIR}" || die "Failed to reclaim stale operation lock."
         else
-            die "Another TokenRouter Apple container operation is already running."
+            die "Another ConcordRoute Apple container operation is already running."
         fi
     fi
     printf '%s\n' "$$" >"${LOCK_DIR}/pid"
@@ -400,7 +400,7 @@ validate_env_file_security() {
 prepare_environment() {
     validate_env_file_security
 
-    APP_IMAGE="$(read_env_value APPLE_CONTAINER_SUB2API_IMAGE ghcr.io/oneb1ank/tokenrouter:latest)"
+    APP_IMAGE="$(read_env_value APPLE_CONTAINER_SUB2API_IMAGE ghcr.io/oneb1ank/concordroute:latest)"
     POSTGRES_IMAGE="$(read_env_value APPLE_CONTAINER_POSTGRES_IMAGE postgres:18-alpine)"
     REDIS_IMAGE="$(read_env_value APPLE_CONTAINER_REDIS_IMAGE redis:8-alpine)"
     BIND_HOST="$(read_env_value BIND_HOST 0.0.0.0)"
@@ -506,7 +506,7 @@ create_redis_container() {
 }
 
 create_app_container() {
-    info "Creating TokenRouter container..."
+    info "Creating ConcordRoute container..."
     container create \
         --name "${APP_CONTAINER}" \
         --label "${STACK_LABEL_KEY}=${STACK_LABEL_VALUE}" \
@@ -635,11 +635,11 @@ start_dependencies() {
 
 start_app() {
     start_container_if_needed "${APP_CONTAINER}"
-    if ! wait_for_probe "TokenRouter" 180 probe_app; then
+    if ! wait_for_probe "ConcordRoute" 180 probe_app; then
         show_failure_logs "${APP_CONTAINER}"
-        die "TokenRouter did not become ready."
+        die "ConcordRoute did not become ready."
     fi
-    if ! wait_for_probe "TokenRouter host port" 15 probe_host_app; then
+    if ! wait_for_probe "ConcordRoute host port" 15 probe_host_app; then
         die "Host port forwarding failed. In System Settings > Privacy & Security > Local Network, allow container-runtime-linux; restart Apple container services; then run 'apple-container.sh up' again."
     fi
 }
@@ -683,7 +683,7 @@ cmd_up() {
     create_app_container
     start_app
 
-    info "TokenRouter is available at http://${ACCESS_HOST}:${HOST_PORT}"
+    info "ConcordRoute is available at http://${ACCESS_HOST}:${HOST_PORT}"
 }
 
 cmd_down() {
@@ -696,7 +696,7 @@ cmd_down() {
     stop_container_if_running "${APP_CONTAINER}"
     stop_container_if_running "${REDIS_CONTAINER}"
     stop_container_if_running "${POSTGRES_CONTAINER}"
-    info "TokenRouter stack stopped; persistent volumes were preserved."
+    info "ConcordRoute stack stopped; persistent volumes were preserved."
 }
 
 cmd_restart() {
@@ -811,9 +811,9 @@ confirm_destroy() {
     local answer
 
     if [[ "${include_volumes}" == true ]]; then
-        printf 'Delete the TokenRouter stack and all persistent data? [y/N] '
+        printf 'Delete the ConcordRoute stack and all persistent data? [y/N] '
     else
-        printf 'Delete the TokenRouter containers and network, preserving volumes? [y/N] '
+        printf 'Delete the ConcordRoute containers and network, preserving volumes? [y/N] '
     fi
     read -r answer
     [[ "${answer}" == "y" || "${answer}" == "Y" ]]
@@ -864,9 +864,9 @@ cmd_destroy() {
         delete_volume_if_present "${APP_VOLUME}"
         delete_volume_if_present "${REDIS_VOLUME}"
         delete_volume_if_present "${POSTGRES_VOLUME}"
-        info "TokenRouter stack and persistent data deleted."
+        info "ConcordRoute stack and persistent data deleted."
     else
-        info "TokenRouter stack deleted; persistent volumes were preserved."
+        info "ConcordRoute stack deleted; persistent volumes were preserved."
     fi
 }
 

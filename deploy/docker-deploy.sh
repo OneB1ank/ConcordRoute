@@ -2,7 +2,7 @@
 # =============================================================================
 # Sub2API Docker Deployment Preparation Script
 # =============================================================================
-# This script prepares deployment files for TokenRouter:
+# This script prepares deployment files for ConcordRoute:
 #   - Downloads docker-compose.local.yml and .env.example
 #   - Generates secure secrets (JWT_SECRET, TOTP_ENCRYPTION_KEY, POSTGRES_PASSWORD)
 #   - Creates necessary data directories
@@ -21,7 +21,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # GitHub raw content base URL
-GITHUB_RAW_URL="https://raw.githubusercontent.com/OneB1ank/TokenRouter-cockpit/cockpit-sync/deploy"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/OneB1ank/ConcordRoute/cockpit-sync/deploy"
 
 # Print colored message
 print_info() {
@@ -54,7 +54,7 @@ command_exists() {
 main() {
     echo ""
     echo "=========================================="
-    echo "  TokenRouter Deployment Preparation"
+    echo "  ConcordRoute Deployment Preparation"
     echo "=========================================="
     echo ""
 

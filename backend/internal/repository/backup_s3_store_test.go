@@ -273,7 +273,7 @@ func TestS3BackupStoreUploadSpooledPutRemovesTemporaryFile(t *testing.T) {
 	size, err := store.Upload(context.Background(), "backups/small.sql.gz", bytes.NewReader(payload), "application/gzip")
 	require.NoError(t, err)
 	require.Equal(t, int64(len(payload)), size)
-	tempFiles, err := filepath.Glob(filepath.Join(tempDir, "tokenrouter-backup-upload-*.tmp"))
+	tempFiles, err := filepath.Glob(filepath.Join(tempDir, "concordroute-backup-upload-*.tmp"))
 	require.NoError(t, err)
 	require.Empty(t, tempFiles)
 }
@@ -287,7 +287,7 @@ func TestS3BackupStoreUploadSpooledPutRemovesTemporaryFileOnCancel(t *testing.T)
 	store := &S3BackupStore{uploadMode: service.BackupS3UploadModeSpooledPut}
 	_, err := store.Upload(ctx, "backups/canceled.sql.gz", bytes.NewReader([]byte("backup")), "application/gzip")
 	require.ErrorIs(t, err, context.Canceled)
-	tempFiles, globErr := filepath.Glob(filepath.Join(tempDir, "tokenrouter-backup-upload-*.tmp"))
+	tempFiles, globErr := filepath.Glob(filepath.Join(tempDir, "concordroute-backup-upload-*.tmp"))
 	require.NoError(t, globErr)
 	require.Empty(t, tempFiles)
 }
@@ -299,7 +299,7 @@ func TestS3BackupStoreUploadSpooledPutRemovesTemporaryFileOnReadError(t *testing
 	store := &S3BackupStore{uploadMode: service.BackupS3UploadModeSpooledPut}
 	_, err := store.Upload(context.Background(), "backups/failed.sql.gz", failingBackupReader{}, "application/gzip")
 	require.ErrorContains(t, err, "spool backup upload")
-	tempFiles, globErr := filepath.Glob(filepath.Join(tempDir, "tokenrouter-backup-upload-*.tmp"))
+	tempFiles, globErr := filepath.Glob(filepath.Join(tempDir, "concordroute-backup-upload-*.tmp"))
 	require.NoError(t, globErr)
 	require.Empty(t, tempFiles)
 }

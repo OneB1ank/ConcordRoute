@@ -614,7 +614,7 @@ const claudeCommand = computed(() => {
 })
 const codexCommand = computed(() => {
   if (!collectorSession.value) return ''
-  const caPrefix = activeCAPEM.value ? 'CODEX_CA_CERTIFICATE=/path/to/tokenrouter-tls-collector-ca.pem ' : ''
+  const caPrefix = activeCAPEM.value ? 'CODEX_CA_CERTIFICATE=/path/to/concordroute-tls-collector-ca.pem ' : ''
   const captureURL = collectorSession.value.capture_url
   return `${caPrefix}codex -c 'openai_base_url="${captureURL}"' -c 'chatgpt_base_url="${captureURL}"'`
 })
@@ -793,7 +793,7 @@ const downloadCA = () => {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = 'tokenrouter-tls-collector-ca.pem'
+  link.download = 'concordroute-tls-collector-ca.pem'
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)

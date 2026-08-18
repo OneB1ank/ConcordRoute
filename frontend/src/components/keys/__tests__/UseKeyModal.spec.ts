@@ -271,12 +271,12 @@ describe('UseKeyModal', () => {
     await nextTick()
 
     let codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
-    const configToml = codeBlocks.find((content) => content.includes('[model_providers.tokenrouter_grok]'))
+    const configToml = codeBlocks.find((content) => content.includes('[model_providers.concordroute_grok]'))
     expect(configToml).toBeDefined()
-    expect(configToml).toContain('model_provider = "tokenrouter_grok"')
+    expect(configToml).toContain('model_provider = "concordroute_grok"')
     expect(configToml).toContain('model = "grok-4.5"')
     expect(configToml).toContain('base_url = "https://example.com/v1"')
-    expect(configToml).toContain('env_key = "TOKENROUTER_API_KEY"')
+    expect(configToml).toContain('env_key = "CONCORDROUTE_API_KEY"')
     expect(configToml).toContain('wire_api = "responses"')
     expect(configToml).toContain('supports_websockets = false')
     expect(configToml).toContain('requires_openai_auth = false')
@@ -285,9 +285,9 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('windows_wsl_setup_acknowledged')
     expect(configToml).toContain('[features]\nresponses_websockets_v2 = false')
     expect(configToml).not.toContain('goals = true')
-    expect(codeBlocks).toContain('export TOKENROUTER_API_KEY="sk-grok-codex-test"')
+    expect(codeBlocks).toContain('export CONCORDROUTE_API_KEY="sk-grok-codex-test"')
     expect(wrapper.text()).not.toContain('auth.json')
-    expect(codeBlocks.join('\n')).toContain('TOKENROUTER_API_KEY')
+    expect(codeBlocks.join('\n')).toContain('CONCORDROUTE_API_KEY')
 
     const windowsTab = wrapper.findAll('button').find(
       (button) => button.text().trim() === 'Windows'
@@ -298,7 +298,7 @@ describe('UseKeyModal', () => {
 
     codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
     expect(wrapper.text()).toContain('%USERPROFILE%\\.codex\\config.toml')
-    expect(codeBlocks).toContain('$env:TOKENROUTER_API_KEY="sk-grok-codex-test"')
+    expect(codeBlocks).toContain('$env:CONCORDROUTE_API_KEY="sk-grok-codex-test"')
   })
 
   it('keeps legacy OpenAI Codex config as the default', () => {

@@ -1,6 +1,6 @@
 # 边缘与 HTTP 入口安全
 
-TokenRouter 支持长时间运行的 SSE 和 WebSocket 请求。入口保护不能依赖响应 `WriteTimeout`，因为写超时会终止正常的长耗时生成和流式响应。
+ConcordRoute 支持长时间运行的 SSE 和 WebSocket 请求。入口保护不能依赖响应 `WriteTimeout`，因为写超时会终止正常的长耗时生成和流式响应。
 
 本文拥有应用与反向代理入口限制、可信客户端 IP 解析、流式传输和 DDoS 责任边界。它不能替代云厂商防火墙或 CDN 策略，也不定义已认证账号的并发和计费限速。
 
@@ -29,7 +29,7 @@ TokenRouter 支持长时间运行的 SSE 和 WebSocket 请求。入口保护不�
 
 为兼容升级，`security.trust_forwarded_ip_for_api_key_acl` 默认开启。开启后，原始转发请求头接管日志与安全敏感路径的客户端 IP 解析。`security.forwarded_client_ip_headers` 中的自定义请求头按配置顺序检查，优先于内置的 `CF-Connecting-IP`、`X-Real-IP` 和 `X-Forwarded-For` 回退。请求头名称不区分大小写，加载时会规范化并去重，最多允许 16 个唯一且有效的 HTTP 字段名。请求头值必须包含 IP 字面量；支持逗号分隔，跳过无效项，并优先选择公网地址而不是私网回退地址。
 
-该列表可以通过 YAML 或逗号分隔的 `SECURITY_FORWARDED_CLIENT_IP_HEADERS` 环境变量提供；显式空环境变量会清除 YAML 值。管理后台安全设置也可以编辑它，并在无需重启的情况下更新运行状态。每个请求会同时快照开关与请求头列表，不能在同一次请求中混用新旧设置。开关关闭时完全忽略自定义请求头，此时以 Gin 的 `server.trusted_proxies` 链为准，只能配置直接连接 TokenRouter 的准确 CIDR 或 IP。显式空列表表示不信任任何转发客户端 IP。
+该列表可以通过 YAML 或逗号分隔的 `SECURITY_FORWARDED_CLIENT_IP_HEADERS` 环境变量提供；显式空环境变量会清除 YAML 值。管理后台安全设置也可以编辑它，并在无需重启的情况下更新运行状态。每个请求会同时快照开关与请求头列表，不能在同一次请求中混用新旧设置。开关关闭时完全忽略自定义请求头，此时以 Gin 的 `server.trusted_proxies` 链为准，只能配置直接连接 ConcordRoute 的准确 CIDR 或 IP。显式空列表表示不信任任何转发客户端 IP。
 
 首次升级到该模式时，只有在 `server.trusted_proxies` 未被显式配置的情况下，旧的 `false` 才会改成 `true`；已有明确代理策略的环境继续使用安全模式。新安装在数据库初始化期间持久化自定义请求头列表。旧安装会用 YAML 配置回填缺失的数据库值。隐藏迁移标记会阻止后续管理员修改被再次覆盖。设置读取失败或已持久化的自定义请求头列表格式错误时，进程会以无自定义请求头的可信代理模式安全关闭兼容路径。迁移写入失败时，本次进程仍使用计算后的模式，并在启动日志记录警告。
 
@@ -95,7 +95,7 @@ server {
 }
 ```
 
-如果在 `http` 块中启用 Nginx gzip，必须从 `gzip_types` 排除 `text/event-stream`，也不能为 TokenRouter 使用 `gzip_types *`。上面的 `proxy_buffering off` 会关闭代理缓冲，但不会关闭 gzip 响应过滤器。普通响应应使用明确列表：
+如果在 `http` 块中启用 Nginx gzip，必须从 `gzip_types` 排除 `text/event-stream`，也不能为 ConcordRoute 使用 `gzip_types *`。上面的 `proxy_buffering off` 会关闭代理缓冲，但不会关闭 gzip 响应过滤器。普通响应应使用明确列表：
 
 ```nginx
 gzip on;
@@ -131,7 +131,7 @@ api.example.com {
 }
 ```
 
-必须把示例网段替换为 CDN 已发布且自动维护的出口网段。只有在源站直连被阻止且 Caddy 只信任这些 TCP 对端时，`CF-Connecting-IP` 才是安全的。TokenRouter 的 `server.trusted_proxies` 应配置为 Caddy 地址或私有子网，使应用只接受 Caddy 重写的请求头。
+必须把示例网段替换为 CDN 已发布且自动维护的出口网段。只有在源站直连被阻止且 Caddy 只信任这些 TCP 对端时，`CF-Connecting-IP` 才是安全的。ConcordRoute 的 `server.trusted_proxies` 应配置为 Caddy 地址或私有子网，使应用只接受 Caddy 重写的请求头。
 
 Caddy 核心不提供通用请求限速器，应使用可信 CDN/WAF、受支持的限速模块或宿主机防火墙控制。
 

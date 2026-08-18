@@ -30,7 +30,7 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "OneB1ank/TokenRouter-cockpit"
+	githubRepo     = "OneB1ank/ConcordRoute"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"

@@ -1,6 +1,6 @@
 # 支付系统配置指南
 
-TokenRouter 内置支付系统，支持用户自助充值、套餐购买和订阅权益发放，无需部署独立的支付服务。其他管理员手册见 [指南目录](../index.md)，工程状态与结算边界见 [支付与权益 Project Doc](../../domains/payments_and_entitlements.md)。
+ConcordRoute 内置支付系统，支持用户自助充值、套餐购买和订阅权益发放，无需部署独立的支付服务。其他管理员手册见 [指南目录](../index.md)，工程状态与结算边界见 [支付与权益 Project Doc](../../domains/payments_and_entitlements.md)。
 
 ---
 
@@ -29,7 +29,7 @@ TokenRouter 内置支付系统，支持用户自助充值、套餐购买和订�
 
 > 支付宝官方 / 微信官方与易支付可以同时作为后台服务商实例存在，但前台始终只展示 `支付宝`、`微信支付` 两个可见按钮。管理员需要分别为这两个按钮选择唯一支付来源：官方或易支付。官方渠道直接对接 API，资金直达商户账户，手续费更低；易支付通过第三方平台聚合，接入门槛更低。
 
-> 第三方支付渠道的费率、结算、准入和合规要求会变化，请以服务商当前官方条款为准。TokenRouter 不对任何第三方支付服务商做担保或背书。
+> 第三方支付渠道的费率、结算、准入和合规要求会变化，请以服务商当前官方条款为准。ConcordRoute 不对任何第三方支付服务商做担保或背书。
 
 ---
 
@@ -230,7 +230,7 @@ TokenRouter 内置支付系统，支持用户自助充值、套餐购买和订�
 
 1. 在 Airwallex 管理后台创建 Webhook，并填写上表中的回调地址。
 2. 订阅支付成功和支付失败相关事件。
-3. 将 Webhook 签名密钥填入对应的 TokenRouter 服务商实例。
+3. 将 Webhook 签名密钥填入对应的 ConcordRoute 服务商实例。
 4. 先使用 Demo API 和测试凭证完成下单、回调与补单验证，再切换生产 API。
 
 ### 注意事项
@@ -298,17 +298,17 @@ TokenRouter 内置支付系统，支持用户自助充值、套餐购买和订�
 
 | 对比项 | Sub2ApiPay | 内置支付 |
 |--------|-----------|---------|
-| 部署方式 | 独立服务（Next.js + PostgreSQL） | 内置于 TokenRouter，无需额外部署 |
+| 部署方式 | 独立服务（Next.js + PostgreSQL） | 内置于 ConcordRoute，无需额外部署 |
 | 支付方式 | EasyPay、支付宝、微信、Stripe | EasyPay、支付宝、微信、Stripe、Airwallex |
-| 配置方式 | 环境变量 + 独立管理后台 | TokenRouter 管理后台内统一配置 |
+| 配置方式 | 环境变量 + 独立管理后台 | ConcordRoute 管理后台内统一配置 |
 | 充值对接 | 通过 Admin API 回调 | 内部直接处理，更可靠 |
 | 订阅套餐 | 支持 | 支持内置套餐与订阅权益 |
-| 订单管理 | 独立管理界面 | 集成在 TokenRouter 管理后台 |
+| 订单管理 | 独立管理界面 | 集成在 ConcordRoute 管理后台 |
 
 ### 迁移步骤
 
-1. 在 TokenRouter 管理后台启用支付并配置服务商（使用相同的支付凭证）
-2. 更新 Webhook 回调地址为 TokenRouter 的回调地址
+1. 在 ConcordRoute 管理后台启用支付并配置服务商（使用相同的支付凭证）
+2. 更新 Webhook 回调地址为 ConcordRoute 的回调地址
 3. 确认新订单通过内置支付正常处理
 4. 停用 Sub2ApiPay 服务
 

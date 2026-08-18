@@ -19,9 +19,9 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "TokenRouter",
-					RPID:          "tokenrouter.example.com",
-					RPOrigins:     []string{"https://tokenrouter.example.com"},
+					RPDisplayName: "ConcordRoute",
+					RPID:          "concordroute.example.com",
+					RPOrigins:     []string{"https://concordroute.example.com"},
 				}
 			},
 		},
@@ -30,7 +30,7 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "TokenRouter Dev",
+					RPDisplayName: "ConcordRoute Dev",
 					RPID:          "localhost",
 					RPOrigins:     []string{"http://localhost:5173"},
 				}
@@ -41,8 +41,8 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "TokenRouter",
-					RPOrigins:     []string{"https://tokenrouter.example.com"},
+					RPDisplayName: "ConcordRoute",
+					RPOrigins:     []string{"https://concordroute.example.com"},
 				}
 			},
 			wantError: "webauthn.rp_id",
@@ -52,9 +52,9 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "TokenRouter",
-					RPID:          "https://tokenrouter.example.com",
-					RPOrigins:     []string{"https://tokenrouter.example.com"},
+					RPDisplayName: "ConcordRoute",
+					RPID:          "https://concordroute.example.com",
+					RPOrigins:     []string{"https://concordroute.example.com"},
 				}
 			},
 			wantError: "domain without scheme",
@@ -64,9 +64,9 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "TokenRouter",
-					RPID:          "tokenrouter.example.com",
-					RPOrigins:     []string{"http://tokenrouter.example.com"},
+					RPDisplayName: "ConcordRoute",
+					RPID:          "concordroute.example.com",
+					RPOrigins:     []string{"http://concordroute.example.com"},
 				}
 			},
 			wantError: "must use HTTPS",
@@ -76,7 +76,7 @@ func TestValidateWebAuthnConfig(t *testing.T) {
 			configure: func(cfg *Config) {
 				cfg.WebAuthn = WebAuthnConfig{
 					Enabled:       true,
-					RPDisplayName: "TokenRouter",
+					RPDisplayName: "ConcordRoute",
 					RPID:          "example.com",
 					RPOrigins:     []string{"https://example.net"},
 				}

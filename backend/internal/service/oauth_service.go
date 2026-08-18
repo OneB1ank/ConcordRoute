@@ -21,8 +21,8 @@ type OpenAIOAuthTokenRequestOptions struct {
 	AccountConcurrency int
 }
 
-// OpenAIOAuthTokenRouterReader 读取账号绑定的 TLS Router 运行时配置。
-type OpenAIOAuthTokenRouterReader interface {
+// OpenAIOAuthTLSRouterReader 读取账号绑定的 TLS Router 运行时配置。
+type OpenAIOAuthTLSRouterReader interface {
 	GetRuntimeRouter(routerID int64) *model.TLSFingerprintRouter
 }
 

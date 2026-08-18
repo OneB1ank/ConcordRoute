@@ -6,6 +6,7 @@ const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const TOKEN_EXPIRES_AT_KEY = 'token_expires_at'
+// 锁名需要与升级前仍打开的页面保持一致，避免并发刷新令牌。
 const TOKEN_REFRESH_LOCK_NAME = 'tokenrouter-auth-token-refresh'
 const TOKEN_REFRESH_TIMEOUT_MS = 30_000
 const TOKEN_REFRESH_BUFFER_MS = 120_000

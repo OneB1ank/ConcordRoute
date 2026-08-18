@@ -1,10 +1,10 @@
-# TokenRouter Continuity 一致性指南
+# ConcordRoute 与上游差异：指纹、身份与出口一致性
 
 本文说明本分支解决的问题、各类一致性配置之间的关系，以及部署时如何避免生成互相矛盾的客户端特征。
 
 ## 目标与边界
 
-TokenRouter Continuity 主要修改自 TokenRouter，目标是在多账号调度和代理转发中保持以下信息连续且可解释：
+ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理转发中保持以下信息连续且可解释：
 
 - 账号对应的 installation/device 身份；
 - 账号主 session 与对话 thread、turn、window；
@@ -14,6 +14,26 @@ TokenRouter Continuity 主要修改自 TokenRouter，目标是在多账号调度
 - 用量、缓存命中、TTFT、错误和 session 日志。
 
 这些功能用于减少身份漂移、缓存失效、重复探针、错误调度和观测偏差。它们不会改变上游服务授予账号的真实额度，也不会保证特定限流、风控或延迟结果。
+
+## 相比基础项目处理了什么
+
+| 容易产生不一致的位置 | ConcordRoute 的处理 |
+| --- | --- |
+| 多个账号共用同一套客户端身份 | installation、主 session、thread、window 和缓存键都加入账号作用域 |
+| 切换上游账号后继承旧账号会话 | 为新账号稳定派生另一套上游身份，同时保持客户端对话连续 |
+| 不同对话挤进同一个 thread | 每个客户端对话单独派生稳定 thread，turn 仍按请求更新 |
+| `prompt_cache_key` 随请求漂移 | Cockpit 模式按账号与对话稳定派生缓存键，并同步关联字段 |
+| 请求头能读取 `session-id`，日志却为空 | 指纹链路与 Usage Log 使用统一的 session ID 提取口径 |
+| UA、originator 和版本兜底不一致 | OAuth、Token、Responses 等路径统一使用管理员配置的客户端特征 |
+| HTTPS Proxy 静默退回标准 Go TLS | 普通 HTTPS 通过代理时继续使用目标站点的 uTLS ClientHello |
+| HTTP 与其他连接路径使用不同 TLS 模板 | 直连、HTTP Proxy、HTTPS Proxy 共用账号选择的 TLS profile |
+| 自定义 TLS 配置到握手才报错 | 保存时检查数值范围、TLS 版本、ALPN、重复扩展和必要扩展关系 |
+| 自定义扩展后 GREASE 设置失效 | 根据 profile 设置补齐 GREASE，而不是只在内置模板中生效 |
+| 同一账号的出口地址频繁变化 | Clash/mihomo 支持账号绑定节点与策略，推荐稳定 `select` 或受控 `fallback` |
+| 额度探针制造无效模型请求 | 使用兼容的探针模型，并统一探针 UA、TLS 和账号路由配置 |
+| 最终请求参数与 Usage Log 不一致 | 记录最终上游模型、reasoning effort、session、TTFT 和缓存命中数据 |
+
+这里处理的是可观测的一致性问题：相同账号长期呈现稳定设备、会话、协议和出口，不同账号彼此隔离。它不是一套固定的通用指纹，也不意味着复制某份公开抓包就适合所有客户端。
 
 ## Cockpit 身份模型
 

@@ -57,7 +57,7 @@ var qoderClaudeBillingCCHRe = regexp.MustCompile(`(x-anthropic-billing-header:[^
 // 且数据库里还没有出现轮换后的凭据。
 var ErrQoderRefreshInProgress = errors.New("qoder refresh in progress")
 
-// defaultQoderModelAliases 将兜底的 TokenRouter 请求侧 alias 映射到 Qoder API key。
+// defaultQoderModelAliases 将兜底的 ConcordRoute 请求侧 alias 映射到 Qoder API key。
 // 已配置 model_mapping 的 Qoder 账号以账号配置为准，此表仅作为兜底路由和默认展示面。
 var defaultQoderModelAliases = map[string]qoderModelInfo{
 	// 通过加密 reasoning metadata 确认该路由为 Claude Opus 4.6。

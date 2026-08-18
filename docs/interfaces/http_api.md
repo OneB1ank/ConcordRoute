@@ -1,6 +1,6 @@
 # HTTP 接口边界
 
-本文描述 TokenRouter 的稳定路由族、认证方式、共同中间件、响应形状和路由所有权。它用于新增或移动接口时选择正确边界，不逐项复制全部 endpoint，也不替代各上游协议规范或领域状态机。
+本文描述 ConcordRoute 的稳定路由族、认证方式、共同中间件、响应形状和路由所有权。它用于新增或移动接口时选择正确边界，不逐项复制全部 endpoint，也不替代各上游协议规范或领域状态机。
 
 ## 章节导航
 
@@ -44,10 +44,10 @@ RequestLogger
 | `/api/v1/payment/*` | 用户 JWT | `routes/payment.go`；配置/套餐读取、下单、查单、取消、invoice 和退款申请 |
 | `/api/v1/payment/public/*` | 签名 resume token 或遗留订单验证约束 | 支付结果恢复；不得扩展为匿名订单枚举接口 |
 | `/api/v1/payment/webhook/*` | 提供商验签 | EasyPay、Alipay、WeChat Pay、Stripe、Airwallex 通知 |
-| `/v1/*` 和兼容裸别名 | TokenRouter API Key | Anthropic/OpenAI 兼容消息、Responses、Chat、图片、视频、模型、用量与批任务 |
-| `/v1beta/*` | TokenRouter API Key | Gemini 原生模型 URL、生成、流式生成和 token 统计 |
-| `/antigravity/*` | TokenRouter API Key + 强制平台 | Antigravity 专用 Claude/Gemini 入口与管理型自省 |
-| `/backend-api/codex/*` | TokenRouter API Key | Codex Responses、Realtime 与 sideband 兼容入口 |
+| `/v1/*` 和兼容裸别名 | ConcordRoute API Key | Anthropic/OpenAI 兼容消息、Responses、Chat、图片、视频、模型、用量与批任务 |
+| `/v1beta/*` | ConcordRoute API Key | Gemini 原生模型 URL、生成、流式生成和 token 统计 |
+| `/antigravity/*` | ConcordRoute API Key + 强制平台 | Antigravity 专用 Claude/Gemini 入口与管理型自省 |
+| `/backend-api/codex/*` | ConcordRoute API Key | Codex Responses、Realtime 与 sideband 兼容入口 |
 | `/api/v1/pages/*` 等 page routes | 按页面类型为用户或管理员 JWT | 服务端生成/读取的 pricing、账单或管理页面数据 |
 
 `GET /api/v1/admin/groups/usage-summary` 仅返回管理员可见的全局分组汇总，字段为 `today_cost`、`yesterday_cost` 和 `total_cost`。自然日固定使用服务端配置时区，不接受浏览器时区参数，避免不同管理员在同一列表看到不同的“今日”边界。
@@ -102,7 +102,7 @@ gemini_generate_content
 | JWT access token | 面板 `Authorization: Bearer`，少量 WebSocket 子协议 | 当前用户状态、token version、可选 session binding；管理员还校验当前 role |
 | Refresh token | `/api/v1/auth/refresh` 与 logout payload/cookie 约定 | 只用于轮换/撤销，不可直接访问业务资源 |
 | 管理 API Key | 管理接口 `x-api-key` | 绑定首个真实管理员；启用敏感 step-up 后不能执行需近期 TOTP 的操作 |
-| TokenRouter API Key | 网关 `Authorization: Bearer`、`x-api-key`，Gemini 兼容 `x-goog-api-key` | Key、用户/团队、分组、IP、额度/订阅和请求资源归属；通用网关不接受 query Key |
+| ConcordRoute API Key | 网关 `Authorization: Bearer`、`x-api-key`，Gemini 兼容 `x-goog-api-key` | Key、用户/团队、分组、IP、额度/订阅和请求资源归属；通用网关不接受 query Key |
 | OAuth/pending completion 状态 | auth callback 和完成接口 | provider state、浏览器会话、一次性完成码与过期时间共同约束 |
 | Google GIS ID Token | `/api/v1/auth/oauth/google/one-tap` 请求体 | 仅经官方验证器校验后的 `sub` 和 verified email 可进入现有 Google 身份与 pending 流程；不能作为其它接口的 Bearer 凭据 |
 | 支付 webhook 签名 | 原始 body/query + provider headers | 只授权解释一条已绑定本地订单的通知，仍需校验金额和 metadata |

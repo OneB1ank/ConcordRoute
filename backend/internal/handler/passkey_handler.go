@@ -77,7 +77,7 @@ func (h *PasskeyHandler) BeginLogin(c *gin.Context) {
 	response.Success(c, passkeyOptionsResponse{SessionToken: token, Options: assertion})
 }
 
-// FinishLogin 校验 Passkey assertion 并创建普通 TokenRouter token 会话。
+// FinishLogin 校验 Passkey assertion 并创建普通 ConcordRoute token 会话。
 // WebAuthn 强制执行用户验证，成功的 assertion 已提供抗钓鱼多因素认证，
 // 因此无需再进入独立的 TOTP challenge 流程。
 func (h *PasskeyHandler) FinishLogin(c *gin.Context) {

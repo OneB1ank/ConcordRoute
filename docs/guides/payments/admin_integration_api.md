@@ -1,6 +1,6 @@
 # 外部支付管理 API 集成
 
-本文档用于对接外部支付系统（如 `sub2apipay`）与 TokenRouter 的管理 API。其他操作手册见 [指南目录](../index.md)，稳定接口边界见 [HTTP 接口 Project Doc](../../interfaces/http_api.md)。
+本文档用于对接外部支付系统（如 `sub2apipay`）与 ConcordRoute 的管理 API。其他操作手册见 [指南目录](../index.md)，稳定接口边界见 [HTTP 接口 Project Doc](../../interfaces/http_api.md)。
 
 ## 目标
 
@@ -109,15 +109,15 @@ curl -X POST "${BASE}/api/v1/admin/users/123/balance" \
 
 ## 购买页与自定义页面参数透传
 
-TokenRouter 打开 `purchase_subscription_url` 或用户侧自定义页面 iframe URL 时，会统一追加：
+ConcordRoute 打开 `purchase_subscription_url` 或用户侧自定义页面 iframe URL 时，会统一追加：
 
 - `user_id`
 - `token`
 - `theme`（`light` 或 `dark`）
 - `lang`（例如 `zh` 或 `en`，表示当前界面语言）
 - `ui_mode`（固定为 `embedded`）
-- `src_host`（TokenRouter 页面来源）
-- `src_url`（TokenRouter 当前页面 URL）
+- `src_host`（ConcordRoute 页面来源）
+- `src_url`（ConcordRoute 当前页面 URL）
 
 示例：
 
@@ -137,5 +137,5 @@ https://pay.example.com/pay?user_id=123&token=<jwt>&theme=light&lang=zh&ui_mode=
 
 ## `doc_url` 配置建议
 
-- 查看链接：`https://github.com/TokenFlux/TokenRouter/blob/main/docs/guides/payments/admin_integration_api.md`
-- 下载链接：`https://raw.githubusercontent.com/TokenFlux/TokenRouter/main/docs/guides/payments/admin_integration_api.md`
+- 查看链接：`https://github.com/OneB1ank/ConcordRoute/blob/cockpit-sync/docs/guides/payments/admin_integration_api.md`
+- 下载链接：`https://raw.githubusercontent.com/OneB1ank/ConcordRoute/cockpit-sync/docs/guides/payments/admin_integration_api.md`

@@ -1119,7 +1119,7 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
-  it("links payment guidance to the maintained TokenRouter guide", async () => {
+  it("links payment guidance to the maintained ConcordRoute guide", async () => {
     const wrapper = mountView();
 
     await flushPromises();

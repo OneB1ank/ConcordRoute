@@ -234,7 +234,7 @@ describe('TLSFingerprintProfilesModal', () => {
     expect(wrapper.text()).toContain('claude --settings')
     expect(wrapper.text()).toContain('"ANTHROPIC_BASE_URL":"https://collector.example:8443/capture/token-1"')
     expect(wrapper.text()).toContain('"ANTHROPIC_AUTH_TOKEN":"token-1"')
-    expect(wrapper.text()).toContain('CODEX_CA_CERTIFICATE=/path/to/tokenrouter-tls-collector-ca.pem codex -c')
+    expect(wrapper.text()).toContain('CODEX_CA_CERTIFICATE=/path/to/concordroute-tls-collector-ca.pem codex -c')
     expect(wrapper.text()).toContain('openai_base_url = "https://collector.example:8443/capture/token-1"')
 
     const applyButton = wrapper.findAll('button').find(button =>

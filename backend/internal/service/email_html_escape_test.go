@@ -50,9 +50,9 @@ func TestBuildPasswordResetEmailBody_EscapesHTMLValues(t *testing.T) {
 
 	t.Run("keeps_normal_site_name_and_url", func(t *testing.T) {
 		resetURL := "https://example.com/reset?token=xyz"
-		body := svc.buildPasswordResetEmailBody(resetURL, "TokenRouter")
+		body := svc.buildPasswordResetEmailBody(resetURL, "ConcordRoute")
 
-		assert.Contains(t, body, "<h1>TokenRouter</h1>")
+		assert.Contains(t, body, "<h1>ConcordRoute</h1>")
 		assert.Contains(t, body, resetURL)
 	})
 

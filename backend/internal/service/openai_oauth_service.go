@@ -19,7 +19,7 @@ type OpenAIOAuthService struct {
 	oauthClient          OpenAIOAuthClient
 	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
 	settingService       *SettingService
-	tlsFPRouterReader    OpenAIOAuthTokenRouterReader
+	tlsFPRouterReader    OpenAIOAuthTLSRouterReader
 	tlsFPProfileResolver OpenAIOAuthTokenProfileResolver
 }
 
@@ -39,7 +39,7 @@ func (s *OpenAIOAuthService) SetPrivacyClientFactory(factory PrivacyClientFactor
 }
 
 // SetTokenTLSRouterDeps 注入 ChatGPT OAuth token 请求指纹配置所需的只读依赖。
-func (s *OpenAIOAuthService) SetTokenTLSRouterDeps(settingService *SettingService, routerReader OpenAIOAuthTokenRouterReader, profileResolver OpenAIOAuthTokenProfileResolver) {
+func (s *OpenAIOAuthService) SetTokenTLSRouterDeps(settingService *SettingService, routerReader OpenAIOAuthTLSRouterReader, profileResolver OpenAIOAuthTokenProfileResolver) {
 	s.settingService = settingService
 	s.tlsFPRouterReader = routerReader
 	s.tlsFPProfileResolver = profileResolver

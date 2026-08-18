@@ -37,11 +37,11 @@ func (s *openaiOAuthClientRefreshStub) RefreshTokenWithClientID(ctx context.Cont
 	return &openai.TokenResponse{AccessToken: "new-at", RefreshToken: "new-rt", ExpiresIn: 3600}, nil
 }
 
-type openAIOAuthTokenRouterReaderStub struct {
+type openAIOAuthTLSRouterReaderStub struct {
 	routers map[int64]*model.TLSFingerprintRouter
 }
 
-func (s *openAIOAuthTokenRouterReaderStub) GetRuntimeRouter(routerID int64) *model.TLSFingerprintRouter {
+func (s *openAIOAuthTLSRouterReaderStub) GetRuntimeRouter(routerID int64) *model.TLSFingerprintRouter {
 	if s == nil {
 		return nil
 	}
@@ -174,7 +174,7 @@ func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountTLSRouterConfig(t *te
 	profileID := int64(55)
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
-	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:                                       9,
 			Enabled:                                  true,
@@ -211,7 +211,7 @@ func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountTLSRouterConfig(t *te
 func TestOpenAIOAuthService_RefreshAccountToken_EmptyRouterTokenConfigKeepsOldPath(t *testing.T) {
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
-	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:      9,
 			Enabled: true,
@@ -243,7 +243,7 @@ func TestOpenAIOAuthService_RefreshTokenWithClientIDAndRouter_UsesCodexUAFallbac
 	settingService := NewSettingService(&openAIOAuthSettingRepoStub{values: map[string]string{
 		SettingKeyOpenAICodexUserAgent: " codex-custom ",
 	}}, nil)
-	svc.SetTokenTLSRouterDeps(settingService, &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	svc.SetTokenTLSRouterDeps(settingService, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		10: {
 			ID:                                       10,
 			Enabled:                                  true,

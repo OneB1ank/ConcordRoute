@@ -92,7 +92,7 @@ func resolveGrokCacheIdentity(c *gin.Context, body []byte, explicitKey, upstream
 	}
 
 	// generateSessionUUID 会先哈希完整种子再格式化为 UUID；加入带版本的命名空间，
-	// 避免该身份与 TokenRouter 派生的其它上游会话标识冲突。
+	// 避免该身份与 ConcordRoute 派生的其它上游会话标识冲突。
 	isolatedSeed := fmt.Sprintf("grok-prompt-cache:v1:%d:%s:%s", apiKeyID, model, seed)
 	return generateSessionUUID(isolatedSeed)
 }

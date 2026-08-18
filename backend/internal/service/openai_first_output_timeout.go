@@ -51,7 +51,7 @@ func newOpenAIFirstOutputStage(limit int64) *openAIFirstOutputStage {
 	}
 	return &openAIFirstOutputStage{
 		limit:      limit,
-		createTemp: func() (*os.File, error) { return os.CreateTemp("", "tokenrouter-openai-first-output-*") },
+		createTemp: func() (*os.File, error) { return os.CreateTemp("", "concordroute-openai-first-output-*") },
 		removeFile: os.Remove,
 		memoryOnly: runtime.GOOS == "windows",
 	}

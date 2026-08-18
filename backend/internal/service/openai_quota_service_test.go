@@ -177,7 +177,7 @@ func TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings(t *testing.T) {
 	upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
 		codexInviteResetJSONResponse(`{"rate_limit_reset_credits":{"available_count":0}}`),
 	}}
-	routerReader := &openAIOAuthTokenRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:                                      9,
 			Enabled:                                 true,

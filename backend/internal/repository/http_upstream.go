@@ -85,7 +85,7 @@ const (
 	openAIHTTP2PingTimeout     = 15 * time.Second
 
 	// Grok CLI 代理会拒绝未标识受支持客户端版本的请求。二进制内置已验证版本，
-	// 同时允许运维人员通过环境变量升级，无需等待 TokenRouter 发版。
+	// 同时允许运维人员通过环境变量升级，无需等待 ConcordRoute 发版。
 	grokCLIProxyHost       = "cli-chat-proxy.grok.com"
 	grokOfficialAPIHost    = "api.x.ai"
 	grokCLIStableVersion   = xai.CLIClientVersion // preferred pin (not the minimum floor)

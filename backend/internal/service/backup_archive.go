@@ -42,7 +42,7 @@ func spoolNextBackupPart(ctx context.Context, src *bufio.Reader, index int, part
 		return part, false, false, errors.New("backup part index must be positive")
 	}
 
-	tmp, err := os.CreateTemp("", "tokenrouter-backup-part-*.tmp")
+	tmp, err := os.CreateTemp("", "concordroute-backup-part-*.tmp")
 	if err != nil {
 		return part, false, false, fmt.Errorf("create backup part: %w", err)
 	}
@@ -134,7 +134,7 @@ func downloadBackupParts(ctx context.Context, objectStore BackupObjectStore, par
 		return "", err
 	}
 
-	archive, err := os.CreateTemp("", "tokenrouter-backup-restore-*.sql.gz")
+	archive, err := os.CreateTemp("", "concordroute-backup-restore-*.sql.gz")
 	if err != nil {
 		return "", fmt.Errorf("create restore archive: %w", err)
 	}

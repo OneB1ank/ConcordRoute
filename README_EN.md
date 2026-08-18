@@ -1,14 +1,14 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="TokenRouter Continuity" width="112" />
+  <img src="assets/logo.svg" alt="ConcordRoute" width="112" />
 
-  <h1>TokenRouter Continuity</h1>
+  <h1>ConcordRoute</h1>
 
   <p><strong>A TokenRouter-derived branch focused on identity, transport, and egress consistency</strong></p>
 
   <p>
-    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml"><img src="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/releases"><img src="https://img.shields.io/github/v/release/OneB1ank/TokenRouter-cockpit?display_name=tag" alt="Release" /></a>
-    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io%2Foneb1ank%2Ftokenrouter-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
+    <a href="https://github.com/OneB1ank/ConcordRoute/actions/workflows/backend-ci.yml"><img src="https://github.com/OneB1ank/ConcordRoute/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/OneB1ank/ConcordRoute/releases"><img src="https://img.shields.io/github/v/release/OneB1ank/ConcordRoute?display_name=tag" alt="Release" /></a>
+    <a href="https://github.com/OneB1ank/ConcordRoute/pkgs/container/concordroute"><img src="https://img.shields.io/badge/container-ghcr.io%2Foneb1ank%2Fconcordroute-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0--or--later-4c1.svg" alt="License: LGPL-3.0-or-later" /></a>
   </p>
 
@@ -17,11 +17,11 @@
 
 ## Positioning
 
-TokenRouter Continuity is primarily derived from [TokenRouter](https://github.com/TokenFlux/TokenRouter). It retains TokenRouter's gateway, account scheduling, usage, subscription, billing, and administration capabilities while strengthening identity, protocol, and network-egress consistency for Codex/OpenAI multi-account deployments.
+ConcordRoute is primarily derived from [TokenRouter](https://github.com/TokenFlux/TokenRouter). It retains the upstream gateway, account scheduling, usage, subscription, billing, and administration capabilities while strengthening identity, protocol, and network-egress consistency for Codex/OpenAI multi-account deployments.
 
 The project does not increase upstream account quotas. Its quota-related work reduces redundant requests, cache invalidation, invalid probes, and misleading usage observations caused by account switches, session drift, cache-key changes, inconsistent client characteristics, unstable proxy egress, or mismatched logging semantics. Actual quotas, rate limits, and dynamic policies remain controlled by the upstream service.
 
-## Continuity Features
+## ConcordRoute Features
 
 - Account-scoped Cockpit installation/device and primary session identities.
 - Conversation-scoped thread, window, turn, and prompt-cache-key isolation.
@@ -39,7 +39,7 @@ The project does not increase upstream account quotas. Its quota-related work re
 4. Use Cockpit mode by default: account-level device/session stability with conversation-level thread and cache-key isolation.
 5. Diagnose behavior with errors, TTFT, cache hits, 429/529 responses, proxy health, and account usage together instead of interpreting one metric as a quota change.
 
-See the [identity, TLS, and egress consistency guide](docs/guides/continuity.md) for details.
+See the [fingerprint, identity, and egress consistency guide](docs/guides/fingerprint-consistency.md) for details.
 
 ## Upstreams and Acknowledgements
 
@@ -54,7 +54,7 @@ Thanks to their maintainers, contributors, issue and pull-request authors, and r
 
 - [Deployment guide (Chinese)](docs/guides/deployment/index.md)
 - [Docker image documentation (Chinese)](deploy/DOCKER.md)
-- [Continuity guide (Chinese)](docs/guides/continuity.md)
+- [Fingerprint consistency guide (Chinese)](docs/guides/fingerprint-consistency.md)
 - [Engineering documentation (Chinese)](docs/index.md)
 
 ## License

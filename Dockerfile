@@ -121,7 +121,7 @@ FROM ${ALPINE_IMAGE}
 # Labels
 LABEL maintainer="Wei-Shaw <github.com/Wei-Shaw>"
 LABEL description="Sub2API - AI API Gateway Platform"
-LABEL org.opencontainers.image.source="https://github.com/TokenFlux/TokenRouter"
+LABEL org.opencontainers.image.source="https://github.com/OneB1ank/ConcordRoute"
 
 # Install runtime dependencies
 RUN apk add --no-cache \
