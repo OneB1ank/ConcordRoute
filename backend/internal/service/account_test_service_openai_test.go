@@ -196,8 +196,9 @@ func TestAccountTestService_OpenAIOAuthUsesConfiguredUserAgent(t *testing.T) {
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
-	require.Equal(t, "codex-tui/9.9.0 test-terminal", upstream.requests[0].Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.144.1 test-terminal", upstream.requests[0].Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.requests[0].Header.Get("Originator"))
+	require.Equal(t, "0.144.1", upstream.requests[0].Header.Get("Version"))
 }
 
 func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *testing.T) {
@@ -315,8 +316,9 @@ func TestAccountTestService_RunTestBackgroundWithPromptAndUserAgentOverridesHead
 	require.NoError(t, err)
 	require.Equal(t, "success", result.Status)
 	require.Len(t, upstream.requests, 1)
-	require.Equal(t, "codex-tui/9.9.1 test-terminal", upstream.requests[0].Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.144.1 test-terminal", upstream.requests[0].Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.requests[0].Header.Get("Originator"))
+	require.Equal(t, "0.144.1", upstream.requests[0].Header.Get("Version"))
 }
 
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {

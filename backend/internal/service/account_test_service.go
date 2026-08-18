@@ -257,14 +257,33 @@ func (s *AccountTestService) applyOpenAIAccountTestRouting(c *gin.Context, accou
 }
 
 func (s *AccountTestService) openAIAccountTestIdentityOverrideUA(c *gin.Context, account *Account) string {
-	if s == nil || s.openAIGatewayService == nil {
+	if decision, automatic := openAIAutomaticProbeDecisionFromContext(c); automatic {
+		if s != nil && s.openAIGatewayService != nil {
+			if ua := s.openAIGatewayService.codexIdentityOverrideUA(account, decision.tlsRouterMatch); ua != "" {
+				return ua
+			}
+			// 无 TLS Router/账号 UA 时，保留后台探针显式指定的设备后缀。
+			if c != nil && c.Request != nil {
+				return accountTestUserAgentFromContext(c.Request.Context())
+			}
+			return ""
+		}
 		if account == nil {
 			return ""
 		}
 		return account.GetOpenAIUserAgent()
 	}
-	if decision, automatic := openAIAutomaticProbeDecisionFromContext(c); automatic {
-		return s.openAIGatewayService.codexIdentityOverrideUA(account, decision.tlsRouterMatch)
+	// 手动/后台探针允许管理员显式覆盖设备指纹；仅版本段继续由规范身份统一。
+	if c != nil && c.Request != nil {
+		if ua := accountTestUserAgentFromContext(c.Request.Context()); ua != "" {
+			return ua
+		}
+	}
+	if s == nil || s.openAIGatewayService == nil {
+		if account == nil {
+			return ""
+		}
+		return account.GetOpenAIUserAgent()
 	}
 	return s.openAIGatewayService.codexIdentityOverrideUA(account)
 }
