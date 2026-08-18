@@ -282,6 +282,7 @@ type codexFingerprintIDs struct {
 	threadID               string
 	originalTurnID         string
 	turnID                 string
+	turnStartedAtUnixMS    int64
 	originalWindowID       string
 	windowID               string
 	originalPromptCacheKey string
@@ -317,6 +318,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 
 	ids := &codexFingerprintIDs{
 		mode:                   mode,
+		turnStartedAtUnixMS:    time.Now().UnixMilli(),
 		originalInstallationID: strings.TrimSpace(source.installationID),
 		originalSessionID:      strings.TrimSpace(source.originalSessionID),
 		originalThreadID:       strings.TrimSpace(source.threadID),
@@ -860,7 +862,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": time.Now().UnixMilli(),
+		"turn_started_at_unix_ms": ids.turnStartedAtUnixMS,
 	}
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" {
 		fields["prompt_cache_key"] = ids.promptCacheKey
@@ -943,7 +945,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"thread_id":               ids.threadID,
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
-		"turn_started_at_unix_ms": time.Now().UnixMilli(),
+		"turn_started_at_unix_ms": ids.turnStartedAtUnixMS,
 	}
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" {
 		fields["prompt_cache_key"] = ids.promptCacheKey
