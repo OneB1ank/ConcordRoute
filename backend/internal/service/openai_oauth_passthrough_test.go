@@ -265,6 +265,96 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 	require.Empty(t, upstream.lastReq.Header.Get("originator"))
 }
 
+func TestOpenAIGatewayService_OAuthPassthroughShadowUsesParentCodexIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	parentID := int64(700)
+	parent := newTestOAuthAccount(parentID, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+		"openai_device_id":           "11111111-1111-4111-8111-111111111111",
+	})
+	parent.Credentials = map[string]any{
+		"access_token":       "parent-token",
+		"chatgpt_account_id": "parent-chatgpt-account",
+	}
+	shadow := newTestOAuthAccount(701, map[string]any{
+		"openai_passthrough":         true,
+		codexFingerprintModeExtraKey: "off",
+		"openai_device_id":           "22222222-2222-4222-8222-222222222222",
+	})
+	shadow.ParentAccountID = &parentID
+	shadow.QuotaDimension = QuotaDimensionSpark
+	shadow.Concurrency = 1
+	shadow.Credentials = map[string]any{"model_mapping": map[string]any{}}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"client-cache","input":"hello","client_metadata":{"session_id":"client-session","thread_id":"client-thread","x-codex-installation-id":"client-installation"}}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("session-id", "client-session")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop after capture"}}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		accountRepo:  &stubOpenAIAccountRepo{accounts: []Account{*parent, *shadow}},
+		httpUpstream: upstream,
+	}
+
+	_, err := svc.Forward(context.Background(), c, shadow, body)
+	require.Error(t, err)
+	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, resolveConvergedThreadID(parent, "client-thread"), upstream.lastReq.Header.Get("thread-id"))
+	require.Equal(t, resolveConvergedPromptCacheKey(parent, "client-cache"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, resolveConvergedThreadID(parent, "client-thread"), gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
+}
+
+func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	parentID := int64(710)
+	parent := newTestOAuthAccount(parentID, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+		"openai_device_id":           "55555555-5555-4555-8555-555555555555",
+	})
+	parent.Credentials = map[string]any{"access_token": "parent-token", "chatgpt_account_id": "parent-account"}
+	shadow := newTestOAuthAccount(711, map[string]any{
+		codexFingerprintModeExtraKey: "off",
+		"openai_device_id":           "66666666-6666-4666-8666-666666666666",
+	})
+	shadow.ParentAccountID = &parentID
+	shadow.QuotaDimension = QuotaDimensionSpark
+	shadow.Concurrency = 1
+	shadow.Credentials = map[string]any{"model_mapping": map[string]any{}}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"transform-cache","input":"hello","client_metadata":{"session_id":"transform-session","thread_id":"transform-thread"}}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("session-id", "transform-session")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop after capture"}}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		accountRepo:  &stubOpenAIAccountRepo{accounts: []Account{*parent, *shadow}},
+		httpUpstream: upstream,
+	}
+
+	_, err := svc.Forward(context.Background(), c, shadow, body)
+	require.Error(t, err)
+	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, resolveConvergedThreadID(parent, "transform-thread"), upstream.lastReq.Header.Get("thread-id"))
+	require.Equal(t, resolveConvergedPromptCacheKey(parent, "transform-cache"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+}
+
 func TestOpenAIGatewayService_OpenAIOAuthHTTPForwardsTLSProfile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

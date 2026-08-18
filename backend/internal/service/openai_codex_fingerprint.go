@@ -48,7 +48,7 @@ func applyStagedCodexFingerprintHeaders(c *gin.Context, account *Account, h http
 	if c == nil || account == nil || account.Type != AccountTypeOAuth {
 		return
 	}
-	if ids := stagedCodexFingerprintIDs(c); ids != nil {
+	if ids := stagedCodexFingerprintIDs(c); ids != nil && ids.stagedAccountBound && ids.stagedAccountID == account.ID {
 		applyCodexFingerprintHeaders(h, ids)
 	}
 }
@@ -269,6 +269,10 @@ type codexFingerprintSource struct {
 // 由 resolveCodexFingerprintIDs 一次性生成，同一个实例在头改写和体改写之间共享，
 // 确保所有载体中的 turn_id 等随机字段一致。
 type codexFingerprintIDs struct {
+	// stagedAccountID 记录本次请求实际调度的账号。Spark 影子的身份字段由父账号
+	// 派生，但暂存值只能由同一个影子尝试读取，避免 OAuth→OAuth failover 误用。
+	stagedAccountID        int64
+	stagedAccountBound     bool
 	mode                   codexFingerprintMode
 	originalInstallationID string
 	installationID         string
@@ -284,6 +288,16 @@ type codexFingerprintIDs struct {
 	promptCacheKey         string
 	// promptCacheKeyInBody 区分原请求体字段与仅用于 Header 的兼容缓存键。
 	promptCacheKeyInBody bool
+}
+
+// bindCodexFingerprintIDsToAccount 将派生结果绑定到本次实际调度账号。
+// 身份可以来自 OAuth 父账号，但 context 暂存值的所有权必须属于当前调度尝试。
+func bindCodexFingerprintIDsToAccount(ids *codexFingerprintIDs, account *Account) *codexFingerprintIDs {
+	if ids != nil && account != nil {
+		ids.stagedAccountID = account.ID
+		ids.stagedAccountBound = true
+	}
+	return ids
 }
 
 // resolveCodexFingerprintIDs 按收敛模式计算出站 ID 集合。

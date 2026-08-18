@@ -80,6 +80,50 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthUsesNativeV2
 	require.Contains(t, rec.Body.String(), `"type":"test_complete"`)
 }
 
+func TestAccountTestService_OpenAICompactShadowUsesParentCodexIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	parentID := int64(11)
+	parent := newTestOAuthAccount(parentID, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+		"openai_device_id":           "33333333-3333-4333-8333-333333333333",
+	})
+	parent.Credentials = map[string]any{
+		"access_token":       "parent-token",
+		"chatgpt_account_id": "parent-chatgpt-account",
+	}
+	shadow := newTestOAuthAccount(12, map[string]any{
+		codexFingerprintModeExtraKey: "off",
+		"openai_device_id":           "44444444-4444-4444-8444-444444444444",
+	})
+	shadow.ParentAccountID = &parentID
+	shadow.QuotaDimension = QuotaDimensionSpark
+	shadow.Concurrency = 1
+	shadow.Credentials = map[string]any{"model_mapping": map[string]any{}}
+
+	updateCalls := make(chan map[string]any, 1)
+	repo := &snapshotUpdateAccountRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*parent, *shadow}},
+		updateExtraCalls:      updateCalls,
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(compactProbeV2SSESuccessBody)),
+	}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/12/test", nil)
+
+	err := svc.TestAccountConnection(c, shadow.ID, "gpt-5.3-codex-spark", "", AccountTestModeCompact)
+	require.NoError(t, err)
+	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, "parent-chatgpt-account", upstream.lastReq.Header.Get("chatgpt-account-id"))
+	<-updateCalls
+}
+
 func TestAccountTestService_TestAccountConnection_OpenAICompactOAuth404MarksOnlyNativeV2Unsupported(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

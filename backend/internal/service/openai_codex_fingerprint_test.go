@@ -753,6 +753,36 @@ func TestStageCodexFingerprintIDs_NilClearsPriorAttempt(t *testing.T) {
 	assert.Equal(t, "client-installation", headers.Get("x-codex-installation-id"))
 }
 
+func TestApplyStagedCodexFingerprintHeaders_RequiresScheduledAccountOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	accountA := newTestOAuthAccount(31, map[string]any{codexFingerprintModeExtraKey: "session"})
+	accountB := newTestOAuthAccount(32, map[string]any{codexFingerprintModeExtraKey: "session"})
+	ids := bindCodexFingerprintIDsToAccount(
+		resolveCodexFingerprintIDs(accountA, "client-a", codexFingerprintSession),
+		accountA,
+	)
+	stageCodexFingerprintIDs(c, ids)
+
+	foreignHeaders := http.Header{}
+	foreignHeaders.Set("x-codex-installation-id", "foreign-original")
+	applyStagedCodexFingerprintHeaders(c, accountB, foreignHeaders)
+	assert.Equal(t, "foreign-original", foreignHeaders.Get("x-codex-installation-id"))
+
+	ownedHeaders := http.Header{}
+	applyStagedCodexFingerprintHeaders(c, accountA, ownedHeaders)
+	assert.Equal(t, ids.installationID, ownedHeaders.Get("x-codex-installation-id"))
+
+	zeroIDAccount := newTestOAuthAccount(0, map[string]any{codexFingerprintModeExtraKey: "session"})
+	stageCodexFingerprintIDs(c, resolveCodexFingerprintIDs(zeroIDAccount, "client-zero", codexFingerprintSession))
+	unboundHeaders := http.Header{}
+	unboundHeaders.Set("x-codex-installation-id", "unbound-original")
+	applyStagedCodexFingerprintHeaders(c, zeroIDAccount, unboundHeaders)
+	assert.Equal(t, "unbound-original", unboundHeaders.Get("x-codex-installation-id"))
+}
+
 func TestRestoreCodexFingerprintResponsePayload_ExposesOriginalCockpitIdentity(t *testing.T) {
 	account := newTestOAuthAccount(21, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	headers := http.Header{}

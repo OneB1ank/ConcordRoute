@@ -1156,7 +1156,7 @@ func (s *AccountTestService) testOpenAINativeCompactionV2Connection(c *gin.Conte
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
-		if fingerprintIDs := resolveCodexFingerprintIDsFromRequest(account, req.Header); fingerprintIDs != nil {
+		if fingerprintIDs := resolveCodexFingerprintIDsFromRequest(credentialAccount, req.Header); fingerprintIDs != nil {
 			applyCodexFingerprintHeaders(req.Header, fingerprintIDs)
 		}
 		enforceCodexIdentityHeaders(req.Header)
