@@ -15,6 +15,11 @@ func TestDefaultModelsContainsCodexAutoReview(t *testing.T) {
 	t.Fatal("默认 OpenAI 模型列表应包含 codex-auto-review")
 }
 
+func TestCodexUsageProbeModelIsAvailable(t *testing.T) {
+	require.Equal(t, "codex-auto-review", CodexUsageProbeModel)
+	require.Contains(t, DefaultModelIDs(), CodexUsageProbeModel)
+}
+
 func TestDefaultModelsIncludeBareGPT56Alias(t *testing.T) {
 	require.Contains(t, DefaultModelIDs(), "gpt-5.6")
 }

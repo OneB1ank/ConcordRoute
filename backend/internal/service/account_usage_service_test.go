@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	openaipkg "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/qoder"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 )
@@ -1174,6 +1175,17 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile(
 	}
 	if upstream.accountID != account.ID {
 		t.Fatalf("accountID = %d, want %d", upstream.accountID, account.ID)
+	}
+	body, err := io.ReadAll(upstream.req.Body)
+	if err != nil {
+		t.Fatalf("read probe request body: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal probe request body: %v", err)
+	}
+	if got := payload["model"]; got != openaipkg.CodexUsageProbeModel {
+		t.Fatalf("probe model = %v, want %s", got, openaipkg.CodexUsageProbeModel)
 	}
 }
 
