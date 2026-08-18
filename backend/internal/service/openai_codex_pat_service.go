@@ -10,7 +10,6 @@ import (
 
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/errors"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/httpclient"
-	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 )
 
 const openAICodexPATWhoamiURLDefault = "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami"
@@ -58,8 +57,7 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 	}
 	req.Header.Set("authorization", "Bearer "+accessToken)
 	req.Header.Set("accept", "application/json")
-	req.Header.Set("originator", openai.CodexDefaultOriginator)
-	req.Header.Set("user-agent", codexCLIUserAgent)
+	ApplyCodexCanonicalAuthIdentity(req.Header)
 
 	resp, err := client.Do(req)
 	if err != nil {

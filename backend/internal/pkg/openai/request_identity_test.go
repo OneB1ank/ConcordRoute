@@ -84,3 +84,14 @@ func TestPairCodexClientIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexUserAgentVersionHelpers(t *testing.T) {
+	const ua = "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)"
+	require.Equal(t, "0.144.1", CodexUserAgentVersion(ua))
+	require.Equal(t,
+		"codex-tui/0.200.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.200.1)",
+		SetCodexUserAgentVersion(ua, "0.200.1"),
+	)
+	require.Empty(t, CodexUserAgentVersion("curl"))
+	require.Empty(t, SetCodexUserAgentVersion("curl", "0.200.1"))
+}

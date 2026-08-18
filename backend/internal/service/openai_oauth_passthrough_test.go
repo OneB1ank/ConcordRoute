@@ -549,6 +549,8 @@ func captureStructuredLog(t *testing.T) (*inMemoryLogSink, func()) {
 
 func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormalized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -617,7 +619,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 
 	// 2) only auth is replaced; inbound auth/cookie are not forwarded
 	require.Equal(t, "Bearer oauth-token", upstream.lastReq.Header.Get("Authorization"))
-	require.Equal(t, "codex_cli_rs/0.1.0", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, canonicalUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "0.200.1", upstream.lastReq.Header.Get("version"))
 	require.Empty(t, upstream.lastReq.Header.Get("Cookie"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Api-Key"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Goog-Api-Key"))
@@ -1137,6 +1141,8 @@ func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *
 
 func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1174,9 +1180,10 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	_, err := svc.Forward(context.Background(), c, account, inputBody)
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	// 浏览器型复合 UA 被替换为默认 Codex UA（codex-tui 形态），originator 随最终 UA 配套（issue #3901）。
-	require.Equal(t, DefaultOpenAICodexUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	// 复合入站 UA 收敛为后台规范 Codex 身份，originator 与 version 同源。
+	require.Equal(t, canonicalUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "0.200.1", upstream.lastReq.Header.Get("version"))
 	require.NotEqual(t, "opencode", upstream.lastReq.Header.Get("originator"))
 }
 
@@ -2003,6 +2010,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_BrowserUAUsesConfiguredCodexUA(t 
 	settingSvc := NewSettingService(&openAIPassthroughSettingRepoStub{values: map[string]string{
 		SettingKeyOpenAICodexUserAgent: "codex-tui/9.9.9 test-terminal",
 	}}, &config.Config{})
+	SetCodexCanonicalUserAgentResolver(func() string {
+		return settingSvc.GetOpenAICodexUserAgent(context.Background())
+	})
+	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
 	svc := &OpenAIGatewayService{
 		cfg:            &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
@@ -2026,14 +2037,16 @@ func TestOpenAIGatewayService_OAuthPassthrough_BrowserUAUsesConfiguredCodexUA(t 
 	require.NoError(t, err)
 	require.Equal(t, "codex-tui/9.9.9 test-terminal", upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "9.9.9", upstream.lastReq.Header.Get("version"))
 }
 
-// 回归（issue #3901）：codex-tui 等官方 UA 在透传模式下必须逐字保留，且 originator
-// 由最终 UA 推导配套，避免身份首段错配被上游返回 404。
-func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaired(t *testing.T) {
+// 回归：入站官方 UA 也必须收敛到后台规范身份，避免不同接口暴露不同版本。
+func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityConvergesToCanonical(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	const tuiUA = "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)"
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2068,13 +2081,16 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityPreservedAndPaire
 	_, err := svc.Forward(context.Background(), c, account, inputBody)
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, tuiUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, canonicalUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "0.200.1", upstream.lastReq.Header.Get("version"))
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterOfficialUAIsPreservedAndPaired(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterFingerprintPreservedWithCanonicalVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const routedUA = "codex-tui/9.9.0 (Linux; x86_64) xterm (codex-tui; 9.9.0)"
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2123,8 +2139,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterOfficialUAIsPreservedAnd
 
 	_, err := svc.Forward(context.Background(), c, account, inputBody)
 	require.NoError(t, err)
-	require.Equal(t, routedUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.200.1 (Linux; x86_64) xterm (codex-tui; 0.200.1)", upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "0.200.1", upstream.lastReq.Header.Get("version"))
 }
 
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {

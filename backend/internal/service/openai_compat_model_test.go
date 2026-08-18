@@ -1082,6 +1082,8 @@ func TestForwardAsAnthropic_ReusesOAuthCodexTurnState(t *testing.T) {
 func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	const canonicalMacUA = "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.144.1)"
+	withCodexCanonicalUA(t, canonicalMacUA)
 	const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
 	tests := []struct {
 		name           string
@@ -1091,17 +1093,17 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 		wantOriginator string
 	}{
 		{
-			name:           "官方UA逐字保留并重新配对",
+			name:           "官方入站UA收敛为后台macOS身份",
 			userAgent:      tuiUA,
 			originator:     "opencode",
-			wantUserAgent:  tuiUA,
+			wantUserAgent:  canonicalMacUA,
 			wantOriginator: "codex-tui",
 		},
 		{
 			name:           "第三方UA回退为默认Codex身份",
 			userAgent:      "third-party-client/1.0.0",
 			originator:     "opencode",
-			wantUserAgent:  codexCLIUserAgent,
+			wantUserAgent:  canonicalMacUA,
 			wantOriginator: openai.CodexDefaultOriginator,
 		},
 	}

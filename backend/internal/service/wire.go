@@ -703,6 +703,11 @@ func ProvideSettingService(settingRepo SettingRepository, paymentConfigService *
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
 	}
 	antigravity.SetUserAgentVersionResolver(svc.GetAntigravityUserAgentVersion)
+	// Codex 的推理、Token/PAT、额度探针与搜索旁路共用后台配置的 UA。
+	// GetOpenAICodexUserAgent 内部带 60s TTL 缓存，热路径不直接访问数据库。
+	SetCodexCanonicalUserAgentResolver(func() string {
+		return svc.GetOpenAICodexUserAgent(context.Background())
+	})
 	return svc
 }
 

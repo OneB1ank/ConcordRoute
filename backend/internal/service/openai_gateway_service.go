@@ -1330,15 +1330,32 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgent(
 		}
 	}
 	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("user-agent", codexCLIUserAgent)
+		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 		return
 	}
 	wasBrowserUA := account != nil && account.Type == AccountTypeOAuth && openai.IsBrowserUserAgent(req.Header.Get("user-agent"))
 	s.overrideBrowserUserAgent(ctx, account, req)
 	if passthrough && account != nil && account.Type == AccountTypeOAuth && !wasBrowserUA && !openai.IsCodexOfficialClientRequest(req.Header.Get("user-agent")) {
 		// OAuth 安全透传：非浏览器、非官方 Codex UA 使用标准 Codex TUI 兜底。
-		req.Header.Set("user-agent", codexCLIUserAgent)
+		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 	}
+}
+
+// codexIdentityOverrideUA 返回管理员显式选择的设备身份。
+// TLS Router 优先于账号 UA；ForceCodexCLI 使用全局规范身份。
+func (s *OpenAIGatewayService) codexIdentityOverrideUA(account *Account, routerMatch ...TLSFingerprintRouterMatchResult) string {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		return ""
+	}
+	if len(routerMatch) > 0 && routerMatch[0].Matched {
+		if ua := strings.TrimSpace(routerMatch[0].UpstreamUserAgent); ua != "" {
+			return ua
+		}
+	}
+	if account == nil {
+		return ""
+	}
+	return strings.TrimSpace(account.GetOpenAIUserAgent())
 }
 
 // applyOpenAIUpstreamUserAgentHeader 在 WebSocket 握手头上复用 HTTP 上游 UA 规则。

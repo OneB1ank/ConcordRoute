@@ -3169,9 +3169,10 @@ func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testi
 
 func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 
-	// 上游要求 originator 与最终 User-Agent 首段配套（issue #3901）：
-	// originator 一律由最终 UA 推导；推导不出官方身份时整体回退默认 Codex TUI 身份。
+	// OAuth 推理面统一使用后台规范身份，不继承入站客户端自报的版本或客户端类型。
 	tests := []struct {
 		name           string
 		userAgent      string
@@ -3179,16 +3180,16 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 		wantOriginator string
 		wantUA         string
 	}{
-		{name: "official ua pairs originator", userAgent: "Codex Desktop/1.2.3", wantOriginator: "Codex Desktop", wantUA: "Codex Desktop/1.2.3"},
+		{name: "official ua converges to canonical identity", userAgent: "Codex Desktop/1.2.3", wantOriginator: "codex-tui", wantUA: canonicalUA},
 		{
 			name:           "mismatched originator repaired from ua",
 			userAgent:      "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)",
 			originator:     "codex_cli_rs",
 			wantOriginator: "codex-tui",
-			wantUA:         "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)",
+			wantUA:         canonicalUA,
 		},
-		{name: "official originator without ua falls back to default identity", originator: "codex_vscode", wantOriginator: openai.CodexDefaultOriginator, wantUA: codexCLIUserAgent},
-		{name: "third-party ua masked to default identity", userAgent: "luna/1.2.0", wantOriginator: openai.CodexDefaultOriginator, wantUA: codexCLIUserAgent},
+		{name: "official originator without ua converges to canonical identity", originator: "codex_vscode", wantOriginator: openai.CodexDefaultOriginator, wantUA: canonicalUA},
+		{name: "third-party ua converges to canonical identity", userAgent: "luna/1.2.0", wantOriginator: openai.CodexDefaultOriginator, wantUA: canonicalUA},
 	}
 
 	for _, tt := range tests {
@@ -3220,6 +3221,8 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 
 func TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
@@ -3246,12 +3249,15 @@ func TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders(t *testing.T) {
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false, routerMatch)
 	require.NoError(t, err)
-	require.Equal(t, routerMatch.UpstreamUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.200.1 (Mac OS X 15.5; arm64) iTerm (codex-tui; 0.200.1)", req.Header.Get("User-Agent"))
 	require.Equal(t, routerMatch.UpstreamOriginator, req.Header.Get("originator"))
+	require.Equal(t, "0.200.1", req.Header.Get("version"))
 }
 
 func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesAccountFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
@@ -3269,8 +3275,9 @@ func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesAccountFallback(t *testing.T
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false, TLSFingerprintRouterMatchResult{Matched: true})
 	require.NoError(t, err)
-	require.Equal(t, "codex-tui/9.8.0 account-fallback", req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.200.1 account-fallback", req.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", req.Header.Get("originator"))
+	require.Equal(t, "0.200.1", req.Header.Get("version"))
 }
 
 // ==================== P1-08 修复：model 替换性能优化测试 ====================

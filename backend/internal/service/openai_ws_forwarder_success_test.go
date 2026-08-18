@@ -1149,9 +1149,10 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 
 func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
 
-	// 上游要求 originator 与最终 user-agent 首段配套（issue #3901）：
-	// originator 一律由最终 UA 推导；推导不出官方身份时整体回退默认 Codex TUI 身份。
+	// WS v2 与 HTTP 使用同一后台规范身份，避免入站 UA 造成版本和 originator 漂移。
 	tests := []struct {
 		name           string
 		userAgent      string
@@ -1159,15 +1160,15 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 		wantOriginator string
 		wantUA         string
 	}{
-		{name: "official ua pairs originator", userAgent: "Codex Desktop/1.2.3", wantOriginator: "Codex Desktop", wantUA: "Codex Desktop/1.2.3"},
+		{name: "official ua converges to canonical identity", userAgent: "Codex Desktop/1.2.3", wantOriginator: "codex-tui", wantUA: canonicalUA},
 		{
 			name:           "mismatched originator repaired from ua",
 			userAgent:      "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)",
 			originator:     "codex_cli_rs",
 			wantOriginator: "codex-tui",
-			wantUA:         "codex-tui/0.140.2 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.140.2)",
+			wantUA:         canonicalUA,
 		},
-		{name: "official originator without ua falls back to default identity", originator: "codex_vscode", wantOriginator: openai.CodexDefaultOriginator, wantUA: codexCLIUserAgent},
+		{name: "official originator without ua converges to canonical identity", originator: "codex_vscode", wantOriginator: openai.CodexDefaultOriginator, wantUA: canonicalUA},
 	}
 
 	for _, tt := range tests {

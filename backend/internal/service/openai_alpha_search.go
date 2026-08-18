@@ -251,12 +251,9 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 	if turnMetadata := openAIAlphaSearchInboundHeader(c, "X-Codex-Turn-Metadata"); turnMetadata != "" {
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 	}
-	if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-		req.Header.Set("Version", version)
-	} else {
-		req.Header.Set("Version", codexCLIVersion)
-	}
-	req.Header.Set("Originator", resolveOpenAIUpstreamOriginator(c, true, tlsRouterMatch...))
+	canonical := resolveCodexOutboundIdentity("")
+	req.Header.Set("Version", canonical.version)
+	req.Header.Set("Originator", canonical.originator)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
 		isolated := isolateOpenAISessionID(apiKeyID, sessionID)
@@ -264,7 +261,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 		req.Header.Set("Conversation_ID", isolated)
 	}
 	s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, true, tlsRouterMatch...)
-	enforceCodexIdentityHeaders(req.Header)
+	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
@@ -389,14 +386,11 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(
 		if turnMetadata := openAIAlphaSearchInboundHeader(c, "X-Codex-Turn-Metadata"); turnMetadata != "" {
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 		}
-		if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-			req.Header.Set("Version", version)
-		} else {
-			req.Header.Set("Version", codexCLIVersion)
-		}
-		req.Header.Set("Originator", resolveOpenAIUpstreamOriginator(c, true, tlsRouterMatch...))
+		canonical := resolveCodexOutboundIdentity("")
+		req.Header.Set("Version", canonical.version)
+		req.Header.Set("Originator", canonical.originator)
 		s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, true, tlsRouterMatch...)
-		enforceCodexIdentityHeaders(req.Header)
+		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))
 	}
 
 	account.ApplyHeaderOverrides(req.Header)

@@ -12,13 +12,17 @@ import (
 )
 
 func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
+	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, macUA)
 	var gotAuthorization string
 	var gotOriginator string
 	var gotUserAgent string
+	var gotVersion string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuthorization = r.Header.Get("authorization")
 		gotOriginator = r.Header.Get("originator")
 		gotUserAgent = r.Header.Get("user-agent")
+		gotVersion = r.Header.Get("version")
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"email":"user@example.com",
@@ -41,7 +45,8 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Bearer at-test-token", gotAuthorization)
 	require.Equal(t, openai.CodexDefaultOriginator, gotOriginator)
-	require.Equal(t, codexCLIUserAgent, gotUserAgent)
+	require.Equal(t, macUA, gotUserAgent)
+	require.Empty(t, gotVersion)
 	require.Equal(t, OpenAIAuthModePersonalAccessToken, info.AuthMode)
 	require.Equal(t, "user@example.com", info.Email)
 	require.Equal(t, "user-123", info.ChatGPTUserID)

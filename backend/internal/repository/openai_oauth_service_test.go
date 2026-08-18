@@ -380,7 +380,7 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_WithTLSProfileUsesHTTPUpstrea
 	s.svc = &openaiOAuthService{tokenURL: "https://auth.openai.com/oauth/token", httpUpstream: upstream}
 
 	resp, err := s.svc.ExchangeCode(s.ctx, "code", "verifier", "", "http://proxy.local:8080", "client-id", service.OpenAIOAuthTokenRequestOptions{
-		UserAgent:          "Token UA",
+		UserAgent:          "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)",
 		TLSProfile:         profile,
 		AccountID:          123,
 		AccountConcurrency: 2,
@@ -397,7 +397,9 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(upstream.req.Context()))
 	require.Equal(s.T(), "application/x-www-form-urlencoded", upstream.req.Header.Get("Content-Type"))
 	require.Equal(s.T(), "application/json", upstream.req.Header.Get("Accept"))
-	require.Equal(s.T(), "Token UA", upstream.req.Header.Get("User-Agent"))
+	require.Equal(s.T(), "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)", upstream.req.Header.Get("User-Agent"))
+	require.Equal(s.T(), "codex-tui", upstream.req.Header.Get("originator"))
+	require.Empty(s.T(), upstream.req.Header.Get("version"))
 	require.Equal(s.T(), "authorization_code", upstream.form.Get("grant_type"))
 	require.Equal(s.T(), "client-id", upstream.form.Get("client_id"))
 	require.Equal(s.T(), "code", upstream.form.Get("code"))
@@ -411,7 +413,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 	s.svc = &openaiOAuthService{tokenURL: "https://auth.openai.com/oauth/token", httpUpstream: upstream}
 
 	resp, err := s.svc.RefreshTokenWithClientID(s.ctx, "refresh-token", "", "client-id", service.OpenAIOAuthTokenRequestOptions{
-		UserAgent:  "Refresh UA",
+		UserAgent:  "codex_cli_rs/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex_cli_rs; 0.144.1)",
 		TLSProfile: profile,
 	})
 
@@ -419,7 +421,9 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), "tls-at", resp.AccessToken)
 	require.True(s.T(), upstream.calledDoWithTLS)
 	require.Same(s.T(), profile, upstream.profile)
-	require.Equal(s.T(), "Refresh UA", upstream.req.Header.Get("User-Agent"))
+	require.Equal(s.T(), "codex_cli_rs/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex_cli_rs; 0.144.1)", upstream.req.Header.Get("User-Agent"))
+	require.Equal(s.T(), "codex_cli_rs", upstream.req.Header.Get("originator"))
+	require.Empty(s.T(), upstream.req.Header.Get("version"))
 	require.Equal(s.T(), service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(upstream.req.Context()))
 	require.Equal(s.T(), "refresh_token", upstream.form.Get("grant_type"))
 	require.Equal(s.T(), "refresh-token", upstream.form.Get("refresh_token"))
@@ -427,11 +431,17 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), openai.RefreshScopes, upstream.form.Get("scope"))
 }
 
-func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithOnlyUserAgentKeepsReqPath() {
+func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithOnlyUserAgentUsesCanonicalAuthIdentity() {
+	const tokenUA = "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)"
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("User-Agent"); got != "UA Only" {
+		if got := r.Header.Get("User-Agent"); got != tokenUA {
 			errCh <- "user-agent mismatch"
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if got := r.Header.Get("originator"); got != "codex-tui" {
+			errCh <- "originator mismatch"
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -439,7 +449,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithOnlyUserAgentKeepsReqPath
 		_, _ = io.WriteString(w, `{"access_token":"at","refresh_token":"rt","token_type":"bearer","expires_in":3600}`)
 	}))
 
-	resp, err := s.svc.RefreshTokenWithClientID(s.ctx, "rt", "", "client-id", service.OpenAIOAuthTokenRequestOptions{UserAgent: "UA Only"})
+	resp, err := s.svc.RefreshTokenWithClientID(s.ctx, "rt", "", "client-id", service.OpenAIOAuthTokenRequestOptions{UserAgent: tokenUA})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "at", resp.AccessToken)
 	select {

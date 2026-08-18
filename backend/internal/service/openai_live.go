@@ -465,10 +465,10 @@ func liveCallIDFromLocation(location string) (string, error) {
 	return callID, nil
 }
 
-func applyLiveUpstreamIdentityHeaders(headers http.Header) {
+func applyLiveUpstreamIdentityHeaders(headers http.Header, overrideUA string) {
 	headers.Set("OpenAI-Alpha", "quicksilver=v2")
 	ensureCodexIdentityHeaders(headers)
-	enforceCodexIdentityHeaders(headers)
+	enforceCodexIdentityHeadersWithUA(headers, overrideUA)
 	if strings.TrimSpace(headers.Get("session-id")) == "" {
 		headers.Set("session-id", uuid.NewString())
 	}
@@ -492,7 +492,7 @@ func (s *OpenAIGatewayService) applyLiveUpstreamRouting(
 		}
 	}
 	s.applyOpenAIUpstreamUserAgentHeader(ctx, nil, account, headers, false, routerMatch)
-	applyLiveUpstreamIdentityHeaders(headers)
+	applyLiveUpstreamIdentityHeaders(headers, s.codexIdentityOverrideUA(account, routerMatch))
 }
 
 func (s *OpenAIGatewayService) liveSidebandHeaders(

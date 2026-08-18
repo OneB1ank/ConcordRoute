@@ -88,6 +88,7 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	}
 
 	const routedUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
+	const normalizedRoutedUA = "codex-tui/0.144.1 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.144.1)"
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body, TLSFingerprintRouterMatchResult{
 		Matched:                 true,
 		UpstreamUserAgent:       routedUA,
@@ -107,7 +108,7 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	require.Equal(t, "chatgpt-account", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "0.144.1", upstream.lastReq.Header.Get("Version"))
-	require.Equal(t, routedUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, normalizedRoutedUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.NotNil(t, upstream.lastTLSProfile)
@@ -166,6 +167,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	}
 
 	const routedUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
+	const normalizedRoutedUA = "codex-tui/0.144.1 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.144.1)"
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body, TLSFingerprintRouterMatchResult{
 		Matched:                 true,
 		UpstreamUserAgent:       routedUA,
@@ -188,7 +190,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, "0.144.1", upstream.lastReq.Header.Get("Version"))
 	require.Equal(t, `{"turn_id":"turn-1"}`, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
-	require.Equal(t, routedUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, normalizedRoutedUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
 	require.NotNil(t, upstream.lastTLSProfile)
 	require.Equal(t, "Built-in Default (Node.js 24.x)", upstream.lastTLSProfile.Name)

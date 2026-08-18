@@ -256,6 +256,19 @@ func (s *AccountTestService) applyOpenAIAccountTestRouting(c *gin.Context, accou
 	s.openAIGatewayService.applyOpenAIUpstreamUserAgent(req.Context(), c, account, req, false, decision.tlsRouterMatch)
 }
 
+func (s *AccountTestService) openAIAccountTestIdentityOverrideUA(c *gin.Context, account *Account) string {
+	if s == nil || s.openAIGatewayService == nil {
+		if account == nil {
+			return ""
+		}
+		return account.GetOpenAIUserAgent()
+	}
+	if decision, automatic := openAIAutomaticProbeDecisionFromContext(c); automatic {
+		return s.openAIGatewayService.codexIdentityOverrideUA(account, decision.tlsRouterMatch)
+	}
+	return s.openAIGatewayService.codexIdentityOverrideUA(account)
+}
+
 func (s *AccountTestService) resolveOpenAIAccountTestTLSProfile(c *gin.Context, account *Account) *tlsfingerprint.Profile {
 	if decision, automatic := openAIAutomaticProbeDecisionFromContext(c); automatic {
 		return s.openAIGatewayService.resolveOpenAITLSProfile(account, decision.tlsRouterMatch)
@@ -811,18 +824,18 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		req.Host = "chatgpt.com"
 		req.Header.Set("accept", "text/event-stream")
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
-		req.Header.Set("Originator", openai.CodexDefaultOriginator)
+		canonical := resolveCodexOutboundIdentity("")
+		req.Header.Set("Originator", canonical.originator)
 		if customUA := strings.TrimSpace(credentialAccount.GetOpenAIUserAgent()); customUA != "" {
 			req.Header.Set("User-Agent", customUA)
 		} else {
-			req.Header.Set("User-Agent", codexCLIUserAgent)
+			req.Header.Set("User-Agent", canonical.userAgent)
 		}
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 	}
 	s.applyOpenAIAccountTestRouting(c, account, req, isOAuth)
 	if account.Type == AccountTypeOAuth {
-		// 必须在测试专用 UA 覆写之后配对身份，否则测试请求仍可能因头部错配返回 404。
-		enforceCodexIdentityHeaders(req.Header)
+		enforceCodexIdentityHeadersWithUA(req.Header, s.openAIAccountTestIdentityOverrideUA(c, credentialAccount))
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -1144,10 +1157,11 @@ func (s *AccountTestService) testOpenAINativeCompactionV2Connection(c *gin.Conte
 	} else {
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
+	canonical := resolveCodexOutboundIdentity("")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("Originator", openai.CodexDefaultOriginator)
-	req.Header.Set("User-Agent", codexCLIUserAgent)
-	req.Header.Set("Version", codexCLIVersion)
+	req.Header.Set("Originator", canonical.originator)
+	req.Header.Set("User-Agent", canonical.userAgent)
+	req.Header.Set("Version", canonical.version)
 	probeSessionID := compactProbeSessionID(account.ID)
 	req.Header.Set("Session_ID", probeSessionID)
 	req.Header.Set("Conversation_ID", probeSessionID)
@@ -1159,7 +1173,7 @@ func (s *AccountTestService) testOpenAINativeCompactionV2Connection(c *gin.Conte
 		if fingerprintIDs := resolveCodexFingerprintIDsFromRequest(credentialAccount, req.Header); fingerprintIDs != nil {
 			applyCodexFingerprintHeaders(req.Header, fingerprintIDs)
 		}
-		enforceCodexIdentityHeaders(req.Header)
+		enforceCodexIdentityHeadersWithUA(req.Header, s.openAIAccountTestIdentityOverrideUA(c, credentialAccount))
 	}
 
 	// 账号覆盖先执行，再补 V2 协商头，保证探测和真实转发有相同的协议契约。
@@ -1301,10 +1315,11 @@ func (s *AccountTestService) testOpenAILegacyCompactConnection(c *gin.Context, a
 	} else {
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
+	canonical := resolveCodexOutboundIdentity("")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("Originator", openai.CodexDefaultOriginator)
-	req.Header.Set("User-Agent", codexCLIUserAgent)
-	req.Header.Set("Version", codexCLIVersion)
+	req.Header.Set("Originator", canonical.originator)
+	req.Header.Set("User-Agent", canonical.userAgent)
+	req.Header.Set("Version", canonical.version)
 	probeSessionID := legacyCompactProbeSessionID(account.ID)
 	req.Header.Set("Session_ID", probeSessionID)
 	req.Header.Set("Conversation_ID", probeSessionID)
@@ -1314,7 +1329,7 @@ func (s *AccountTestService) testOpenAILegacyCompactConnection(c *gin.Context, a
 		req.Host = "chatgpt.com"
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 		// compact 探针同样访问 Codex 上游，测试 UA 覆写完成后必须重新配对身份头。
-		enforceCodexIdentityHeaders(req.Header)
+		enforceCodexIdentityHeadersWithUA(req.Header, s.openAIAccountTestIdentityOverrideUA(c, credentialAccount))
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -2393,16 +2408,17 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("originator", openai.CodexDefaultOriginator)
+	canonical := resolveCodexOutboundIdentity("")
+	req.Header.Set("originator", canonical.originator)
 	if customUA := strings.TrimSpace(credentialAccount.GetOpenAIUserAgent()); customUA != "" {
 		req.Header.Set("User-Agent", customUA)
 	} else {
-		req.Header.Set("User-Agent", codexCLIUserAgent)
+		req.Header.Set("User-Agent", canonical.userAgent)
 	}
 	s.applyOpenAIAccountTestRouting(c, account, req, true)
 	setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 	// 与真实转发一致：originator 与最终 User-Agent 首段配套（原 opencode 与 Codex UA 错配会 404，issue #3901）。
-	enforceCodexIdentityHeaders(req.Header)
+	enforceCodexIdentityHeadersWithUA(req.Header, s.openAIAccountTestIdentityOverrideUA(c, credentialAccount))
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
