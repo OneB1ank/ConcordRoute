@@ -1,57 +1,64 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="TokenRouter" width="112" />
+  <img src="assets/logo.svg" alt="TokenRouter Continuity" width="112" />
 
-  <h1>TokenRouter</h1>
+  <h1>TokenRouter Continuity</h1>
 
-  <p><strong>AI API gateway and subscription quota management platform</strong></p>
+  <p><strong>A TokenRouter-derived branch focused on identity, transport, and egress consistency</strong></p>
 
   <p>
-    <a href="https://github.com/TokenFlux/TokenRouter/actions/workflows/backend-ci.yml"><img src="https://github.com/TokenFlux/TokenRouter/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://github.com/TokenFlux/TokenRouter/releases"><img src="https://img.shields.io/github/v/release/TokenFlux/TokenRouter?display_name=tag" alt="Release" /></a>
-    <a href="https://github.com/TokenFlux/TokenRouter/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io%2Ftokenflux%2Ftokenrouter-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
+    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml"><img src="https://github.com/OneB1ank/TokenRouter-cockpit/actions/workflows/backend-ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/releases"><img src="https://img.shields.io/github/v/release/OneB1ank/TokenRouter-cockpit?display_name=tag" alt="Release" /></a>
+    <a href="https://github.com/OneB1ank/TokenRouter-cockpit/pkgs/container/tokenrouter"><img src="https://img.shields.io/badge/container-ghcr.io%2Foneb1ank%2Ftokenrouter-2496ED?logo=docker&logoColor=white" alt="Container" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0--or--later-4c1.svg" alt="License: LGPL-3.0-or-later" /></a>
   </p>
 
   <p><a href="README.md">简体中文</a> | <strong>English</strong></p>
 </div>
 
-## Overview
+## Positioning
 
-TokenRouter is a self-hosted AI API gateway and management platform for unified access to multiple upstream AI services. Users send requests with platform-issued API keys, while TokenRouter handles authentication, routing, account scheduling, request forwarding, usage tracking, and billing.
+TokenRouter Continuity is primarily derived from [TokenRouter](https://github.com/TokenFlux/TokenRouter). It retains TokenRouter's gateway, account scheduling, usage, subscription, billing, and administration capabilities while strengthening identity, protocol, and network-egress consistency for Codex/OpenAI multi-account deployments.
 
-The project provides user and administration web interfaces for individuals and teams that need to manage upstream accounts, distribute API quotas, and operate AI services in one place.
+The project does not increase upstream account quotas. Its quota-related work reduces redundant requests, cache invalidation, invalid probes, and misleading usage observations caused by account switches, session drift, cache-key changes, inconsistent client characteristics, unstable proxy egress, or mismatched logging semantics. Actual quotas, rate limits, and dynamic policies remain controlled by the upstream service.
 
-TokenRouter builds on [Sub2API](https://github.com/Wei-Shaw/sub2api). Thanks to the upstream project and all contributors.
+## Continuity Features
 
-## Core Features
+- Account-scoped Cockpit installation/device and primary session identities.
+- Conversation-scoped thread, window, turn, and prompt-cache-key isolation.
+- Configurable uTLS ClientHello profiles with TLS, ALPN, and extension validation.
+- Consistent TLS behavior across direct HTTPS and HTTPS proxy paths.
+- Clash/mihomo nodes, strategies, and per-account stable egress bindings.
+- Unified session, TTFT, cache-hit, reasoning-effort, and usage observability.
+- Consistent OAuth, Codex Session/PAT, model whitelist, and mapping persistence.
 
-- Unified management for multiple upstreams and accounts
-- API key, user, team, and group management
-- Model mapping, request routing, and failover
-- Concurrency, rate, and quota controls
-- Usage tracking, balances, subscriptions, and billing
-- User console, administration dashboard, and operational monitoring
+## Recommended Operation
 
-## Supported Platforms
+1. Capture TLS ClientHello and UA values from the client environment you actually use. Public captures are references, not universal templates.
+2. Keep UA, operating system, client version, TLS extensions, ALPN, HTTP protocol, and runtime environment mutually consistent.
+3. Bind long-lived accounts to stable egress nodes. Prefer controlled `fallback` over cross-region `load-balance` for identity-sensitive traffic.
+4. Use Cockpit mode by default: account-level device/session stability with conversation-level thread and cache-key isolation.
+5. Diagnose behavior with errors, TTFT, cache hits, 429/529 responses, proxy health, and account usage together instead of interpreting one metric as a quota change.
 
-TokenRouter currently includes adapters for Anthropic, OpenAI, Gemini, Antigravity, Grok / xAI, and Qoder. See the [upstream account capability matrix (Chinese)](docs/interfaces/upstream_account_matrix.md) for the detailed support scope.
+See the [identity, TLS, and egress consistency guide](docs/guides/continuity.md) for details.
 
-## Deployment
+## Upstreams and Acknowledgements
 
-TokenRouter can be deployed with the installation script, Docker Compose, a source build, or Apple container.
+- [TokenRouter](https://github.com/TokenFlux/TokenRouter): the primary codebase and continuously synchronized upstream.
+- [Sub2API](https://github.com/Wei-Shaw/sub2api): TokenRouter's upstream foundation and core gateway architecture.
+- [cockpit-tools](https://github.com/jlcodes99/cockpit-tools): reference for Codex device, session, thread, and cache-key consistency.
+- [LightBridge](https://github.com/WilliamWang1721/LightBridge): reference for proxy integration, network egress, and client-consistency work.
+
+Thanks to their maintainers, contributors, issue and pull-request authors, and researchers who shared protocol captures. Adaptations and additions in this repository are maintained independently by this branch.
+
+## Deployment and Documentation
 
 - [Deployment guide (Chinese)](docs/guides/deployment/index.md)
 - [Docker image documentation (Chinese)](deploy/DOCKER.md)
-- [Apple container deployment guide (Chinese)](docs/guides/deployment/apple_container.md)
-
-## Documentation
-
-- [Usage and operations guides (Chinese)](docs/guides/index.md)
-- [Interface documentation (Chinese)](docs/interfaces/index.md)
+- [Continuity guide (Chinese)](docs/guides/continuity.md)
 - [Engineering documentation (Chinese)](docs/index.md)
 
 ## License
 
-This project is distributed under the [GNU Lesser General Public License v3.0 or later](LICENSE).
+This project is distributed under the [GNU Lesser General Public License v3.0 or later](LICENSE), with upstream copyright and license notices retained.
 
 Copyright (c) 2026 Wesley Liddick & TokenFlux

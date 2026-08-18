@@ -1,4 +1,4 @@
-# TokenRouter 工程文档
+# TokenRouter Continuity 工程文档
 
 > 本文件是 Project Doc 的根目录。当前会话加载 `project-doc` 技能后，每个仓库任务都先完整读取本文件，再按“读取时机”进入相关分类。
 
