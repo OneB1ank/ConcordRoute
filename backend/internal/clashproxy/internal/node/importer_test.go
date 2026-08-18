@@ -148,6 +148,28 @@ func TestImportURISupportsVMessBase64JSON(t *testing.T) {
 	require.Equal(t, "00000000-0000-0000-0000-000000000001", n.Secret["uuid"])
 }
 
+func TestImportURIPreservesVLESSRealityVisionOptions(t *testing.T) {
+	n, err := ImportURI("vless://00000000-0000-0000-0000-000000000001@edge.example.com:443?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=cover.example.com&fp=chrome&pbk=PUBLIC_KEY&sid=0123abcd#Reality")
+	require.NoError(t, err)
+	require.Equal(t, "Reality", n.Name)
+	require.Equal(t, TypeVLESS, n.Type)
+	require.Equal(t, SourceURI, n.SourceType)
+	require.Equal(t, "edge.example.com", n.Config["server"])
+	require.Equal(t, 443, n.Config["port"])
+	require.Equal(t, "tcp", n.Config["network"])
+	require.Equal(t, true, n.Config["tls"])
+	require.Equal(t, "none", n.Config["encryption"])
+	require.Equal(t, "xtls-rprx-vision", n.Config["flow"])
+	require.Equal(t, "cover.example.com", n.Config["servername"])
+	require.Equal(t, "chrome", n.Config["client-fingerprint"])
+	require.Equal(t, map[string]any{
+		"public-key": "PUBLIC_KEY",
+		"short-id":   "0123abcd",
+	}, n.Config["reality-opts"])
+	require.Equal(t, "00000000-0000-0000-0000-000000000001", n.Secret["uuid"])
+	require.NotContains(t, n.Secret, "username")
+}
+
 func TestImportURIRejectsUnsupportedScheme(t *testing.T) {
 	_, err := ImportURI("ftp://example.com/file")
 	require.ErrorContains(t, err, "unsupported proxy URI scheme")

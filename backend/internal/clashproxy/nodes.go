@@ -45,9 +45,12 @@ func (s *Service) CreateManualNode(ctx context.Context, input CreateNodeInput) (
 	if err := s.requireConfigured(); err != nil {
 		return nil, err
 	}
-	n, err := proxynode.ManualURL(input.Name, input.URL)
+	n, err := proxynode.ImportURI(input.URL)
 	if err != nil {
 		return nil, err
+	}
+	if name := strings.TrimSpace(input.Name); name != "" {
+		n.Name = name
 	}
 	id, err := s.insertNode(ctx, *n)
 	if err != nil {

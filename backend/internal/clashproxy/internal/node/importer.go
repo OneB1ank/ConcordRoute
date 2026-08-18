@@ -82,6 +82,7 @@ func importCredentialURI(parsed *url.URL, nodeType Type, secretKey string) (*Nod
 	if err != nil {
 		return nil, err
 	}
+	applyCredentialURIOptions(config, parsed, nodeType)
 	secret := map[string]any{}
 	if parsed.User != nil {
 		value := parsed.User.Username()
@@ -102,6 +103,51 @@ func importCredentialURI(parsed *url.URL, nodeType Type, secretKey string) (*Nod
 		Config:     config,
 		Secret:     secret,
 	}, nil
+}
+
+func applyCredentialURIOptions(config map[string]any, parsed *url.URL, nodeType Type) {
+	query := parsed.Query()
+	if network := firstNonEmpty(query.Get("network"), query.Get("type")); network != "" {
+		config["network"] = network
+	}
+	if encryption := strings.TrimSpace(query.Get("encryption")); encryption != "" {
+		config["encryption"] = encryption
+	}
+	security := strings.ToLower(strings.TrimSpace(query.Get("security")))
+	if security == "tls" || security == "reality" {
+		config["tls"] = true
+	}
+	if nodeType != TypeVLESS {
+		return
+	}
+	if sni := strings.TrimSpace(query.Get("sni")); sni != "" {
+		delete(config, "sni")
+		config["servername"] = sni
+	}
+	if fingerprint := firstNonEmpty(query.Get("client-fingerprint"), query.Get("fp")); fingerprint != "" {
+		config["client-fingerprint"] = fingerprint
+	}
+	if security == "reality" {
+		reality := map[string]any{}
+		if publicKey := strings.TrimSpace(query.Get("pbk")); publicKey != "" {
+			reality["public-key"] = publicKey
+		}
+		if shortID := strings.TrimSpace(query.Get("sid")); shortID != "" {
+			reality["short-id"] = shortID
+		}
+		if len(reality) > 0 {
+			config["reality-opts"] = reality
+		}
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func importTUICURI(parsed *url.URL) (*Node, error) {
