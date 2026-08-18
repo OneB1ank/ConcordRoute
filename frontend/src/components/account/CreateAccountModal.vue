@@ -6966,16 +6966,16 @@ const handleOpenAIImportCodexSession = async (content: string) => {
     return
   }
 
-  const credentialExtras = buildOpenAICodexImportCredentialExtras()
-  if (credentialExtras === null) {
-    return
-  }
-
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
   try {
     await loadOpenAIOAuthImportDefaults()
+    // 等默认配置加载完成后再生成凭据快照，避免异步竞态覆盖管理员的模型限制。
+    const credentialExtras = buildOpenAICodexImportCredentialExtras()
+    if (credentialExtras === null) {
+      return
+    }
     const extra = buildOpenAIExtra()
     const result = await adminAPI.accounts.importCodexSession({
       content: trimmed,
@@ -7045,16 +7045,16 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
     return
   }
 
-  const credentialExtras = buildOpenAICodexImportCredentialExtras()
-  if (credentialExtras === null) {
-    return
-  }
-
   oauthClient.loading.value = true
   oauthClient.error.value = ''
 
   try {
     await loadOpenAIOAuthImportDefaults()
+    // 等默认配置加载完成后再生成凭据快照，避免异步竞态覆盖管理员的模型限制。
+    const credentialExtras = buildOpenAICodexImportCredentialExtras()
+    if (credentialExtras === null) {
+      return
+    }
     const extra = buildOpenAIExtra()
     await adminAPI.accounts.createOpenAICodexPAT({
       access_token: trimmed,
