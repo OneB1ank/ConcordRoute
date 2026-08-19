@@ -161,49 +161,6 @@ SELECT account_id FROM clash_proxy_account_bindings WHERE profile_id = $1 AND en
 	return errors.Join(errs...)
 }
 
-func (s *Service) restoreProfileBindings(ctx context.Context, profileID int64) error {
-	if s.accountUpdater == nil {
-		return errors.New("account proxy updater is not configured")
-	}
-	rows, err := s.db.QueryContext(ctx, `
-SELECT account_id, previous_proxy_id
-FROM clash_proxy_account_bindings
-WHERE profile_id = $1 AND enabled = TRUE
-ORDER BY id
-`, profileID)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	type restoreItem struct {
-		accountID int64
-		proxyID   *int64
-	}
-	items := make([]restoreItem, 0)
-	for rows.Next() {
-		var item restoreItem
-		if err := rows.Scan(&item.accountID, &item.proxyID); err != nil {
-			return err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	var errs []error
-	for _, item := range items {
-		proxyID, err := s.validPreviousProxyID(ctx, item.proxyID)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if err := s.accountUpdater.SetAccountProxy(ctx, item.accountID, proxyID); err != nil {
-			errs = append(errs, fmt.Errorf("account %d: %w", item.accountID, err))
-		}
-	}
-	return errors.Join(errs...)
-}
-
 func (s *Service) getBinding(ctx context.Context, id int64) (*BindingView, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT b.id, b.account_id, a.name, a.platform, b.profile_id, p.name, b.previous_proxy_id, b.enabled
