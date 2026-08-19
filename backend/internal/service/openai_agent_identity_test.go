@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,10 +17,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/model"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/nacl/box"
 )
+
+type agentIdentityRegistrationUpstream struct {
+	req       *http.Request
+	proxyURL  string
+	accountID int64
+	profile   *tlsfingerprint.Profile
+}
+
+func (r *agentIdentityRegistrationUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return r.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+}
+
+func (r *agentIdentityRegistrationUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	r.req = req
+	r.proxyURL = proxyURL
+	r.accountID = accountID
+	r.profile = profile
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"task_id":"task-routed"}`)),
+	}, nil
+}
 
 func newTestAgentIdentityKey(t *testing.T) (agentIdentityKey, string) {
 	t.Helper()
@@ -125,6 +152,55 @@ func TestRegisterAgentIdentityTaskAcceptsPlaintextAndEncryptedResponses(t *testi
 	taskID, err = registerAgentIdentityTask(context.Background(), account)
 	require.NoError(t, err)
 	require.Equal(t, "task-encrypted", taskID)
+}
+
+func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.T) {
+	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, macUA)
+	key, privateKey := newTestAgentIdentityKey(t)
+	profileID := int64(72)
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		profileID: {ID: profileID, Name: "macOS auth TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+	}}
+	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
+		ID:                                       10,
+		Name:                                     "Codex auth",
+		Enabled:                                  true,
+		ChatGPTOAuthTokenUserAgent:               macUA,
+		ChatGPTOAuthTokenTLSFingerprintProfileID: &profileID,
+	})
+	upstream := &agentIdentityRegistrationUpstream{}
+	gateway := &OpenAIGatewayService{
+		httpUpstream:        upstream,
+		tlsFPProfileService: profileService,
+		tlsFPRouterService:  routerService,
+	}
+	proxyID := int64(91)
+	account := &Account{
+		ID:          90,
+		Type:        AccountTypeOAuth,
+		Platform:    PlatformOpenAI,
+		Concurrency: 3,
+		ProxyID:     &proxyID,
+		Proxy:       &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
+		Credentials: map[string]any{
+			"auth_mode":         OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":  key.runtimeID,
+			"agent_private_key": privateKey,
+		},
+		Extra: map[string]any{"tls_fingerprint_router_id": int64(10)},
+	}
+
+	taskID, err := registerAgentIdentityTask(t.Context(), account, gateway)
+	require.NoError(t, err)
+	require.Equal(t, "task-routed", taskID)
+	require.Equal(t, "http://proxy.example:8080", upstream.proxyURL)
+	require.Equal(t, account.ID, upstream.accountID)
+	require.NotNil(t, upstream.profile)
+	require.Equal(t, "macOS auth TLS", upstream.profile.Name)
+	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
+	require.Equal(t, openai.CodexDefaultOriginator, upstream.req.Header.Get("Originator"))
+	require.Empty(t, upstream.req.Header.Get("Version"))
 }
 
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {

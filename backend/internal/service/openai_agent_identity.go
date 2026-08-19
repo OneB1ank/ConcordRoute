@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/httpclient"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/nacl/box"
 )
@@ -34,6 +35,10 @@ var agentIdentityTaskLocks sync.Map // 按账号 ID 共享 task 注册锁。
 
 type agentIdentityWSConnectionInvalidator interface {
 	InvalidateAgentIdentityWSConnections(accountID int64)
+}
+
+type agentIdentityTaskRegistrationExecutor interface {
+	executeAgentIdentityTaskRegistration(ctx context.Context, account *Account, req *http.Request) (*http.Response, bool, error)
 }
 
 type agentIdentityKey struct {
@@ -172,7 +177,7 @@ func decryptAgentTaskID(key agentIdentityKey, encoded string) (string, error) {
 	return taskID, nil
 }
 
-func registerAgentIdentityTask(ctx context.Context, account *Account) (string, error) {
+func registerAgentIdentityTask(ctx context.Context, account *Account, executors ...agentIdentityTaskRegistrationExecutor) (string, error) {
 	key, err := agentIdentityKeyFromAccount(account)
 	if err != nil {
 		return "", err
@@ -180,15 +185,6 @@ func registerAgentIdentityTask(ctx context.Context, account *Account) (string, e
 	timestamp, signature, err := signAgentTaskRegistration(key, time.Now())
 	if err != nil {
 		return "", err
-	}
-	proxyURL := resolveAccountProxyURL(account)
-	client, err := httpclient.GetClient(httpclient.Options{
-		ProxyURL:              proxyURL,
-		Timeout:               agentIdentityTaskRegistrationTimeout,
-		ResponseHeaderTimeout: 15 * time.Second,
-	})
-	if err != nil {
-		return "", errors.New("invalid proxy configuration for agent task registration")
 	}
 	body, err := json.Marshal(map[string]string{
 		"timestamp": timestamp,
@@ -204,7 +200,25 @@ func registerAgentIdentityTask(ctx context.Context, account *Account) (string, e
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
+	ApplyCodexCanonicalAuthIdentity(req.Header)
+
+	var resp *http.Response
+	handled := false
+	if len(executors) > 0 && executors[0] != nil {
+		resp, handled, err = executors[0].executeAgentIdentityTaskRegistration(ctx, account, req)
+	}
+	if !handled && err == nil {
+		proxyURL := resolveAccountProxyURL(account)
+		var client *http.Client
+		client, err = httpclient.GetClient(httpclient.Options{
+			ProxyURL:              proxyURL,
+			Timeout:               agentIdentityTaskRegistrationTimeout,
+			ResponseHeaderTimeout: 15 * time.Second,
+		})
+		if err == nil {
+			resp, err = client.Do(req)
+		}
+	}
 	if err != nil {
 		return "", errors.New("agent task registration request failed")
 	}
@@ -230,6 +244,30 @@ func registerAgentIdentityTask(ctx context.Context, account *Account) (string, e
 		return "", errors.New("agent task registration response omitted task id")
 	}
 	return decryptAgentTaskID(key, encrypted)
+}
+
+func (s *OpenAIGatewayService) executeAgentIdentityTaskRegistration(_ context.Context, account *Account, req *http.Request) (*http.Response, bool, error) {
+	if s == nil || s.httpUpstream == nil {
+		return nil, false, nil
+	}
+	var profile *tlsfingerprint.Profile
+	if s.tlsFPRouterService != nil && account != nil {
+		router := s.tlsFPRouterService.GetRuntimeRouter(account.GetTLSFingerprintRouterID())
+		if router != nil && router.Enabled {
+			if userAgent := strings.TrimSpace(router.ChatGPTOAuthTokenUserAgent); userAgent != "" {
+				ua, originator := CodexAuthIdentityForUserAgent(userAgent)
+				req.Header.Set("User-Agent", ua)
+				req.Header.Set("Originator", originator)
+				req.Header.Del("Version")
+			}
+			if router.ChatGPTOAuthTokenTLSFingerprintProfileID != nil && s.tlsFPProfileService != nil {
+				profile, _ = s.tlsFPProfileService.ResolveTokenTLSProfileByID(*router.ChatGPTOAuthTokenTLSFingerprintProfileID)
+			}
+		}
+	}
+	proxyURL := resolveAccountProxyURL(account)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, profile)
+	return resp, true, err
 }
 
 func ensureAgentIdentityTaskForAccount(ctx context.Context, repo AccountRepository, wsInvalidator agentIdentityWSConnectionInvalidator, taskMu *sync.Mutex, account *Account, expectedTaskID string) error {
@@ -286,7 +324,11 @@ func ensureAgentIdentityTaskForAccount(ctx context.Context, repo AccountReposito
 	if currentTaskID != "" && (expectedTaskID == "" || currentTaskID != expectedTaskID) {
 		return nil
 	}
-	newTaskID, err := registerAgentIdentityTask(ctx, credAccount)
+	var executor agentIdentityTaskRegistrationExecutor
+	if candidate, ok := wsInvalidator.(agentIdentityTaskRegistrationExecutor); ok {
+		executor = candidate
+	}
+	newTaskID, err := registerAgentIdentityTask(ctx, credAccount, executor)
 	if err != nil {
 		return err
 	}
