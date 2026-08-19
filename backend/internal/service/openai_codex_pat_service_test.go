@@ -2,14 +2,49 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
+
+type codexPATHTTPUpstreamRecorder struct {
+	req                *http.Request
+	proxyURL           string
+	accountID          int64
+	accountConcurrency int
+	profile            *tlsfingerprint.Profile
+}
+
+func (r *codexPATHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return r.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+}
+
+func (r *codexPATHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	r.req = req
+	r.proxyURL = proxyURL
+	r.accountID = accountID
+	r.accountConcurrency = accountConcurrency
+	r.profile = profile
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body: io.NopCloser(strings.NewReader(`{
+			"email":"user@example.com",
+			"chatgpt_user_id":"user-123",
+			"chatgpt_account_id":"acct-123",
+			"chatgpt_plan_type":"plus",
+			"chatgpt_account_is_fedramp":false
+		}`)),
+	}, nil
+}
 
 func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
 	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
@@ -64,6 +99,42 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessTokenRequiresATPrefix(t *
 	_, err := svc.ValidateCodexPersonalAccessToken(context.Background(), "eyJ.jwt", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at-")
+}
+
+func TestOpenAIOAuthService_ValidateCodexPersonalAccessTokenUsesTokenRouterIdentityTLSAndProxy(t *testing.T) {
+	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, macUA)
+	profileID := int64(71)
+	profile := &tlsfingerprint.Profile{Name: "macOS auth TLS", ALPNProtocols: []string{"h2", "http/1.1"}}
+	upstream := &codexPATHTTPUpstreamRecorder{}
+	svc := NewOpenAIOAuthService(nil, nil)
+	svc.SetHTTPUpstream(upstream)
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		9: {
+			ID:                                       9,
+			Enabled:                                  true,
+			ChatGPTOAuthTokenUserAgent:               macUA,
+			ChatGPTOAuthTokenTLSFingerprintProfileID: &profileID,
+		},
+	}}, &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{profileID: profile}})
+	t.Cleanup(svc.Stop)
+	account := &Account{
+		ID:          88,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 4,
+		Extra:       map[string]any{"tls_fingerprint_router_id": int64(9)},
+	}
+
+	_, err := svc.ValidateCodexPersonalAccessToken(t.Context(), "at-test-token", "http://127.0.0.1:18080", OpenAICodexPATValidationOptions{Account: account})
+	require.NoError(t, err)
+	require.Same(t, profile, upstream.profile)
+	require.Equal(t, "http://127.0.0.1:18080", upstream.proxyURL)
+	require.Equal(t, account.ID, upstream.accountID)
+	require.Equal(t, account.Concurrency, upstream.accountConcurrency)
+	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
+	require.Equal(t, openai.CodexDefaultOriginator, upstream.req.Header.Get("Originator"))
+	require.Empty(t, upstream.req.Header.Get("Version"))
 }
 
 func TestOpenAIOAuthService_BuildAccountCredentialsForPAT(t *testing.T) {

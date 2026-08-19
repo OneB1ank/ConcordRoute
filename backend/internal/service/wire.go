@@ -151,10 +151,12 @@ func ProvideOpenAIOAuthService(
 	settingService *SettingService,
 	tlsRouterReader OpenAIOAuthTLSRouterReader,
 	tokenProfileResolver OpenAIOAuthTokenProfileResolver,
+	httpUpstream HTTPUpstream,
 ) *OpenAIOAuthService {
 	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
 	svc.SetTokenTLSRouterDeps(settingService, tlsRouterReader, tokenProfileResolver)
+	svc.SetHTTPUpstream(httpUpstream)
 	return svc
 }
 

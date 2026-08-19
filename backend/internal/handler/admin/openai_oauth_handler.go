@@ -168,6 +168,7 @@ type OpenAICodexPATCreateRequest struct {
 	Notes                   *string        `json:"notes"`
 	GroupIDs                []int64        `json:"group_ids"`
 	ProxyID                 *int64         `json:"proxy_id"`
+	TLSFingerprintRouterID  *int64         `json:"tls_fingerprint_router_id"`
 	Concurrency             *int           `json:"concurrency"`
 	Priority                *int           `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
@@ -396,10 +397,19 @@ func (h *OpenAIOAuthHandler) CreateAccountFromCodexPAT(c *gin.Context) {
 		}
 		if proxy != nil {
 			proxyURL = proxy.URL()
+		} else {
+			response.BadRequest(c, "configured proxy is unavailable")
+			return
 		}
 	}
 
-	tokenInfo, err := h.openaiOAuthService.ValidateCodexPersonalAccessToken(c.Request.Context(), req.AccessToken, proxyURL)
+	routerID := int64(0)
+	if req.TLSFingerprintRouterID != nil {
+		routerID = *req.TLSFingerprintRouterID
+	} else if len(req.Extra) > 0 {
+		routerID = (&service.Account{Extra: req.Extra}).GetTLSFingerprintRouterID()
+	}
+	tokenInfo, err := h.openaiOAuthService.ValidateCodexPersonalAccessToken(c.Request.Context(), req.AccessToken, proxyURL, service.OpenAICodexPATValidationOptions{TLSFingerprintRouterID: routerID})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

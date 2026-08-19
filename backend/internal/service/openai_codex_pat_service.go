@@ -32,23 +32,19 @@ type openAICodexPATWhoamiResponse struct {
 	ChatGPTAccountIsFedRAMP *bool  `json:"chatgpt_account_is_fedramp"`
 }
 
+type OpenAICodexPATValidationOptions struct {
+	TLSFingerprintRouterID int64
+	Account                *Account
+}
+
 // ValidateCodexPersonalAccessToken 使用 Codex 官方 PAT whoami 端点校验 at-* token。
-func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Context, accessToken, proxyURL string) (*OpenAITokenInfo, error) {
+func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Context, accessToken, proxyURL string, validationOptions ...OpenAICodexPATValidationOptions) (*OpenAITokenInfo, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	if accessToken == "" {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_REQUIRED", "access token is required")
 	}
 	if !strings.HasPrefix(accessToken, "at-") {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_INVALID_PREFIX", "Codex personal access token must start with at-")
-	}
-
-	client, err := httpclient.GetClient(httpclient.Options{
-		ProxyURL:              proxyURL,
-		Timeout:               20 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-	})
-	if err != nil {
-		return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_CODEX_PAT_PROXY_INVALID", "invalid proxy configuration: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openAICodexPATWhoamiURL, nil)
@@ -59,7 +55,28 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 	req.Header.Set("accept", "application/json")
 	ApplyCodexCanonicalAuthIdentity(req.Header)
 
-	resp, err := client.Do(req)
+	requestOption := s.resolveCodexPATRequestOption(ctx, validationOptions...)
+	if strings.TrimSpace(requestOption.UserAgent) != "" {
+		userAgent, originator := CodexAuthIdentityForUserAgent(requestOption.UserAgent)
+		req.Header.Set("user-agent", userAgent)
+		req.Header.Set("originator", originator)
+		req.Header.Del("version")
+	}
+
+	var resp *http.Response
+	if s != nil && s.httpUpstream != nil {
+		resp, err = s.httpUpstream.DoWithTLS(req, proxyURL, requestOption.AccountID, requestOption.AccountConcurrency, requestOption.TLSProfile)
+	} else {
+		var client *http.Client
+		client, err = httpclient.GetClient(httpclient.Options{
+			ProxyURL:              proxyURL,
+			Timeout:               20 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+		})
+		if err == nil {
+			resp, err = client.Do(req)
+		}
+	}
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_PAT_VALIDATE_FAILED", "failed to validate Codex personal access token: %v", err)
 	}
@@ -94,6 +111,22 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 		ChatGPTAccountFedRAMP: *whoami.ChatGPTAccountIsFedRAMP,
 		PlanType:              strings.TrimSpace(whoami.ChatGPTPlanType),
 	}, nil
+}
+
+func (s *OpenAIOAuthService) resolveCodexPATRequestOption(ctx context.Context, options ...OpenAICodexPATValidationOptions) OpenAIOAuthTokenRequestOptions {
+	if len(options) == 0 {
+		return OpenAIOAuthTokenRequestOptions{}
+	}
+	input := options[0]
+	routerID := input.TLSFingerprintRouterID
+	if routerID <= 0 && input.Account != nil {
+		routerID = input.Account.GetTLSFingerprintRouterID()
+	}
+	resolved := s.resolveChatGPTOAuthTokenRequestOptions(ctx, routerID, input.Account)
+	if len(resolved) == 0 {
+		return OpenAIOAuthTokenRequestOptions{}
+	}
+	return resolved[0]
 }
 
 func validateOpenAICodexPATWhoami(whoami openAICodexPATWhoamiResponse) error {

@@ -1736,6 +1736,7 @@ export interface OpenAICodexPATCreateRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
+  tls_fingerprint_router_id?: number | null
   concurrency?: number
   priority?: number
   rate_multiplier?: number

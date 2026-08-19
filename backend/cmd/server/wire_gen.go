@@ -162,7 +162,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	tlsFingerprintRouterRepository := repository.NewTLSFingerprintRouterRepository(client)
 	tlsFingerprintRouterCache := repository.NewTLSFingerprintRouterCache(redisClient)
 	tlsFingerprintRouterService := service.NewTLSFingerprintRouterService(tlsFingerprintRouterRepository, tlsFingerprintRouterCache)
-	openAIOAuthService := service.ProvideOpenAIOAuthService(proxyRepository, openAIOAuthClient, privacyClientFactory, settingService, tlsFingerprintRouterService, tlsFingerprintProfileService)
+	openAIOAuthService := service.ProvideOpenAIOAuthService(proxyRepository, openAIOAuthClient, privacyClientFactory, settingService, tlsFingerprintRouterService, tlsFingerprintProfileService, httpUpstream)
 	openAITokenProvider := service.ProvideOpenAITokenProvider(accountRepository, geminiTokenCache, openAIOAuthService, oAuthRefreshAPI)
 	grokOAuthClient := repository.NewGrokOAuthClient()
 	grokOAuthService := service.ProvideGrokOAuthService(proxyRepository, grokOAuthClient, configConfig, redisClient)

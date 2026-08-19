@@ -474,7 +474,7 @@ func (s *OpenAIGatewayService) ensureOpenAIAlphaSearchAuthMetadata(ctx context.C
 	if oauthService == nil {
 		return nil
 	}
-	tokenInfo, err := oauthService.ValidateCodexPersonalAccessToken(ctx, token, proxyURL)
+	tokenInfo, err := oauthService.ValidateCodexPersonalAccessToken(ctx, token, proxyURL, OpenAICodexPATValidationOptions{Account: account})
 	if err != nil {
 		return fmt.Errorf("validate Codex PAT metadata for alpha/search: %w", err)
 	}

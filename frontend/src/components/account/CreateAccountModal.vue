@@ -7061,6 +7061,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       name: form.name,
       notes: form.notes || null,
       proxy_id: form.proxy_id,
+      tls_fingerprint_router_id: tlsFingerprintEnabled.value ? tlsFingerprintRouterId.value : undefined,
       concurrency: form.concurrency,
       load_factor: form.load_factor ?? undefined,
       priority: form.priority,

@@ -21,6 +21,7 @@ type OpenAIOAuthService struct {
 	settingService       *SettingService
 	tlsFPRouterReader    OpenAIOAuthTLSRouterReader
 	tlsFPProfileResolver OpenAIOAuthTokenProfileResolver
+	httpUpstream         HTTPUpstream
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
@@ -43,6 +44,10 @@ func (s *OpenAIOAuthService) SetTokenTLSRouterDeps(settingService *SettingServic
 	s.settingService = settingService
 	s.tlsFPRouterReader = routerReader
 	s.tlsFPProfileResolver = profileResolver
+}
+
+func (s *OpenAIOAuthService) SetHTTPUpstream(httpUpstream HTTPUpstream) {
+	s.httpUpstream = httpUpstream
 }
 
 // OpenAIAuthURLResult contains the authorization URL and session info
@@ -433,7 +438,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 		if accessToken == "" {
 			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CODEX_PAT_REQUIRED", "access token is required")
 		}
-		return s.ValidateCodexPersonalAccessToken(ctx, accessToken, proxyURL)
+		return s.ValidateCodexPersonalAccessToken(ctx, accessToken, proxyURL, OpenAICodexPATValidationOptions{Account: account})
 	}
 
 	refreshToken := account.GetCredential("refresh_token")
