@@ -63,6 +63,28 @@ type accountUsageHTTPUpstreamStub struct {
 	accountID  int64
 }
 
+type accountUsageIdentityCacheSpy struct {
+	getFingerprintCalls int
+	fingerprint         *Fingerprint
+}
+
+func (s *accountUsageIdentityCacheSpy) GetFingerprint(_ context.Context, _ int64) (*Fingerprint, error) {
+	s.getFingerprintCalls++
+	return s.fingerprint, nil
+}
+
+func (s *accountUsageIdentityCacheSpy) SetFingerprint(_ context.Context, _ int64, _ *Fingerprint) error {
+	return nil
+}
+
+func (s *accountUsageIdentityCacheSpy) GetMaskedSessionID(_ context.Context, _ int64) (string, error) {
+	return "", nil
+}
+
+func (s *accountUsageIdentityCacheSpy) SetMaskedSessionID(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 func (s *accountUsageHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	return s.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
 }
@@ -1186,6 +1208,50 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile(
 	}
 	if got := payload["model"]; got != openaipkg.CodexUsageProbeModel {
 		t.Fatalf("probe model = %v, want %s", got, openaipkg.CodexUsageProbeModel)
+	}
+}
+
+func TestAccountUsageService_ProbeOpenAICodexSnapshotIgnoresClaudeIdentityCacheUA(t *testing.T) {
+	t.Parallel()
+
+	upstream := &accountUsageHTTPUpstreamStub{}
+	identityCache := &accountUsageIdentityCacheSpy{fingerprint: &Fingerprint{
+		UserAgent: "claude-cli/2.1.220 (external, cli)",
+	}}
+	const accountUA = "codex-tui/9.9.9 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 9.9.9)"
+	expectedIdentity := resolveCodexOutboundIdentity(accountUA)
+	svc := &AccountUsageService{
+		httpUpstream:  upstream,
+		identityCache: identityCache,
+	}
+	account := &Account{
+		ID:       457,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"user_agent":   accountUA,
+		},
+	}
+
+	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	if err != nil {
+		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
+	}
+	if identityCache.getFingerprintCalls != 0 {
+		t.Fatalf("Claude identity cache reads = %d, want 0", identityCache.getFingerprintCalls)
+	}
+	if upstream.req == nil {
+		t.Fatal("expected upstream request")
+	}
+	if got := upstream.req.Header.Get("User-Agent"); got != expectedIdentity.userAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, expectedIdentity.userAgent)
+	}
+	if got := upstream.req.Header.Get("Originator"); got != expectedIdentity.originator {
+		t.Fatalf("Originator = %q, want %q", got, expectedIdentity.originator)
+	}
+	if got := upstream.req.Header.Get("Version"); got != expectedIdentity.version {
+		t.Fatalf("Version = %q, want %q", got, expectedIdentity.version)
 	}
 }
 

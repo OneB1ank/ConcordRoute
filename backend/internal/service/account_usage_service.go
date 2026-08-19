@@ -913,13 +913,9 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	req.Header.Set("Originator", canonical.originator)
 	req.Header.Set("Version", canonical.version)
 	req.Header.Set("User-Agent", canonical.userAgent)
-	if s.identityCache != nil {
-		if fp, fpErr := s.identityCache.GetFingerprint(reqCtx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {
-			req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
-		}
-	}
-	// 与真实转发一致：originator 与最终 User-Agent（可能来自指纹缓存，如 codex-tui）首段配套，
-	// 否则探针被上游 404（issue #3901）。
+	// Claude identityCache 保存的是 Anthropic/Claude CLI 指纹，不属于 Codex 身份来源。
+	// 探针与真实 OpenAI 转发保持一致：只使用账号显式 UA 或全局规范 Codex UA，
+	// 并让 originator、version 与最终 User-Agent 成套收敛。
 	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
 
