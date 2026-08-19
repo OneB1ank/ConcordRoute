@@ -75,13 +75,17 @@ func (s *OpenAIOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64
 	// Get proxy URL if specified
 	var proxyURL string
 	if proxyID != nil {
+		if s.proxyRepo == nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "configured proxy is unavailable")
+		}
 		proxy, err := s.proxyRepo.GetByID(ctx, *proxyID)
 		if err != nil {
 			return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "proxy not found: %v", err)
 		}
-		if proxy != nil {
-			proxyURL = proxy.URL()
+		if proxy == nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "configured proxy is unavailable")
 		}
+		proxyURL = proxy.URL()
 	}
 
 	// Use default redirect URI if not specified
@@ -157,13 +161,17 @@ func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExch
 	// Get proxy URL: prefer input.ProxyID, fallback to session.ProxyURL
 	proxyURL := session.ProxyURL
 	if input.ProxyID != nil {
+		if s.proxyRepo == nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "configured proxy is unavailable")
+		}
 		proxy, err := s.proxyRepo.GetByID(ctx, *input.ProxyID)
 		if err != nil {
 			return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "proxy not found: %v", err)
 		}
-		if proxy != nil {
-			proxyURL = proxy.URL()
+		if proxy == nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "configured proxy is unavailable")
 		}
+		proxyURL = proxy.URL()
 	}
 
 	// Use redirect URI from session or input
@@ -408,12 +416,16 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT_TYPE", "account is not an OAuth account")
 	}
 
-	var proxyURL string
-	if account.ProxyID != nil && s.proxyRepo != nil {
-		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err == nil && proxy != nil {
-			proxyURL = proxy.URL()
+	proxyURL := resolveAccountProxyURL(account)
+	if account.ProxyID != nil {
+		if s.proxyRepo == nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "configured proxy is unavailable")
 		}
+		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+		if err != nil || proxy == nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_PROXY_NOT_FOUND", "configured proxy is unavailable")
+		}
+		proxyURL = proxy.URL()
 	}
 
 	accessToken := account.GetCredential("access_token")

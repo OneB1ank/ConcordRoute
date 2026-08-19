@@ -125,6 +125,26 @@ func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccess
 	require.Positive(t, atomic.LoadInt32(&privacyClientCalls), "已有 access token 也应该执行账号信息补全")
 }
 
+func TestOpenAIOAuthService_RefreshAccountTokenConfiguredProxyMissingFailsClosed(t *testing.T) {
+	client := &openaiOAuthClientRefreshStub{}
+	svc := NewOpenAIOAuthService(nil, client)
+	proxyID := int64(7001)
+	account := &Account{
+		ID:       77,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		ProxyID:  &proxyID,
+		Credentials: map[string]any{
+			"refresh_token": "old-rt",
+		},
+	}
+
+	_, err := svc.RefreshAccountToken(context.Background(), account)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "configured proxy is unavailable")
+	require.Zero(t, atomic.LoadInt32(&client.refreshCalls), "代理缺失时不得发起直连 token 刷新")
+}
+
 func TestOpenAITokenRefresher_NeedsRefresh_SkipsAccountWithoutRefreshToken(t *testing.T) {
 	refresher := NewOpenAITokenRefresher(nil, nil)
 	expiresAt := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)

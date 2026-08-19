@@ -185,7 +185,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		hasOpenAIWSHeader(wsHeaders, "authorization"),
 		hasOpenAIWSHeader(wsHeaders, "session_id"),
 		hasOpenAIWSHeader(wsHeaders, "conversation_id"),
-		account.ProxyID != nil && account.Proxy != nil,
+		accountHasConfiguredProxy(account),
 	)
 
 	acquireCtx, acquireCancel := context.WithTimeout(ctx, s.openAIWSAcquireTimeout())
@@ -203,12 +203,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		ForceNewConn:    forceNewConn,
 		TLSProfile:      tlsProfile,
 		TLSProfileKey:   tlsProfileKey,
-		ProxyURL: func() string {
-			if account.ProxyID != nil && account.Proxy != nil {
-				return account.Proxy.URL()
-			}
-			return ""
-		}(),
+		ProxyURL:        resolveAccountProxyURL(account),
 	})
 	if err != nil {
 		var agentDialErr *openAIWSDialError
@@ -240,7 +235,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			forceNewConn,
 			wsHost,
 			wsPath,
-			account.ProxyID != nil && account.Proxy != nil,
+			accountHasConfiguredProxy(account),
 		)
 		var policyDialErr *openAIWSDialError
 		if errors.As(err, &policyDialErr) && policyDialErr != nil && policyDialErr.StatusCode != 0 {

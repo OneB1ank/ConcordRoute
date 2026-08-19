@@ -339,15 +339,16 @@ func (s *CodexInviteResetService) prepareAccount(ctx context.Context, accountID 
 		return nil, infraerrors.BadRequest("CODEX_INVITE_RESET_MISSING_TOKEN", "missing OpenAI OAuth access token")
 	}
 
-	proxyURL := ""
+	proxyURL := resolveAccountProxyURL(account)
 	if account.ProxyID != nil {
 		proxy, proxyErr := s.adminService.GetProxy(ctx, *account.ProxyID)
 		if proxyErr != nil {
 			return nil, proxyErr
 		}
-		if proxy != nil {
-			proxyURL = proxy.URL()
+		if proxy == nil {
+			return nil, infraerrors.BadRequest("CODEX_INVITE_RESET_PROXY_UNAVAILABLE", "configured proxy is unavailable")
 		}
+		proxyURL = proxy.URL()
 	}
 
 	router := s.resolveRuntimeRouter(account)

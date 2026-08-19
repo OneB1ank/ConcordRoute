@@ -845,10 +845,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// 内部重试每次都会重建 request，必须重复应用与 body 相同的指纹 IDs。
 		applyCodexFingerprintHeaders(upstreamReq.Header, fingerprintIDs)
 
-		proxyURL := ""
-		if account.ProxyID != nil && account.Proxy != nil {
-			proxyURL = account.Proxy.URL()
-		}
+		proxyURL := resolveAccountProxyURL(account)
 
 		upstreamStart := time.Now()
 		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch))

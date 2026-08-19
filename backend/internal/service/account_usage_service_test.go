@@ -1255,6 +1255,29 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotIgnoresClaudeIdentityCacheU
 	}
 }
 
+func TestAccountUsageService_ProbeOpenAICodexSnapshotConfiguredProxyMissingFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	upstream := &accountUsageHTTPUpstreamStub{}
+	proxyID := int64(8001)
+	svc := &AccountUsageService{httpUpstream: upstream}
+	account := &Account{
+		ID:          458,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		ProxyID:     &proxyID,
+		Credentials: map[string]any{"access_token": "token"},
+	}
+
+	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	if err != nil {
+		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
+	}
+	if upstream.proxyURL != unavailableAccountProxyURL {
+		t.Fatalf("proxyURL = %q, want fail-closed sentinel %q", upstream.proxyURL, unavailableAccountProxyURL)
+	}
+}
+
 func TestAccountUsageService_ProbeOpenAICodexSnapshotSkipsTLSProfileWhenDisabled(t *testing.T) {
 	t.Parallel()
 

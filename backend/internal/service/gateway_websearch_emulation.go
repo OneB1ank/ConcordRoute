@@ -200,13 +200,6 @@ func doWebSearch(ctx context.Context, account *Account, query string) (*websearc
 	return resp, providerName, nil
 }
 
-func resolveAccountProxyURL(account *Account) string {
-	if account.ProxyID != nil && account.Proxy != nil {
-		return account.Proxy.URL()
-	}
-	return ""
-}
-
 // --- SSE streaming response ---
 
 func writeWebSearchStreamResponse(

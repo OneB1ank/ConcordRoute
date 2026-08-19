@@ -667,13 +667,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		},
 		TLSProfile:    tlsProfile,
 		TLSProfileKey: tlsProfileKey,
-		ProxyURL: func() string {
-			if account.ProxyID != nil && account.Proxy != nil {
-				return account.Proxy.URL()
-			}
-			return ""
-		}(),
-		ForceNewConn: false,
+		ProxyURL:      resolveAccountProxyURL(account),
+		ForceNewConn:  false,
 	}
 	pool := s.getOpenAIWSConnPool()
 	if pool == nil {
@@ -771,7 +766,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				forcePreferredConn,
 				wsHost,
 				wsPath,
-				account.ProxyID != nil && account.Proxy != nil,
+				accountHasConfiguredProxy(account),
 			)
 			var dialErr *openAIWSDialError
 			if errors.As(acquireErr, &dialErr) && dialErr != nil && dialErr.StatusCode != 0 {

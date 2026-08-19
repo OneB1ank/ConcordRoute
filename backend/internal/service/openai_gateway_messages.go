@@ -343,10 +343,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// 7. Send request
-	proxyURL := ""
-	if account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := resolveAccountProxyURL(account)
 	// Grok 可能拒绝在不同 OAuth 账号或缓存身份下回放的加密推理。与
 	// forwardGrokResponses 保持一致：先剥离密文并重试一次，再将 400 作为硬失败
 	// 或故障转移触发条件处理。
