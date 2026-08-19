@@ -102,7 +102,7 @@ func TestAccountFilteredEndpointStatsKeepUserActualCost(t *testing.T) {
 	require.NoError(t, err)
 	upstream, err := repo.GetUpstreamEndpointStatsWithFilters(context.Background(), start, end, 0, 0, accountID, 0, "", nil, nil, nil)
 	require.NoError(t, err)
-	paths, err := repo.getEndpointPathStatsWithFilters(context.Background(), start, end, 0, 0, accountID, 0, 0, "", "", nil, nil, nil, "", false, false)
+	paths, err := repo.GetEndpointPathStatsWithFilters(context.Background(), start, end, 0, 0, accountID, 0, 0, "", "", nil, nil, nil, "", false, false)
 	require.NoError(t, err)
 
 	for _, rows := range [][]EndpointStat{inbound, upstream, paths} {

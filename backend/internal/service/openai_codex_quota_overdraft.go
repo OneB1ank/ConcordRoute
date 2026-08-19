@@ -66,25 +66,6 @@ func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Contex
 	return updated
 }
 
-func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftPayload(ctx context.Context, account *Account, payload map[string]any) map[string]any {
-	if !s.shouldInjectCodexQuotaOverdraft(ctx, account, false) || payload == nil {
-		return payload
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return payload
-	}
-	updated, changed, _ := injectCodexQuotaOverdraft(raw)
-	if !changed {
-		return payload
-	}
-	var out map[string]any
-	if err := json.Unmarshal(updated, &out); err != nil {
-		return payload
-	}
-	return out
-}
-
 type codexQuotaOverdraftDocument struct {
 	Input []json.RawMessage `json:"input"`
 }
