@@ -76,6 +76,56 @@ func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredHTTPProxy(t *testing.T) {
 	require.Zero(t, upstreamCalls.Load(), "plain HTTP must not bypass the configured proxy")
 }
 
+func TestHTTPUpstreamConfiguredProxyChangesTargetVisibleSourceIP(t *testing.T) {
+	const proxyEgressIP = "127.0.0.2"
+	remoteIP := make(chan string, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		require.NoError(t, err)
+		remoteIP <- host
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(target.Close)
+
+	proxyTransport := &http.Transport{
+		DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(proxyEgressIP)}}).DialContext,
+	}
+	t.Cleanup(proxyTransport.CloseIdleConnections)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forward := r.Clone(r.Context())
+		forward.RequestURI = ""
+		forward.Header.Del("Proxy-Connection")
+		resp, err := proxyTransport.RoundTrip(forward)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(proxy.Close)
+
+	req, err := http.NewRequest(http.MethodGet, target.URL, nil)
+	require.NoError(t, err)
+	client := NewHTTPUpstream(nil)
+	resp, err := client.DoWithTLS(req, proxy.URL, 43, 1, &tlsfingerprint.Profile{Name: "unused-for-http"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	select {
+	case got := <-remoteIP:
+		require.Equal(t, proxyEgressIP, got, "target must observe the proxy egress address")
+	case <-time.After(3 * time.Second):
+		t.Fatal("target did not observe a proxied request")
+	}
+}
+
 func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredSOCKSProxy(t *testing.T) {
 	var upstreamCalls atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
