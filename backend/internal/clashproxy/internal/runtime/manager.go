@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,14 @@ type ProcessManager struct {
 
 	mu        sync.Mutex
 	processes map[int64]*processState
+}
+
+// SetControllerHTTPClient 为控制端就绪探测注入统一的 HTTP 客户端。
+func (m *ProcessManager) SetControllerHTTPClient(client *http.Client) {
+	if m == nil {
+		return
+	}
+	m.Controller.HTTPClient = client
 }
 
 func (m *ProcessManager) EnsureRunning(ctx context.Context, prof profile.Profile) (*Instance, error) {

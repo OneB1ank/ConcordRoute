@@ -28,6 +28,7 @@ type Profile struct {
 	TestURL         string
 	IntervalSeconds int
 	Status          Status
+	AutoStart       bool
 	Config          map[string]any
 	Runtime         map[string]any
 }

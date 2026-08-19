@@ -18,7 +18,7 @@ func (s *Service) ListProfiles(ctx context.Context) ([]ProfileView, error) {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, strategy, test_url, interval_seconds, status, config_json, managed_proxy_id
+SELECT id, name, strategy, test_url, interval_seconds, status, auto_start, config_json, managed_proxy_id
 FROM clash_proxy_profiles
 WHERE deleted_at IS NULL
 ORDER BY id DESC
@@ -60,10 +60,10 @@ func (s *Service) CreateProfile(ctx context.Context, input CreateProfileInput) (
 	}
 	var id int64
 	if err := tx.QueryRowContext(ctx, `
-INSERT INTO clash_proxy_profiles (name, strategy, test_url, interval_seconds, status)
-VALUES ($1, $2, $3, $4, 'active')
+INSERT INTO clash_proxy_profiles (name, strategy, test_url, interval_seconds, status, auto_start)
+VALUES ($1, $2, $3, $4, 'active', $5)
 RETURNING id
-`, normalized.Name, string(strategy), normalized.TestURL, normalized.IntervalSeconds).Scan(&id); err != nil {
+`, normalized.Name, string(strategy), normalized.TestURL, normalized.IntervalSeconds, normalized.AutoStart).Scan(&id); err != nil {
 		return nil, err
 	}
 	if err := replaceProfileNodes(ctx, tx, id, normalized.NodeIDs, normalized.Weights); err != nil {
@@ -101,9 +101,9 @@ func (s *Service) UpdateProfile(ctx context.Context, id int64, input UpdateProfi
 	}
 	result, err := tx.ExecContext(ctx, `
 UPDATE clash_proxy_profiles
-SET name = $2, strategy = $3, test_url = $4, interval_seconds = $5, updated_at = NOW()
+SET name = $2, strategy = $3, test_url = $4, interval_seconds = $5, auto_start = $6, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-`, id, normalized.Name, string(strategy), normalized.TestURL, normalized.IntervalSeconds)
+`, id, normalized.Name, string(strategy), normalized.TestURL, normalized.IntervalSeconds, normalized.AutoStart)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +125,10 @@ WHERE id = $1 AND deleted_at IS NULL
 }
 
 func (s *Service) StartProfile(ctx context.Context, id int64) (*RuntimeView, error) {
+	return s.startProfile(ctx, id)
+}
+
+func (s *Service) startProfile(ctx context.Context, id int64) (*RuntimeView, error) {
 	if err := s.requireRuntime(); err != nil {
 		return nil, err
 	}
@@ -144,7 +148,7 @@ func (s *Service) StartProfile(ctx context.Context, id int64) (*RuntimeView, err
 	if err := s.applyProfileBindings(ctx, prof.ID, managedProxyID); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if _, cleanupErr := s.StopProfile(cleanupCtx, prof.ID); cleanupErr != nil {
+		if _, cleanupErr := s.stopProfile(cleanupCtx, prof.ID); cleanupErr != nil {
 			return nil, fmt.Errorf("apply account bindings: %w", errors.Join(err, fmt.Errorf("rollback started profile: %w", cleanupErr)))
 		}
 		return nil, fmt.Errorf("apply account bindings: %w", err)
@@ -153,6 +157,12 @@ func (s *Service) StartProfile(ctx context.Context, id int64) (*RuntimeView, err
 }
 
 func (s *Service) StopProfile(ctx context.Context, id int64) (*RuntimeView, error) {
+	return s.stopProfile(ctx, id)
+}
+
+// stopProfile 只停止当前运行时，自启动配置由创建或编辑策略显式管理。
+// 已绑定账号继续指向托管代理：代理停止时请求明确失败，不静默改为直连。
+func (s *Service) stopProfile(ctx context.Context, id int64) (*RuntimeView, error) {
 	if err := s.requireConfigured(); err != nil {
 		return nil, err
 	}
@@ -165,7 +175,6 @@ func (s *Service) StopProfile(ctx context.Context, id int64) (*RuntimeView, erro
 	} else if s.runtimeStore != nil {
 		errs = append(errs, s.runtimeStore.MarkRuntimeStopped(ctx, id))
 	}
-	errs = append(errs, s.restoreProfileBindings(ctx, id))
 	errs = append(errs, s.setManagedProxyStatus(ctx, id, "disabled"))
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -174,10 +183,10 @@ func (s *Service) StopProfile(ctx context.Context, id int64) (*RuntimeView, erro
 }
 
 func (s *Service) RestartProfile(ctx context.Context, id int64) (*RuntimeView, error) {
-	if _, err := s.StopProfile(ctx, id); err != nil {
+	if _, err := s.stopProfile(ctx, id); err != nil {
 		return nil, err
 	}
-	return s.StartProfile(ctx, id)
+	return s.startProfile(ctx, id)
 }
 
 func (s *Service) GetRuntime(ctx context.Context, id int64) (*RuntimeView, error) {
@@ -330,7 +339,7 @@ VALUES ($1, $2, $3, $4, TRUE)
 
 func (s *Service) getProfile(ctx context.Context, id int64) (*ProfileView, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, strategy, test_url, interval_seconds, status, config_json, managed_proxy_id
+SELECT id, name, strategy, test_url, interval_seconds, status, auto_start, config_json, managed_proxy_id
 FROM clash_proxy_profiles
 WHERE id = $1 AND deleted_at IS NULL
 `, id)
@@ -348,7 +357,7 @@ WHERE id = $1 AND deleted_at IS NULL
 func scanProfileView(row scanner) (ProfileView, error) {
 	var item ProfileView
 	var configRaw []byte
-	if err := row.Scan(&item.ID, &item.Name, &item.Strategy, &item.TestURL, &item.IntervalSeconds, &item.Status, &configRaw, &item.ManagedProxyID); err != nil {
+	if err := row.Scan(&item.ID, &item.Name, &item.Strategy, &item.TestURL, &item.IntervalSeconds, &item.Status, &item.AutoStart, &configRaw, &item.ManagedProxyID); err != nil {
 		return ProfileView{}, err
 	}
 	if err := decodeJSONMap(configRaw, &item.Config); err != nil {
@@ -381,14 +390,14 @@ func (s *Service) getProfileModel(ctx context.Context, id int64) (*profile.Profi
 		return nil, errors.New("profile id is required")
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, strategy, test_url, interval_seconds, status, config_json
+SELECT id, name, strategy, test_url, interval_seconds, status, auto_start, config_json
 FROM clash_proxy_profiles
 WHERE id = $1 AND deleted_at IS NULL
 `, id)
 	var prof profile.Profile
 	var strategy, status string
 	var configRaw []byte
-	if err := row.Scan(&prof.ID, &prof.Name, &strategy, &prof.TestURL, &prof.IntervalSeconds, &status, &configRaw); err != nil {
+	if err := row.Scan(&prof.ID, &prof.Name, &strategy, &prof.TestURL, &prof.IntervalSeconds, &status, &prof.AutoStart, &configRaw); err != nil {
 		return nil, err
 	}
 	prof.Strategy = profile.Strategy(strategy)

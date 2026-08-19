@@ -7,6 +7,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/clashproxy"
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
 )
 
 type clashProxyAccountUpdater struct {
@@ -34,7 +35,8 @@ func ProvideClashProxyService(cfg *config.Config, db *sql.DB, admin AdminService
 		AllowPrivateSubscription:  cfg.ClashProxy.AllowPrivateSubscription,
 	}, &clashProxyAccountUpdater{admin: admin})
 	if err := svc.ReconcileStartup(context.Background()); err != nil {
-		return nil, err
+		// 单个策略恢复失败不应阻止网关主服务启动，保留意图供下次启动继续重试。
+		logger.LegacyPrintf("service.clash_proxy", "startup reconciliation completed with errors: %v", err)
 	}
 	return svc, nil
 }

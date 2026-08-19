@@ -160,6 +160,19 @@
               min="1"
               :placeholder="t('admin.clashProxy.intervalSeconds')"
             />
+            <label
+              class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600"
+            >
+              <input v-model="profileForm.auto_start" type="checkbox" class="mt-0.5 h-4 w-4 rounded" />
+              <span>
+                <span class="block text-sm font-medium text-gray-800 dark:text-dark-100">
+                  {{ t('admin.clashProxy.autoStart') }}
+                </span>
+                <span class="mt-0.5 block text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('admin.clashProxy.autoStartHint') }}
+                </span>
+              </span>
+            </label>
             <div class="max-h-64 space-y-2 overflow-y-auto rounded-lg border border-gray-200 p-3 dark:border-dark-600">
               <label
                 v-for="node in nodes"
@@ -192,7 +205,8 @@
               <div>
                 <h3 class="font-semibold text-gray-900 dark:text-white">{{ profile.name }}</h3>
                 <div class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-                  #{{ profile.id }} · {{ profile.strategy }} · {{ runtimeOf(profile.id).status }}
+                  #{{ profile.id }} · {{ profile.strategy }} · {{ runtimeOf(profile.id).status }} ·
+                  {{ profile.auto_start ? t('admin.clashProxy.autoStartEnabled') : t('admin.clashProxy.autoStartDisabled') }}
                 </div>
                 <div v-if="runtimeOf(profile.id).proxy_url" class="mt-1 font-mono text-xs text-gray-500">
                   {{ runtimeOf(profile.id).proxy_url }}
@@ -360,7 +374,13 @@ const selectedNodeIDs = ref<number[]>([])
 
 const nodeForm = reactive({ name: '', url: '' })
 const importForm = reactive({ format: 'auto', url: '', content: '' })
-const profileForm = reactive({ name: '', strategy: 'select', test_url: defaultTestURL, interval_seconds: 300 })
+const profileForm = reactive({
+  name: '',
+  strategy: 'select',
+  test_url: defaultTestURL,
+  interval_seconds: 300,
+  auto_start: true
+})
 const bindingForm = reactive({ account_id: 0, profile_id: 0 })
 
 const tabs = computed(() => [
@@ -480,6 +500,7 @@ function editProfile(profile: ClashProxyProfile) {
   profileForm.strategy = profile.strategy
   profileForm.test_url = profile.test_url
   profileForm.interval_seconds = profile.interval_seconds
+  profileForm.auto_start = profile.auto_start
   selectedNodeIDs.value = [...profile.node_ids]
 }
 
@@ -489,6 +510,7 @@ function resetProfileForm() {
   profileForm.strategy = 'select'
   profileForm.test_url = defaultTestURL
   profileForm.interval_seconds = 300
+  profileForm.auto_start = true
   selectedNodeIDs.value = []
 }
 
@@ -498,6 +520,7 @@ function saveProfile() {
     strategy: profileForm.strategy,
     test_url: profileForm.test_url.trim(),
     interval_seconds: profileForm.interval_seconds,
+    auto_start: profileForm.auto_start,
     node_ids: [...selectedNodeIDs.value]
   }
   return run(async () => {

@@ -38,6 +38,7 @@ type ProfileView struct {
 	TestURL         string         `json:"test_url"`
 	IntervalSeconds int            `json:"interval_seconds"`
 	Status          string         `json:"status"`
+	AutoStart       bool           `json:"auto_start"`
 	NodeIDs         []int64        `json:"node_ids"`
 	ManagedProxyID  *int64         `json:"managed_proxy_id,omitempty"`
 	Config          map[string]any `json:"config"`
@@ -98,6 +99,7 @@ type CreateProfileInput struct {
 	Strategy        string  `json:"strategy"`
 	TestURL         string  `json:"test_url"`
 	IntervalSeconds int     `json:"interval_seconds"`
+	AutoStart       bool    `json:"auto_start"`
 	NodeIDs         []int64 `json:"node_ids"`
 	Weights         []int   `json:"weights,omitempty"`
 }

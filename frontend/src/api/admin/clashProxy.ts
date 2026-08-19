@@ -18,6 +18,7 @@ export interface ClashProxyProfile {
   test_url: string
   interval_seconds: number
   status: string
+  auto_start: boolean
   node_ids: number[]
   managed_proxy_id?: number
   config: Record<string, unknown>
@@ -67,6 +68,7 @@ export interface ClashProxyProfileInput {
   strategy: string
   test_url: string
   interval_seconds: number
+  auto_start: boolean
   node_ids: number[]
 }
 
