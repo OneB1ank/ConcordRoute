@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,12 @@ import (
 func TestCodexQuotaOverdraftInjection(t *testing.T) {
 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
 	svc := &OpenAIGatewayService{}
-	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{CodexQuotaOverdraftEnabledExtraKey: true}}
+	reset := time.Now().UTC().Add(time.Hour)
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+		CodexQuotaOverdraftEnabledExtraKey: true,
+		"codex_5h_used_percent":            100,
+		"codex_5h_reset_at":                reset.Format(time.RFC3339),
+	}}
 	body := []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}`)
 
 	updated := svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, body)
@@ -48,6 +54,7 @@ func TestCodexQuotaOverdraftInjectionGuards(t *testing.T) {
 	oauth.Extra = map[string]any{CodexQuotaOverdraftEnabledExtraKey: true}
 	require.Equal(t, string(body), string(svc.prepareCodexQuotaOverdraftBody(context.Background(), oauth, false, body)), "未标记的端点不能注入")
 	require.Equal(t, string(body), string(svc.prepareCodexQuotaOverdraftBody(WithCodexQuotaOverdraftScheduling(context.Background()), oauth, true, body)), "compact 不能注入")
+	require.Equal(t, string(body), string(svc.prepareCodexQuotaOverdraftBody(WithCodexQuotaOverdraftScheduling(context.Background()), oauth, false, body)), "仅开启开关、额度未耗尽时不能注入")
 
 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
 	for _, account := range []*Account{
@@ -56,7 +63,14 @@ func TestCodexQuotaOverdraftInjectionGuards(t *testing.T) {
 	} {
 		require.Equal(t, string(body), string(svc.prepareCodexQuotaOverdraftBody(ctx, account, false, body)))
 	}
-	agentIdentity := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{openAIAuthModeCredentialKey: OpenAIAuthModeAgentIdentity}, Extra: map[string]any{CodexQuotaOverdraftEnabledExtraKey: true}}
+	reset := time.Now().UTC().Add(time.Hour)
+	oauth.Extra["codex_5h_used_percent"] = 100
+	oauth.Extra["codex_5h_reset_at"] = reset.Format(time.RFC3339)
+	agentIdentity := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{openAIAuthModeCredentialKey: OpenAIAuthModeAgentIdentity}, Extra: map[string]any{
+		CodexQuotaOverdraftEnabledExtraKey: true,
+		"codex_5h_used_percent":            100,
+		"codex_5h_reset_at":                reset.Format(time.RFC3339),
+	}}
 	require.NotEqual(t, string(body), string(svc.prepareCodexQuotaOverdraftBody(ctx, agentIdentity, false, body)), "Agent Identity 必须支持透支请求注入")
 
 	notUserLast := []byte(`{"input":[{"type":"message","role":"assistant"}]}`)
@@ -65,6 +79,56 @@ func TestCodexQuotaOverdraftInjectionGuards(t *testing.T) {
 	require.Equal(t, string(invalid), string(svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, invalid)))
 	oversized := make([]byte, codexQuotaOverdraftMaxBodyBytes+1)
 	require.Equal(t, oversized, svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, oversized))
+}
+
+func TestCodexQuotaOverdraftInjectionStartsOnlyAtExhaustion(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Minute)
+	base := func() *Account {
+		return &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+			CodexQuotaOverdraftEnabledExtraKey: true,
+		}}
+	}
+
+	below := base()
+	below.Extra["codex_5h_used_percent"] = 99.999
+	below.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
+	require.False(t, codexQuotaOverdraftRequestActive(below, now))
+
+	exhausted := base()
+	exhausted.Extra["codex_5h_used_percent"] = 100.0
+	exhausted.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
+	require.True(t, codexQuotaOverdraftRequestActive(exhausted, now))
+
+	expired := base()
+	expired.Extra["codex_5h_used_percent"] = 100.0
+	expired.Extra["codex_5h_reset_at"] = past.Format(time.RFC3339)
+	require.False(t, codexQuotaOverdraftRequestActive(expired, now))
+
+	fallbackPassed := base()
+	fallbackPassed.Extra[CodexQuotaOverdraftProbeExtraKey] = CodexQuotaOverdraftProbeState{
+		Status:      codexQuotaOverdraftProbePassed,
+		QuotaWindow: "multiple",
+		CycleKey:    "multiple:" + fmt.Sprint(future.Unix()),
+		RecoverAt:   codexQuotaOverdraftTimePtr(future),
+	}
+	require.True(t, codexQuotaOverdraftRequestActive(fallbackPassed, now), "明确额度 429 建立的 fallback 周期仍应生效")
+
+	fallbackFailed := cloneCodexQuotaOverdraftAccount(fallbackPassed)
+	failed, ok := codexQuotaOverdraftStateFromAccount(fallbackFailed)
+	require.True(t, ok)
+	failed.Status = codexQuotaOverdraftProbeFailed
+	fallbackFailed.Extra[CodexQuotaOverdraftProbeExtraKey] = failed
+	require.False(t, codexQuotaOverdraftRequestActive(fallbackFailed, now))
+
+	recovered := cloneCodexQuotaOverdraftAccount(exhausted)
+	recovered.Extra[CodexQuotaOverdraftProbeExtraKey] = CodexQuotaOverdraftProbeState{
+		Status:    codexQuotaOverdraftProbeRecovered,
+		CycleKey:  "5h:" + fmt.Sprint(future.Unix()),
+		RecoverAt: codexQuotaOverdraftTimePtr(future),
+	}
+	require.False(t, codexQuotaOverdraftRequestActive(recovered, now), "已恢复状态不能因残留的 100% 快照重新注入")
 }
 
 func TestCodexQuotaOverdraftSchedulingOnlyBypassesQuotaThresholds(t *testing.T) {

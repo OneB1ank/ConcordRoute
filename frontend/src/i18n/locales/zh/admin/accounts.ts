@@ -766,7 +766,7 @@ export default {
         codexFingerprintCockpit: 'Cockpit（会话+缓存键）',
         codexFingerprintFull: '完全收敛',
         codexQuotaOverdraft: 'Codex 额度透支（实验性）',
-        codexQuotaOverdraftDesc: '默认关闭。仅对当前 OAuth 账号启用；额度达到 100% 后使用有限真实探测确认是否仍可请求，并让正常请求与探测复用相同的 UA、TLS 模板和账号代理出口。',
+        codexQuotaOverdraftDesc: '默认关闭。开启后该 OAuth 账号会忽略额度预留阈值并继续使用到上游精确值达到 100%；低于 100% 不修改普通请求，达到 100% 后才使用有限真实探测，并复用相同的 UA、TLS 模板和账号代理出口。',
         codexImageTool: 'Codex 图片桥接策略',
         codexImageToolDesc:
           '统一控制 Codex /responses 文本请求的 hosted image_generation 桥接和客户端图片工具声明。hosted 工具自动注入仅适用于非 Responses Lite 请求；账号级策略优先于渠道和全局配置，不影响独立图片生成接口。',

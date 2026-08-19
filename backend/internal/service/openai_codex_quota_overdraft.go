@@ -52,7 +52,37 @@ func codexQuotaOverdraftSchedulingEnabled(ctx context.Context) bool {
 
 func (s *OpenAIGatewayService) shouldInjectCodexQuotaOverdraft(ctx context.Context, account *Account, compact bool) bool {
 	return codexQuotaOverdraftSchedulingEnabled(ctx) && !compact &&
-		s != nil && isCodexQuotaOverdraftAccount(account)
+		s != nil && codexQuotaOverdraftRequestActive(account, time.Now().UTC())
+}
+
+// codexQuotaOverdraftRequestActive 将请求体修改严格限制在真实透支周期内。
+// 账号开关只表示允许透支；低于 100% 时普通请求必须保持原始结构。
+// 若上游没有返回百分比，但已经通过明确的额度耗尽 429 建立了 fallback
+// 周期，则在该周期恢复时间前继续沿用状态机结论。
+func codexQuotaOverdraftRequestActive(account *Account, now time.Time) bool {
+	if !isCodexQuotaOverdraftAccount(account) {
+		return false
+	}
+	state, _ := codexQuotaOverdraftStateFromAccount(account)
+	if state != nil {
+		switch state.Status {
+		case codexQuotaOverdraftProbeFailed, codexQuotaOverdraftProbeRecovered:
+			return false
+		}
+	}
+	if _, exhausted := codexQuotaOverdraftSignalFromAccount(account, state, now); exhausted {
+		return codexQuotaOverdraftSchedulingAllowed(account, now)
+	}
+	if state == nil || state.RecoverAt == nil || !state.RecoverAt.After(now) ||
+		!strings.HasPrefix(state.CycleKey, "multiple:") {
+		return false
+	}
+	switch state.Status {
+	case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbePassed, codexQuotaOverdraftProbeInconclusive:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Context, account *Account, compact bool, body []byte) []byte {
