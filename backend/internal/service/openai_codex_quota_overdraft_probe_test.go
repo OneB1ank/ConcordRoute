@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"testing"
@@ -503,6 +504,8 @@ func TestCodexQuotaOverdraftProbeReusesNormalRequestIdentityTLSAndProxy(t *testi
 		Credentials: map[string]any{"access_token": "token"},
 		Extra: map[string]any{
 			CodexQuotaOverdraftEnabledExtraKey: true,
+			CodexFingerprintSeedExtraKey:       "7f63a3b2-3209-4a0e-a122-9ff98e909421",
+			codexFingerprintModeExtraKey:       string(codexFingerprintCockpit),
 			"enable_tls_fingerprint":           true,
 			"tls_fingerprint_router_id":        int64(9),
 		},
@@ -524,6 +527,72 @@ func TestCodexQuotaOverdraftProbeReusesNormalRequestIdentityTLSAndProxy(t *testi
 	require.Equal(t, account.ID, upstream.accountID)
 	require.NotNil(t, upstream.tlsProfile)
 	require.Equal(t, "macOS normal request", upstream.tlsProfile.Name)
+
+	bodyBytes, err := io.ReadAll(upstream.req.Body)
+	require.NoError(t, err)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(bodyBytes, &body))
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+
+	installationID := upstream.req.Header.Get("x-codex-installation-id")
+	sessionID := upstream.req.Header.Get("session-id")
+	threadID := upstream.req.Header.Get("thread-id")
+	windowID := upstream.req.Header.Get("x-codex-window-id")
+	require.NotEmpty(t, installationID)
+	require.NotEmpty(t, sessionID)
+	require.NotEmpty(t, threadID)
+	require.Equal(t, threadID+":0", windowID)
+	require.Equal(t, installationID, metadata["x-codex-installation-id"])
+	require.Equal(t, sessionID, metadata["session_id"])
+	require.Equal(t, threadID, metadata["thread_id"])
+	require.Equal(t, windowID, metadata["x-codex-window-id"])
+	require.Equal(t, body["prompt_cache_key"], upstream.req.Header.Get("conversation_id"))
+}
+
+func TestCodexQuotaOverdraftProbeKeepsStableConversationAndRotatesTurn(t *testing.T) {
+	account := &Account{
+		ID:          911,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "token"},
+		Extra: map[string]any{
+			CodexQuotaOverdraftEnabledExtraKey: true,
+			CodexFingerprintSeedExtraKey:       "3d74c106-8ec2-456f-9024-a204e51b6e98",
+			codexFingerprintModeExtraKey:       string(codexFingerprintCockpit),
+		},
+	}
+
+	capture := func() (http.Header, map[string]any) {
+		upstream := &accountUsageHTTPUpstreamStub{}
+		coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
+		_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
+		require.NotNil(t, upstream.req)
+		raw, err := io.ReadAll(upstream.req.Body)
+		require.NoError(t, err)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(raw, &body))
+		metadata, ok := body["client_metadata"].(map[string]any)
+		require.True(t, ok)
+		return upstream.req.Header.Clone(), metadata
+	}
+
+	firstHeader, firstMetadata := capture()
+	secondHeader, secondMetadata := capture()
+	for _, key := range []string{"x-codex-installation-id", "session-id", "thread-id", "x-codex-window-id", "conversation_id"} {
+		require.Equal(t, firstHeader.Get(key), secondHeader.Get(key), key)
+		require.NotEmpty(t, firstHeader.Get(key), key)
+	}
+	require.Equal(t, firstMetadata["session_id"], secondMetadata["session_id"])
+	require.Equal(t, firstMetadata["thread_id"], secondMetadata["thread_id"])
+	require.NotEqual(t, firstMetadata["turn_id"], secondMetadata["turn_id"])
+
+	normalConversation := resolveCodexFingerprintIDs(account, "real-client-session", codexFingerprintCockpit)
+	require.NotNil(t, normalConversation)
+	require.Equal(t, normalConversation.installationID, firstHeader.Get("x-codex-installation-id"))
+	require.Equal(t, normalConversation.sessionID, firstHeader.Get("session-id"))
+	require.NotEqual(t, normalConversation.threadID, firstHeader.Get("thread-id"))
 }
 
 func TestCodexQuotaOverdraftProbeFailsClosedWhenConfiguredProxyIsUnavailable(t *testing.T) {
