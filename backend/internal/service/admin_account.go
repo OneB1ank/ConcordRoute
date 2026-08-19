@@ -168,6 +168,7 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"quota_daily_reset_at":  {},
 	"quota_weekly_reset_at": {},
 	// 上游观测、能力探测与临时调度状态不属于可复制配置。
+	CodexQuotaOverdraftProbeExtraKey:              {},
 	"model_rate_limits":                           {},
 	"session_window_utilization":                  {},
 	"passive_usage_7d_utilization":                {},
@@ -652,6 +653,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 	wasOveragesEnabled := account.IsOveragesEnabled()
+	wasSchedulingThresholdPaused := IsAccountSchedulingThresholdReason(account.TempUnschedulableReason)
 
 	if input.Name != "" {
 		account.Name = input.Name
@@ -703,6 +705,17 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
 			}
+		}
+		if resolveAccountExtraBool(normalizedExtra, CodexQuotaOverdraftEnabledExtraKey) {
+			// 账号普通编辑未携带运行态时保留当前探测周期；配置字段仍以输入为准。
+			if _, exists := normalizedExtra[CodexQuotaOverdraftProbeExtraKey]; !exists {
+				if state, ok := account.Extra[CodexQuotaOverdraftProbeExtraKey]; ok {
+					normalizedExtra[CodexQuotaOverdraftProbeExtraKey] = state
+				}
+			}
+		} else {
+			// 显式关闭或缺失账号级开关时清除旧周期，后续重新开启会重新探测。
+			delete(normalizedExtra, CodexQuotaOverdraftProbeExtraKey)
 		}
 		account.Extra = normalizedExtra
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
@@ -817,6 +830,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err := s.accountRepo.Update(ctx, account); err != nil {
 		return nil, err
 	}
+	if wasSchedulingThresholdPaused && isCodexQuotaOverdraftAccount(account) {
+		s.clearAccountSchedulingThresholdRuntimeBlock(account.ID)
+	}
 
 	// 将 proxy 变更传播到 spark 影子账号（同步；Update 内部已触发调度快照）。
 	// 影子自身 proxy 不可独立编辑(见上),故对影子的更新不触发传播。
@@ -849,10 +865,29 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
+	clearThresholdRuntimeBlock := false
+	if _, provided := updates[CodexQuotaOverdraftEnabledExtraKey]; provided {
+		if resolveAccountExtraBool(updates, CodexQuotaOverdraftEnabledExtraKey) {
+			account, err := s.accountRepo.GetByID(ctx, id)
+			if err != nil {
+				return err
+			}
+			clearThresholdRuntimeBlock = account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
+				!account.IsShadow() && IsAccountSchedulingThresholdReason(account.TempUnschedulableReason)
+		} else {
+			updates[CodexQuotaOverdraftProbeExtraKey] = nil
+		}
+	}
 	if len(updates) == 0 {
 		return nil
 	}
-	return s.accountRepo.UpdateExtra(ctx, id, updates)
+	if err := s.accountRepo.UpdateExtra(ctx, id, updates); err != nil {
+		return err
+	}
+	if clearThresholdRuntimeBlock {
+		s.clearAccountSchedulingThresholdRuntimeBlock(id)
+	}
+	return nil
 }
 
 // BulkUpdateAccounts 在单次请求中更新多个账号。
@@ -864,6 +899,10 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
+	if _, provided := input.Extra[CodexQuotaOverdraftEnabledExtraKey]; provided &&
+		!resolveAccountExtraBool(input.Extra, CodexQuotaOverdraftEnabledExtraKey) {
+		input.Extra[CodexQuotaOverdraftProbeExtraKey] = nil
+	}
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)
@@ -891,8 +930,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
+	clearOverdraftThresholdRuntimeBlocks := resolveAccountExtraBool(input.Extra, CodexQuotaOverdraftEnabledExtraKey)
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || clearOverdraftThresholdRuntimeBlocks {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1019,6 +1059,14 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
+	if clearOverdraftThresholdRuntimeBlocks {
+		for _, account := range cachedTargets {
+			if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
+				!account.IsShadow() && IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) {
+				s.clearAccountSchedulingThresholdRuntimeBlock(account.ID)
+			}
+		}
+	}
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
 	if repoUpdates.ProxyID != nil {
@@ -1055,6 +1103,15 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 
 	return result, nil
+}
+
+func (s *adminServiceImpl) clearAccountSchedulingThresholdRuntimeBlock(accountID int64) {
+	if s == nil || s.runtimeBlocker == nil || accountID <= 0 {
+		return
+	}
+	if clearer, ok := s.runtimeBlocker.(accountRuntimeConditionalBlockClearer); ok {
+		clearer.ClearAccountSchedulingBlockIfReason(accountID, "account_scheduling_threshold")
+	}
 }
 
 func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filters *BulkUpdateAccountFilters) ([]int64, error) {

@@ -41,6 +41,12 @@ type AccountRuntimeBlocker interface {
 	ClearAccountSchedulingBlock(accountID int64)
 }
 
+// accountRuntimeConditionalBlockClearer 仅在当前运行时阻断仍属于指定来源时清除。
+// 管理端开启透支时用它移除旧的额度阈值阻断，同时避免误删随后产生的 401/429 阻断。
+type accountRuntimeConditionalBlockClearer interface {
+	ClearAccountSchedulingBlockIfReason(accountID int64, reason string) bool
+}
+
 // SuccessfulTestRecoveryResult 表示测试成功后恢复了哪些运行时状态。
 type SuccessfulTestRecoveryResult struct {
 	ClearedError     bool
@@ -163,6 +169,10 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	if !account.IsActive() || !account.Schedulable {
 		return false
 	}
+	if codexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) &&
+		codexQuotaOverdraftSchedulingAllowed(account, time.Now().UTC()) {
+		return false
+	}
 
 	now := time.Now().UTC()
 	thresholds := s.settingService.GetAccountSchedulingThresholds(ctx)
@@ -190,7 +200,11 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 
 	account.TempUnschedulableUntil = cloneTimePtr(decision.Until)
 	account.TempUnschedulableReason = reason
-	s.notifyAccountSchedulingBlocked(account, *decision.Until, "account_scheduling_threshold")
+	// 启用透支的账号仍持久化阈值暂停，但透支请求会按状态机决定是否绕过，
+	// 因此这里不写入无法区分请求类型的运行时阻断器。
+	if !isCodexQuotaOverdraftAccount(account) {
+		s.notifyAccountSchedulingBlocked(account, *decision.Until, "account_scheduling_threshold")
+	}
 
 	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, *decision.Until, reason); err != nil {
 		slog.Warn("account_scheduling_threshold_set_temp_unsched_failed",

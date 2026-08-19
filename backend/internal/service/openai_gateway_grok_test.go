@@ -3341,6 +3341,10 @@ func TestHandleGrokAccountUpstreamError402RecoversAfterCooldownExpiry(t *testing
 
 	expired := time.Now().Add(-time.Second)
 	account.TempUnschedulableUntil = &expired
+	// 运行时阻断同时维护汇总截止时间和按原因截止时间，测试需让两层状态一起过期。
+	svc.openaiAccountRuntimeBlockReasons.Store(account.ID, map[string]time.Time{
+		"grok payment required": expired,
+	})
 	svc.openaiAccountRuntimeBlockUntil.Store(account.ID, expired)
 
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))

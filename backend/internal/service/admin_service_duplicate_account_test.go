@@ -111,6 +111,8 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 		Extra: map[string]any{
 			"config":                                  map[string]any{"region": "us-east-1"},
 			"items":                                   []any{map[string]any{"enabled": true}},
+			CodexQuotaOverdraftEnabledExtraKey:        true,
+			CodexQuotaOverdraftProbeExtraKey:          map[string]any{"status": codexQuotaOverdraftProbePassed},
 			"quota_limit":                             1000,
 			"quota_used":                              450,
 			"quota_daily_used":                        25,
@@ -166,6 +168,7 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 	require.Equal(t, map[string]any{
 		"config":                           map[string]any{"region": "us-east-1"},
 		"items":                            []any{map[string]any{"enabled": true}},
+		CodexQuotaOverdraftEnabledExtraKey: true,
 		"quota_limit":                      float64(1000),
 		"codex_cli_only":                   true,
 		"openai_native_compaction_v2_mode": OpenAICompactModeForceOn,

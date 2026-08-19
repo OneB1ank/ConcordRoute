@@ -1033,6 +1033,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, routerMatch ...TLSFingerprintRouterMatchResult) (*http.Request, error) {
+	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -1145,6 +1146,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	if account.Type == AccountTypeOAuth {
+		match := TLSFingerprintRouterMatchResult{}
+		if len(routerMatch) > 0 {
+			match = routerMatch[0]
+		}
+		s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
+	}
 	// 原生 V2 必须携带协商能力；OAuth 的普通 Responses 请求也对齐 Codex 的
 	// 会话级 beta 头行为。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)

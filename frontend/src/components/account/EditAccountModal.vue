@@ -1944,6 +1944,37 @@
         </div>
       </div>
 
+      <!-- Codex 额度透支（仅 OpenAI OAuth，账号级显式开启） -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexQuotaOverdraft') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.codexQuotaOverdraftDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="edit-codex-quota-overdraft-toggle"
+            @click="codexQuotaOverdraftEnabled = !codexQuotaOverdraftEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              codexQuotaOverdraftEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                codexQuotaOverdraftEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI 订阅档位手动覆盖（Plus/Pro/Free），仅 OAuth 非影子账号 -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
@@ -3038,6 +3069,7 @@ const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
+const codexQuotaOverdraftEnabled = ref(false)
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
@@ -3568,6 +3600,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
   codexFingerprintMode.value = 'cockpit'
+  codexQuotaOverdraftEnabled.value = false
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -3615,6 +3648,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexFingerprintMode.value = (['off', 'device', 'session', 'cockpit', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
         : 'cockpit')
+      codexQuotaOverdraftEnabled.value = extra?.codex_quota_overdraft_enabled === true
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
@@ -5090,6 +5124,11 @@ const handleSubmit = async () => {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {
           delete newExtra.codex_fingerprint_mode
+        }
+        if (codexQuotaOverdraftEnabled.value) {
+          newExtra.codex_quota_overdraft_enabled = true
+        } else {
+          delete newExtra.codex_quota_overdraft_enabled
         }
       }
 

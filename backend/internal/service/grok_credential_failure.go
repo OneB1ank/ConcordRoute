@@ -569,17 +569,20 @@ func (s *OpenAIGatewayService) blockGrokCredentialRuntime(account *Account, unti
 	mu := s.openAIAccountRuntimeBlockLock(account.ID)
 	mu.Lock()
 	before, hadBefore := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
-	installedGeneration, changed := s.blockAccountSchedulingLocked(account, until, reason)
+	beforeReasons, hadBeforeReasons := s.openaiAccountRuntimeBlockReasons.Load(account.ID)
+	if existing, ok := beforeReasons.(map[string]time.Time); ok {
+		cloned := make(map[string]time.Time, len(existing))
+		for blockReason, blockUntil := range existing {
+			cloned[blockReason] = blockUntil
+		}
+		beforeReasons = cloned
+	}
+	installedGeneration, _ := s.blockAccountSchedulingLocked(account, until, reason)
 	installed, installedOK := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
 	installedUntil, isTime := installed.(time.Time)
 	mu.Unlock()
-	if !changed || !installedOK || !isTime {
+	if !installedOK || !isTime {
 		return func() {}
-	}
-	if hadBefore {
-		if beforeUntil, ok := before.(time.Time); ok && beforeUntil.Equal(installedUntil) {
-			return func() {}
-		}
 	}
 	return func() {
 		mu.Lock()
@@ -595,10 +598,16 @@ func (s *OpenAIGatewayService) blockGrokCredentialRuntime(account *Account, unti
 		}
 		if hadBefore {
 			s.openaiAccountRuntimeBlockUntil.Store(account.ID, before)
+			if hadBeforeReasons {
+				s.openaiAccountRuntimeBlockReasons.Store(account.ID, beforeReasons)
+			} else {
+				s.openaiAccountRuntimeBlockReasons.Delete(account.ID)
+			}
 			s.openaiAccountRuntimeBlockGeneration.Store(account.ID, s.openaiAccountRuntimeBlockSequence.Add(1))
 			return
 		}
 		s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+		s.openaiAccountRuntimeBlockReasons.Delete(account.ID)
 		s.openaiAccountRuntimeBlockGeneration.Store(account.ID, s.openaiAccountRuntimeBlockSequence.Add(1))
 	}
 }

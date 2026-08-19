@@ -151,6 +151,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	c.Request = c.Request.WithContext(service.WithCodexQuotaOverdraftScheduling(c.Request.Context()))
 
 	for {
 		if failoverClientGone(c) {

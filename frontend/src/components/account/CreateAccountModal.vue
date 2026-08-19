@@ -3283,6 +3283,37 @@
         </div>
       </div>
 
+      <!-- Codex 额度透支（仅 OpenAI OAuth，默认关闭） -->
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexQuotaOverdraft') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.codexQuotaOverdraftDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="create-codex-quota-overdraft-toggle"
+            @click="codexQuotaOverdraftEnabled = !codexQuotaOverdraftEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              codexQuotaOverdraftEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                codexQuotaOverdraftEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI 旧版 Compact 端点能力配置 -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -4310,6 +4341,7 @@ const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
+const codexQuotaOverdraftEnabled = ref(false)
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -4702,6 +4734,7 @@ const applyOpenAIOAuthImportDefaultsToForm = () => {
     defaultFingerprintMode === 'session' ||
     defaultFingerprintMode === 'full'
   ) ? defaultFingerprintMode : 'cockpit'
+  codexQuotaOverdraftEnabled.value = extra.codex_quota_overdraft_enabled === true
   if (extra.openai_passthrough === true || extra.openai_oauth_passthrough === true) {
     openaiPassthroughEnabled.value = true
   }
@@ -5570,6 +5603,7 @@ const resetForm = () => {
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
   codexFingerprintMode.value = 'cockpit'
+  codexQuotaOverdraftEnabled.value = false
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5747,6 +5781,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
+  }
+  if (accountCategory.value === 'oauth-based' && codexQuotaOverdraftEnabled.value) {
+    extra.codex_quota_overdraft_enabled = true
+  } else {
+    delete extra.codex_quota_overdraft_enabled
   }
   if (openAICompactMode.value !== 'auto') {
     extra.openai_compact_mode = openAICompactMode.value

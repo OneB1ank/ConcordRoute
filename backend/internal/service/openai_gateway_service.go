@@ -36,6 +36,9 @@ const (
 	openaiPlatformAPIURL            = "https://api.openai.com/v1/responses"
 	openaiPlatformAPIInputTokensURL = "https://api.openai.com/v1/responses/input_tokens"
 	openaiStickySessionTTL          = time.Hour // 粘性会话TTL
+	// 后台额度请求复用最近一次真实请求的 UA 路由结果，避免同一账号的
+	// 正常推理与探测在 TLS Router 上落入不同设备模板。
+	openAIOutboundIdentitySnapshotTTL = 6 * time.Hour
 	// 与真实 Codex TUI 的 User-Agent 结构对齐：
 	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
 	// 缺少 OS/架构/终端后缀的形态易被上游指纹识别为非官方客户端。
@@ -403,6 +406,7 @@ type OpenAIGatewayService struct {
 	billingService        *BillingService
 	usageBillingNow       func() time.Time // 用量计费时钟，测试可注入固定时间以覆盖峰值倍率。
 	rateLimitService      *RateLimitService
+	codexQuotaOverdraft   *CodexQuotaOverdraftCoordinator
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
@@ -440,6 +444,7 @@ type OpenAIGatewayService struct {
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
+	openaiAccountRuntimeBlockReasons    sync.Map // key: int64(accountID), value: map[string]time.Time
 	openaiAccountRuntimeBlockLocks      sync.Map // key: int64(accountID), value: *sync.Mutex
 	openaiAccountRuntimeBlockGeneration sync.Map // key: int64(accountID), value: uint64
 	openaiAccountRuntimeBlockSequence   atomic.Uint64
@@ -454,6 +459,22 @@ type OpenAIGatewayService struct {
 	// 下游会话最近收到的回合状态签发账号，用于故障转移时剥离跨账号回带状态。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+	openaiOutboundIdentities    sync.Map // account ID -> openAIOutboundIdentitySnapshot
+}
+
+type openAIOutboundIdentitySnapshot struct {
+	RouterID            int64
+	ConfiguredUserAgent string
+	Match               TLSFingerprintRouterMatchResult
+	UserAgent           string
+	UpdatedAt           time.Time
+}
+
+// SetCodexQuotaOverdraftCoordinator 注入账号级透支协调器，避免网关构造阶段形成循环依赖。
+func (s *OpenAIGatewayService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
+	if s != nil {
+		s.codexQuotaOverdraft = coordinator
+	}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -1383,6 +1404,67 @@ func (s *OpenAIGatewayService) matchTLSFingerprintRouter(c *gin.Context, account
 		userAgent = c.GetHeader("User-Agent")
 	}
 	return s.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), userAgent)
+}
+
+// rememberOpenAIOutboundIdentity 记录真实推理最终采用的 UA 与 TLS Router 命中结果。
+// 后台额度快照和透支探测只读取该快照，不改变前台请求的路由语义。
+func (s *OpenAIGatewayService) rememberOpenAIOutboundIdentity(account *Account, userAgent string, match TLSFingerprintRouterMatchResult) {
+	if s == nil || account == nil || account.ID <= 0 || !account.IsOpenAIOAuth() {
+		return
+	}
+	userAgent = strings.TrimSpace(userAgent)
+	if userAgent == "" {
+		return
+	}
+	s.openaiOutboundIdentities.Store(account.ID, openAIOutboundIdentitySnapshot{
+		RouterID:            account.GetTLSFingerprintRouterID(),
+		ConfiguredUserAgent: openAIBackgroundIdentityBaseUA(account),
+		Match:               match,
+		UserAgent:           userAgent,
+		UpdatedAt:           time.Now().UTC(),
+	})
+}
+
+func openAIBackgroundIdentityBaseUA(account *Account) string {
+	baseUA := ""
+	if account != nil {
+		baseUA = strings.TrimSpace(account.GetOpenAIUserAgent())
+	}
+	if baseUA == "" {
+		baseUA = CodexCanonicalUserAgent()
+	}
+	return resolveCodexOutboundIdentity(baseUA).userAgent
+}
+
+// resolveOpenAIBackgroundIdentity 让无入站请求头的后台调用复用同一账号最近一次
+// 真实推理的最终 UA、TLS Router 规则和 TLS Profile。快照缺失、过期或账号更换
+// Router 后，按账号显式 UA（再回退全局规范 UA）确定一套稳定身份。
+func (s *OpenAIGatewayService) resolveOpenAIBackgroundIdentity(account *Account) (string, TLSFingerprintRouterMatchResult) {
+	if s == nil || account == nil {
+		return CodexCanonicalUserAgent(), TLSFingerprintRouterMatchResult{}
+	}
+	routerID := account.GetTLSFingerprintRouterID()
+	configuredUA := openAIBackgroundIdentityBaseUA(account)
+	if raw, ok := s.openaiOutboundIdentities.Load(account.ID); ok {
+		if snapshot, valid := raw.(openAIOutboundIdentitySnapshot); valid &&
+			snapshot.RouterID == routerID &&
+			snapshot.ConfiguredUserAgent == configuredUA &&
+			!snapshot.UpdatedAt.After(time.Now().UTC()) &&
+			time.Since(snapshot.UpdatedAt) <= openAIOutboundIdentitySnapshotTTL &&
+			strings.TrimSpace(snapshot.UserAgent) != "" {
+			return snapshot.UserAgent, snapshot.Match
+		}
+		s.openaiOutboundIdentities.Delete(account.ID)
+	}
+
+	// TLS Router 与真实出站看到的 UA 对齐：账号配置中的版本会先按全局
+	// Codex 版本收敛，再参与规则匹配，避免精确规则命中旧版本字符串。
+	match := TLSFingerprintRouterMatchResult{}
+	if s.tlsFPRouterService != nil && routerID > 0 {
+		match = s.tlsFPRouterService.MatchUserAgent(routerID, configuredUA)
+	}
+	identity := resolveCodexOutboundIdentity(s.codexIdentityOverrideUA(account, match))
+	return identity.userAgent, match
 }
 
 func (s *OpenAIGatewayService) resolveOpenAITLSProfile(account *Account, routerMatch ...TLSFingerprintRouterMatchResult) *tlsfingerprint.Profile {

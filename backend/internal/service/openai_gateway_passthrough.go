@@ -365,6 +365,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	token string,
 	routerMatch ...TLSFingerprintRouterMatchResult,
 ) (*http.Request, error) {
+	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -482,6 +483,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 
 	account.ApplyHeaderOverrides(req.Header)
+	if account.Type == AccountTypeOAuth {
+		match := TLSFingerprintRouterMatchResult{}
+		if len(routerMatch) > 0 {
+			match = routerMatch[0]
+		}
+		s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
+	}
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")

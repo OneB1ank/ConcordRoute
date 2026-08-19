@@ -699,6 +699,8 @@ export default {
         codexFingerprintSession: 'Device + Session',
         codexFingerprintCockpit: 'Cockpit (session + cache key)',
         codexFingerprintFull: 'Full convergence',
+        codexQuotaOverdraft: 'Codex quota overdraft (experimental)',
+        codexQuotaOverdraftDesc: 'Off by default and scoped to this OAuth account. At 100% usage, bounded real probes verify continued availability while reusing the same UA, TLS profile, and account proxy egress as normal requests.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

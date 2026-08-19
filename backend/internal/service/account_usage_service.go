@@ -164,6 +164,10 @@ type UsageProgress struct {
 	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
 	UsedRequests     int64        `json:"used_requests,omitempty"`
 	LimitRequests    int64        `json:"limit_requests,omitempty"`
+	OverdraftActive  bool         `json:"overdraft_active,omitempty"`
+	OverdraftStats   *WindowStats `json:"overdraft_stats,omitempty"`
+	OverdraftStarted *time.Time   `json:"overdraft_started_at,omitempty"`
+	OverdraftRecover *time.Time   `json:"overdraft_recover_at,omitempty"`
 }
 
 // AntigravityModelQuota Antigravity 单个模型的配额信息
@@ -237,6 +241,9 @@ type UsageInfo struct {
 
 	// QuotaAutoPaused 表示 OpenAI 账号当前因 5h/7d 配额阈值被自动暂停调度。
 	QuotaAutoPaused bool `json:"quota_auto_paused"`
+
+	// CodexQuotaOverdraft 暴露当前账号的透支探测状态，供管理页面展示。
+	CodexQuotaOverdraft *CodexQuotaOverdraftProbeState `json:"codex_quota_overdraft,omitempty"`
 
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
@@ -351,9 +358,16 @@ type AccountUsageService struct {
 	httpUpstream            HTTPUpstream
 	quotaAutoPauseSettings  OpenAIQuotaAutoPauseSettingsReader
 	openAIGatewayService    *OpenAIGatewayService
+	codexQuotaOverdraft     *CodexQuotaOverdraftCoordinator
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
 	qoderSessionProvider    *QoderTokenProvider
+}
+
+func (s *AccountUsageService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
+	if s != nil {
+		s.codexQuotaOverdraft = coordinator
+	}
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -761,6 +775,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
+	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
 
 	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
 		if account.IsShadow() {
@@ -791,6 +806,11 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 	}
 
+	if s.codexQuotaOverdraft != nil {
+		s.codexQuotaOverdraft.ObserveAccount(account, "")
+	}
+	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
+
 	if s.usageLogRepo == nil {
 		return usage, nil
 	}
@@ -808,6 +828,8 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
+
+	applyCodexQuotaOverdraftUsage(ctx, s.usageLogRepo, account, usage, now)
 
 	return usage, nil
 }
@@ -910,18 +932,23 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	canonical := resolveCodexOutboundIdentity("")
+	identityUA := strings.TrimSpace(account.GetOpenAIUserAgent())
+	routerMatch := TLSFingerprintRouterMatchResult{}
+	if s.openAIGatewayService != nil {
+		identityUA, routerMatch = s.openAIGatewayService.resolveOpenAIBackgroundIdentity(account)
+	}
+	canonical := resolveCodexOutboundIdentity(identityUA)
 	req.Header.Set("Originator", canonical.originator)
 	req.Header.Set("Version", canonical.version)
 	req.Header.Set("User-Agent", canonical.userAgent)
 	// Claude identityCache 保存的是 Anthropic/Claude CLI 指纹，不属于 Codex 身份来源。
 	// 探针与真实 OpenAI 转发保持一致：只使用账号显式 UA 或全局规范 Codex UA，
 	// 并让 originator、version 与最终 User-Agent 成套收敛。
-	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
+	enforceCodexIdentityHeadersWithUA(req.Header, identityUA)
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
 
 	proxyURL := resolveAccountProxyURL(account)
-	resp, err := s.doOpenAICodexProbeRequest(req, account, proxyURL)
+	resp, err := s.doOpenAICodexProbeRequest(req, account, proxyURL, routerMatch)
 	if err != nil {
 		return nil, fmt.Errorf("openai codex probe request failed: %w", err)
 	}
@@ -938,11 +965,11 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	return nil, nil
 }
 
-func (s *AccountUsageService) doOpenAICodexProbeRequest(req *http.Request, account *Account, proxyURL string) (*http.Response, error) {
+func (s *AccountUsageService) doOpenAICodexProbeRequest(req *http.Request, account *Account, proxyURL string, routerMatch TLSFingerprintRouterMatchResult) (*http.Response, error) {
 	if s != nil && s.httpUpstream != nil {
 		// Codex 后台快照探测也要复用网关上游链路，确保代理、OpenAI HTTP/2 策略和 TLS 指纹与用户请求一致。
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-		return s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.resolveOpenAICodexProbeTLSProfile(account, req.Header.Get("User-Agent")))
+		return s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.resolveOpenAICodexProbeTLSProfile(account, routerMatch))
 	}
 	client, err := httppool.GetClient(httppool.Options{
 		ProxyURL:              proxyURL,
@@ -965,16 +992,11 @@ func (s *AccountUsageService) resolveTLSProfile(account *Account) *tlsfingerprin
 // resolveOpenAICodexProbeTLSProfile 让后台 Codex 探针与正常推理复用同一条
 // UA -> TLS Router -> TLS Profile 决策链。探针没有入站请求，因此使用最终出站
 // UA 作为路由输入；未注入网关或未命中路由时保持原有账号固定模板兜底。
-func (s *AccountUsageService) resolveOpenAICodexProbeTLSProfile(account *Account, userAgent string) *tlsfingerprint.Profile {
+func (s *AccountUsageService) resolveOpenAICodexProbeTLSProfile(account *Account, match TLSFingerprintRouterMatchResult) *tlsfingerprint.Profile {
 	if s == nil || s.openAIGatewayService == nil {
 		return s.resolveTLSProfile(account)
 	}
-	gateway := s.openAIGatewayService
-	match := TLSFingerprintRouterMatchResult{}
-	if gateway.tlsFPRouterService != nil && account != nil && account.GetTLSFingerprintRouterID() > 0 {
-		match = gateway.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), userAgent)
-	}
-	return gateway.resolveOpenAITLSProfile(account, match)
+	return s.openAIGatewayService.resolveOpenAITLSProfile(account, match)
 }
 
 func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {

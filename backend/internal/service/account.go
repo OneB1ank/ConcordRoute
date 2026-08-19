@@ -1500,6 +1500,12 @@ func (a *Account) IsOpenAIOAuth() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeOAuth
 }
 
+// IsCodexQuotaOverdraftEnabled 判断当前 OpenAI OAuth 账号是否显式启用额度透支。
+// 开关缺失时保持关闭，避免升级后改变已有账号的调度行为。
+func (a *Account) IsCodexQuotaOverdraftEnabled() bool {
+	return a != nil && a.IsOpenAIOAuth() && !a.IsShadow() && a.getExtraBool(CodexQuotaOverdraftEnabledExtraKey)
+}
+
 // IsOpenAIChatGPTSubscription 判断 OpenAI OAuth 账号是否为可优先调度的 ChatGPT 订阅账号。
 func (a *Account) IsOpenAIChatGPTSubscription() bool {
 	if !a.IsOpenAIOAuth() {

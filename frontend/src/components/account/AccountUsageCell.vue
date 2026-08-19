@@ -113,12 +113,29 @@
     <!-- OpenAI OAuth 账号统一使用 /usage API 数据源 -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
+        <div
+          v-if="codexOverdraftStatus"
+          class="flex items-center gap-1.5 text-[9px]"
+          :class="codexOverdraftStatus.textClass"
+          :title="codexOverdraftStatus.title"
+        >
+          <span class="rounded px-1.5 py-0.5 font-medium" :class="codexOverdraftStatus.badgeClass">
+            {{ codexOverdraftStatus.label }}
+          </span>
+          <span v-if="codexOverdraftStatus.detail" class="text-gray-500 dark:text-gray-400">
+            {{ codexOverdraftStatus.detail }}
+          </span>
+        </div>
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
           :utilization="usageInfo.five_hour.utilization"
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
+          :overdraft-active="usageInfo.five_hour.overdraft_active"
+          :overdraft-stats="usageInfo.five_hour.overdraft_stats"
+          :overdraft-started-at="usageInfo.five_hour.overdraft_started_at"
+          :overdraft-recover-at="usageInfo.five_hour.overdraft_recover_at"
           :show-now-when-idle="true"
           color="indigo"
         />
@@ -128,6 +145,10 @@
           :utilization="usageInfo.seven_day.utilization"
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
+          :overdraft-active="usageInfo.seven_day.overdraft_active"
+          :overdraft-stats="usageInfo.seven_day.overdraft_stats"
+          :overdraft-started-at="usageInfo.seven_day.overdraft_started_at"
+          :overdraft-recover-at="usageInfo.seven_day.overdraft_recover_at"
           :show-now-when-idle="true"
           color="emerald"
         />
@@ -795,7 +816,36 @@ const geminiUsageAvailable = computed(() => {
 
 const hasOpenAIUsageFallback = computed(() => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
-  return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
+  return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day || !!usageInfo.value?.codex_quota_overdraft
+})
+
+const codexOverdraftStatus = computed(() => {
+  const probe = usageInfo.value?.codex_quota_overdraft
+  if (!probe) return null
+  const attempts = Math.max(0, probe.attempts || 0)
+  const limit = Math.max(1, probe.limit || 5)
+  const windowLabel = probe.quota_window === 'multiple' ? '5h / 7d' : probe.quota_window
+  const titleParts = [windowLabel]
+  if (probe.model) titleParts.push(probe.model)
+  if (probe.reason_code) titleParts.push(probe.reason_code)
+  if (probe.tested_at) titleParts.push(`${t('usage.overdraftTestedAt')}: ${new Date(probe.tested_at).toLocaleString()}`)
+  if (probe.recover_at) titleParts.push(`${t('usage.overdraftRecoverAt')}: ${new Date(probe.recover_at).toLocaleString()}`)
+  if (probe.retry_at) titleParts.push(`${t('usage.overdraftRetryAt')}: ${new Date(probe.retry_at).toLocaleString()}`)
+  const common = { detail: `${attempts}/${limit} · ${windowLabel}`, title: titleParts.join(' · ') }
+  switch (probe.status) {
+    case 'pending':
+      return { ...common, label: t('usage.overdraftProbePending'), textClass: 'text-amber-600 dark:text-amber-400', badgeClass: 'bg-amber-50 dark:bg-amber-950/40' }
+    case 'passed':
+      return { ...common, label: t('usage.overdraftActive'), textClass: 'text-red-600 dark:text-red-400', badgeClass: 'bg-red-50 dark:bg-red-950/40' }
+    case 'failed':
+      return { ...common, label: t('usage.overdraftProbeFailed'), textClass: 'text-red-600 dark:text-red-400', badgeClass: 'bg-red-50 dark:bg-red-950/40' }
+    case 'inconclusive':
+      return { ...common, label: t('usage.overdraftProbeInconclusive'), textClass: 'text-amber-600 dark:text-amber-400', badgeClass: 'bg-amber-50 dark:bg-amber-950/40' }
+    case 'recovered':
+      return { ...common, detail: windowLabel, label: t('usage.overdraftRecovered'), textClass: 'text-emerald-600 dark:text-emerald-400', badgeClass: 'bg-emerald-50 dark:bg-emerald-950/40' }
+    default:
+      return null
+  }
 })
 
 const openAIQuotaAutoPaused = computed(() => {

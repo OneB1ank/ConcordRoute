@@ -113,6 +113,36 @@ describe('AccountUsageCell', () => {
     expect(getUsage).not.toHaveBeenCalled()
   })
 
+  it('显示 OpenAI OAuth 透支探测状态', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: { utilization: 100, resets_at: '2026-03-17T02:30:00Z' },
+      codex_quota_overdraft: {
+        status: 'passed',
+        quota_window: '5h',
+        cycle_key: '5h:1773714600',
+        attempts: 2,
+        limit: 5,
+        started_at: '2026-03-17T00:00:00Z'
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 9002, platform: 'openai', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.text()).toContain('usage.overdraftActive')
+    expect(wrapper.text()).toContain('2/5 · 5h')
+  })
+
   it('does not request or display simulated usage for third-party Gemini API Key accounts', async () => {
     const requestBatchedUsage = vi.fn()
     const wrapper = mount(AccountUsageCell, {

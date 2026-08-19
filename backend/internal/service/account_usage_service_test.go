@@ -15,6 +15,7 @@ import (
 	openaipkg "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/qoder"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
+	"github.com/stretchr/testify/require"
 )
 
 type accountUsageCodexProbeRepo struct {
@@ -1261,6 +1262,57 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesTLSRouterProfile(t *tes
 	if upstream.tlsProfile == nil || upstream.tlsProfile.Name != "macOS Codex routed" {
 		t.Fatalf("TLS profile = %#v, want routed macOS profile", upstream.tlsProfile)
 	}
+}
+
+func TestAccountUsageService_ProbeOpenAICodexSnapshotReusesLatestNormalRequestIdentity(t *testing.T) {
+	const normalRequestUA = "codex-tui/0.144.1 (Mac OS 15.6; arm64) Apple_Terminal"
+	proxyID := int64(8010)
+	upstream := &accountUsageHTTPUpstreamStub{}
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		88: {ID: 88, Name: "normal request profile", ALPNProtocols: []string{"h2", "http/1.1"}},
+	}}
+	match := TLSFingerprintRouterMatchResult{
+		Matched:                 true,
+		RouterID:                10,
+		RuleName:                "latest normal request",
+		TLSFingerprintProfileID: 88,
+		UpstreamUserAgent:       normalRequestUA,
+	}
+	gateway := &OpenAIGatewayService{tlsFPProfileService: profileService}
+	account := &Account{
+		ID:          459,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 3,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"user_agent":   "codex-tui/0.100.0 (Mac OS 14.0; arm64) Apple_Terminal",
+		},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":    true,
+			"tls_fingerprint_router_id": int64(10),
+		},
+		ProxyID: &proxyID,
+		Proxy:   &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
+	}
+	gateway.rememberOpenAIOutboundIdentity(account, normalRequestUA, match)
+	svc := &AccountUsageService{
+		httpUpstream:         upstream,
+		tlsFPProfileService:  profileService,
+		openAIGatewayService: gateway,
+	}
+
+	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+
+	require.NoError(t, err)
+	require.NotNil(t, upstream.req)
+	require.Equal(t, normalRequestUA, upstream.req.Header.Get("User-Agent"))
+	identity := resolveCodexOutboundIdentity(normalRequestUA)
+	require.Equal(t, identity.originator, upstream.req.Header.Get("Originator"))
+	require.Equal(t, identity.version, upstream.req.Header.Get("Version"))
+	require.Equal(t, account.Proxy.URL(), upstream.proxyURL)
+	require.NotNil(t, upstream.tlsProfile)
+	require.Equal(t, "normal request profile", upstream.tlsProfile.Name)
 }
 
 func TestAccountUsageService_ProbeOpenAICodexSnapshotIgnoresClaudeIdentityCacheUA(t *testing.T) {

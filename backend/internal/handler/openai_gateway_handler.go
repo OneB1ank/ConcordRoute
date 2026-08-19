@@ -415,6 +415,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 生图家族限流依赖上下文标记，必须使用渠道映射后的显式意图结果。
 		selectionCtx = service.WithOpenAIImageGenerationIntent(selectionCtx)
 	}
+	if !legacyCompact && !nativeCompactionV2 && !imageIntent {
+		selectionCtx = service.WithCodexQuotaOverdraftScheduling(selectionCtx)
+	}
+	c.Request = c.Request.WithContext(selectionCtx)
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
@@ -1050,6 +1054,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
+	c.Request = c.Request.WithContext(service.WithCodexQuotaOverdraftScheduling(c.Request.Context()))
 	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(sessionHash, promptCacheKey, reqModel, body)
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return

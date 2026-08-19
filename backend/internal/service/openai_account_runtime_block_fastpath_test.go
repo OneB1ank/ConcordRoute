@@ -71,6 +71,42 @@ func TestOpenAIRuntimeBlock_DoesNotApplyToOtherPlatforms(t *testing.T) {
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIRuntimeBlock_ConditionalClearRequiresMatchingReason(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 451, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Hour), "account_scheduling_threshold")
+
+	require.False(t, svc.ClearAccountSchedulingBlockIfReason(account.ID, "oauth_401"))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.True(t, svc.ClearAccountSchedulingBlockIfReason(account.ID, "account_scheduling_threshold"))
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIRuntimeBlock_ConditionalClearPreservesNewerDifferentReason(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 452, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Minute), "account_scheduling_threshold")
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Hour), "oauth_401")
+
+	require.True(t, svc.ClearAccountSchedulingBlockIfReason(account.ID, "account_scheduling_threshold"))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIRuntimeBlock_ConditionalClearKeepsShorterDifferentReason(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 453, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Hour), "account_scheduling_threshold")
+	svc.BlockAccountScheduling(account, time.Now().Add(time.Minute), "oauth_401")
+
+	require.True(t, svc.ClearAccountSchedulingBlockIfReason(account.ID, "account_scheduling_threshold"))
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	raw, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok)
+	remaining, ok := raw.(time.Time)
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().Add(time.Minute), remaining, 2*time.Second)
+}
+
 func TestOpenAIRuntimeBlocker_IgnoresNonOpenAIFromRateLimitService(t *testing.T) {
 	gateway := &OpenAIGatewayService{}
 	repo := &rateLimitAccountRepoStub{}

@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -1742,7 +1743,7 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 }
 
 func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Account, error) {
-	accounts, err := r.schedulableAccountsQuery(time.Now()).All(ctx)
+	accounts, err := r.schedulableAccountsQuery(ctx, time.Now()).All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1751,7 +1752,7 @@ func (r *accountRepository) ListSchedulable(ctx context.Context) ([]service.Acco
 
 // ListSchedulableAccountLoads 只加载 Ops 队列深度采样所需的账号 ID 与并发字段。
 func (r *accountRepository) ListSchedulableAccountLoads(ctx context.Context) ([]service.AccountWithConcurrency, error) {
-	accounts, err := r.schedulableAccountsQuery(time.Now()).
+	accounts, err := r.schedulableAccountsQuery(ctx, time.Now()).
 		Select(
 			dbaccount.FieldID,
 			dbaccount.FieldConcurrency,
@@ -1778,12 +1779,12 @@ func (r *accountRepository) ListSchedulableAccountLoads(ctx context.Context) ([]
 }
 
 // schedulableAccountsQuery 统一完整账号查询与轻量投影的可调度过滤条件。
-func (r *accountRepository) schedulableAccountsQuery(now time.Time) *dbent.AccountQuery {
+func (r *accountRepository) schedulableAccountsQuery(ctx context.Context, now time.Time) *dbent.AccountQuery {
 	return r.client.Account.Query().
 		Where(
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
+			tempUnschedulablePredicate(ctx),
 			notExpiredPredicate(now),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
@@ -1893,7 +1894,7 @@ func (r *accountRepository) ListSchedulableByPlatform(ctx context.Context, platf
 			dbaccount.PlatformEQ(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
+			tempUnschedulablePredicate(ctx),
 			notExpiredPredicate(now),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
@@ -1927,7 +1928,7 @@ func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, plat
 			dbaccount.PlatformIn(platforms...),
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
-			tempUnschedulablePredicate(),
+			tempUnschedulablePredicate(ctx),
 			notExpiredPredicate(now),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
@@ -1948,7 +1949,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatform(ctx context.Conte
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
-			tempUnschedulablePredicate(),
+			tempUnschedulablePredicate(ctx),
 			notExpiredPredicate(now),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
@@ -1972,7 +1973,7 @@ func (r *accountRepository) ListSchedulableUngroupedByPlatforms(ctx context.Cont
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
 			dbaccount.Not(dbaccount.HasAccountGroups()),
-			tempUnschedulablePredicate(),
+			tempUnschedulablePredicate(ctx),
 			notExpiredPredicate(now),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 			dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
@@ -2285,6 +2286,123 @@ func (r *accountRepository) ClearRateLimit(ctx context.Context, id int64) error 
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil
+}
+
+// ClearCodexQuotaOverdraftRateLimit 仅清除探测开始时观察到的同一限流代次，
+// 避免旧探测误删随后由新 429 写入的限流状态。
+func (r *accountRepository) ClearCodexQuotaOverdraftRateLimit(ctx context.Context, id int64, observedResetAt *time.Time) (bool, error) {
+	if observedResetAt == nil {
+		return false, nil
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET rate_limited_at = NULL,
+			rate_limit_reset_at = NULL,
+			overload_until = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+			AND deleted_at IS NULL
+			AND platform = $2
+			AND type = $3
+			AND rate_limit_reset_at = $4
+	`, id, service.PlatformOpenAI, service.AccountTypeOAuth, observedResetAt.UTC())
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		r.syncSchedulerAccountSnapshot(ctx, id)
+		return false, err
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft rate-limit clear failed: account=%d err=%v", id, err)
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return true, nil
+}
+
+// ClaimCodexQuotaOverdraftProbe 原子占用一个额度周期，防止多实例重复发起真实探测。
+func (r *accountRepository) ClaimCodexQuotaOverdraftProbe(
+	ctx context.Context,
+	id int64,
+	state *service.CodexQuotaOverdraftProbeState,
+) (bool, error) {
+	if state == nil || strings.TrimSpace(state.CycleKey) == "" {
+		return false, nil
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
+			updated_at = NOW()
+		WHERE id = $3
+			AND deleted_at IS NULL
+			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
+			AND (
+				COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $5
+				OR (
+					extra #>> '{codex_quota_overdraft_probe,status}' = 'inconclusive'
+					AND COALESCE(NULLIF(extra #>> '{codex_quota_overdraft_probe,retry_at}', '')::timestamptz, '1970-01-01'::timestamptz) <= NOW()
+				)
+				OR (
+					extra #>> '{codex_quota_overdraft_probe,status}' = 'pending'
+					AND COALESCE(NULLIF(extra #>> '{codex_quota_overdraft_probe,started_at}', '')::timestamptz, '1970-01-01'::timestamptz) <= NOW() - INTERVAL '2 minutes'
+				)
+				OR (
+					extra #>> '{codex_quota_overdraft_probe,status}' = 'passed'
+					AND COALESCE(NULLIF(extra #>> '{codex_quota_overdraft_probe,tested_at}', '')::timestamptz, '1970-01-01'::timestamptz) <= NOW() - ($6 * INTERVAL '1 second')
+				)
+			)
+	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftPassedRecheckSeconds)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return false, err
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return true, nil
+}
+
+// UpdateCodexQuotaOverdraftProbeState 只更新当前仍属于同一额度周期的探测状态。
+// 旧协程、已关闭透支的账号或已被新周期占用的账号均不会被覆盖。
+func (r *accountRepository) UpdateCodexQuotaOverdraftProbeState(
+	ctx context.Context,
+	id int64,
+	state *service.CodexQuotaOverdraftProbeState,
+) (bool, error) {
+	if state == nil || strings.TrimSpace(state.CycleKey) == "" {
+		return false, nil
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
+			updated_at = NOW()
+		WHERE id = $3
+			AND deleted_at IS NULL
+			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
+			AND extra #>> '{codex_quota_overdraft_probe,cycle_key}' = $5
+	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return false, err
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft state update failed: account=%d err=%v", id, err)
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return true, nil
 }
 
 func (r *accountRepository) ClearAntigravityQuotaScopes(ctx context.Context, id int64) error {
@@ -2789,7 +2907,7 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 		if !opts.ignoreTransientState {
 			now := time.Now()
 			preds = append(preds,
-				tempUnschedulablePredicate(),
+				tempUnschedulablePredicate(ctx),
 				notExpiredPredicate(now),
 				dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
 				dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
@@ -2894,13 +3012,29 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 	return outAccounts, nil
 }
 
-func tempUnschedulablePredicate() dbpredicate.Account {
+func tempUnschedulablePredicate(ctx context.Context) dbpredicate.Account {
 	return dbpredicate.Account(func(s *entsql.Selector) {
 		col := s.C("temp_unschedulable_until")
-		s.Where(entsql.Or(
+		predicates := []*entsql.Predicate{
 			entsql.IsNull(col),
 			entsql.LTE(col, entsql.Expr("NOW()")),
-		))
+		}
+		if service.CodexQuotaOverdraftSchedulingEnabled(ctx) {
+			reasonCol := s.C("temp_unschedulable_reason")
+			extraCol := s.C("extra")
+			enabledExpr := entsql.ExprP(
+				fmt.Sprintf("LOWER(BTRIM(COALESCE(%s ->> ?, ''))) IN ('1', 't', 'true')", extraCol),
+				service.CodexQuotaOverdraftEnabledExtraKey,
+			)
+			predicates = append(predicates, entsql.And(
+				entsql.EQ(s.C("platform"), service.PlatformOpenAI),
+				entsql.EQ(s.C("type"), service.AccountTypeOAuth),
+				entsql.IsNull(s.C("parent_account_id")),
+				enabledExpr,
+				entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
+			))
+		}
+		s.Where(entsql.Or(predicates...))
 	})
 }
 

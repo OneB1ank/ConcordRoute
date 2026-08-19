@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/TokenFlux/TokenRouter/ent"
 	_ "github.com/TokenFlux/TokenRouter/ent/runtime"
+	"github.com/TokenFlux/TokenRouter/internal/service"
 	"github.com/stretchr/testify/require"
 
 	"entgo.io/ent/dialect"
@@ -79,4 +81,86 @@ func TestListSchedulableAccountLoadsUsesSingleProjectionQuery(t *testing.T) {
 	_, orderClause, hasOrder := strings.Cut(normalized, " ORDER BY ")
 	require.True(t, hasOrder, "projection query must preserve schedulable account order: %s", normalized)
 	require.Contains(t, orderClause, `"priority" ASC`)
+}
+
+func TestSchedulableAccountQueryScopesCodexQuotaOverdraftToMarkedContext(t *testing.T) {
+	buildQuery := func(ctx context.Context) string {
+		var capturedSQL string
+		db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		driver := entsql.OpenDB(dialect.Postgres, db)
+		client := dbent.NewClient(dbent.Driver(driver))
+		t.Cleanup(func() { _ = client.Close() })
+		repo := newAccountRepositoryWithSQL(client, db, nil)
+		mock.ExpectQuery("schedulable query").WillReturnRows(sqlmock.NewRows([]string{"id", "concurrency", "load_factor"}))
+		_, err = repo.ListSchedulableAccountLoads(ctx)
+		require.NoError(t, err)
+		require.NoError(t, mock.ExpectationsWereMet())
+		return normalizeSQLWhitespace(capturedSQL)
+	}
+
+	ordinarySQL := buildQuery(context.Background())
+	require.NotContains(t, ordinarySQL, `"temp_unschedulable_reason" LIKE`)
+
+	overdraftSQL := buildQuery(service.WithCodexQuotaOverdraftScheduling(context.Background()))
+	require.Contains(t, overdraftSQL, `"temp_unschedulable_reason" LIKE`)
+	require.Contains(t, overdraftSQL, `"platform" =`)
+	require.Contains(t, overdraftSQL, `"type" =`)
+	require.Contains(t, overdraftSQL, `"parent_account_id" IS NULL`)
+	require.Contains(t, overdraftSQL, `"extra"`)
+	require.NotContains(t, overdraftSQL, `::boolean`, "畸形历史值不得让可调度查询因布尔强转失败")
+}
+
+func TestClaimCodexQuotaOverdraftProbeAllowsCooledPassedCycleRecheck(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	mock.ExpectExec("claim overdraft probe").WillReturnResult(sqlmock.NewResult(0, 0))
+	claimed, err := repo.ClaimCodexQuotaOverdraftProbe(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
+		Status:    "pending",
+		CycleKey:  "5h:1787166000",
+		StartedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, "status}' = 'passed'")
+	require.Contains(t, normalized, "tested_at")
+	require.Contains(t, normalized, "$6 * INTERVAL '1 second'")
+}
+
+func TestUpdateCodexQuotaOverdraftProbeStateUsesCycleCAS(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	mock.ExpectExec("update overdraft state").WillReturnResult(sqlmock.NewResult(0, 0))
+	updated, err := repo.UpdateCodexQuotaOverdraftProbeState(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
+		Status:    "passed",
+		CycleKey:  "5h:1787166000",
+		StartedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.False(t, updated)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, "extra ->> $4")
+	require.Contains(t, normalized, "cycle_key}' = $5")
 }

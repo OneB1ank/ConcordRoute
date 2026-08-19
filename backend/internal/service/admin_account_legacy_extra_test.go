@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/xai"
 	"github.com/google/uuid"
@@ -128,6 +129,89 @@ func TestUpdateAccountDiscardsIncomingCodexFingerprintSeedWhenLegacyAccountHasNo
 	require.NoError(t, err)
 	require.NotContains(t, updated.Extra, CodexFingerprintSeedExtraKey)
 	require.Equal(t, "value", updated.Extra["custom"])
+}
+
+func TestUpdateAccountDisablingCodexQuotaOverdraftClearsProbeState(t *testing.T) {
+	accountID := int64(115)
+	repo := &accountServiceTestRepo{accounts: map[int64]*Account{
+		accountID: {
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Status:   StatusActive,
+			Extra: map[string]any{
+				CodexQuotaOverdraftEnabledExtraKey: true,
+				CodexQuotaOverdraftProbeExtraKey: map[string]any{
+					"status":    codexQuotaOverdraftProbePassed,
+					"cycle_key": "5h:1787166000",
+				},
+			},
+		},
+	}}
+
+	updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Extra: map[string]any{
+			CodexQuotaOverdraftEnabledExtraKey: false,
+			"custom":                           "value",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, false, updated.Extra[CodexQuotaOverdraftEnabledExtraKey])
+	require.NotContains(t, updated.Extra, CodexQuotaOverdraftProbeExtraKey)
+	require.Equal(t, "value", updated.Extra["custom"])
+}
+
+func TestUpdateAccountEnablingCodexQuotaOverdraftClearsOnlyLegacyThresholdRuntimeBlock(t *testing.T) {
+	accountID := int64(116)
+	resetAt := time.Now().UTC().Add(time.Hour)
+	account := &Account{
+		ID:                      accountID,
+		Platform:                PlatformOpenAI,
+		Type:                    AccountTypeOAuth,
+		Status:                  StatusActive,
+		Schedulable:             true,
+		TempUnschedulableUntil:  &resetAt,
+		TempUnschedulableReason: BuildAccountSchedulingThresholdReason("quota exhausted"),
+		Extra:                   map[string]any{},
+	}
+	repo := &accountServiceTestRepo{accounts: map[int64]*Account{accountID: account}}
+	gateway := &OpenAIGatewayService{}
+	gateway.BlockAccountScheduling(account, resetAt, "account_scheduling_threshold")
+	require.True(t, gateway.isOpenAIAccountRuntimeBlocked(account))
+
+	updated, err := (&adminServiceImpl{accountRepo: repo, runtimeBlocker: gateway}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Extra: map[string]any{CodexQuotaOverdraftEnabledExtraKey: true},
+	})
+
+	require.NoError(t, err)
+	require.True(t, updated.IsCodexQuotaOverdraftEnabled())
+	require.False(t, gateway.isOpenAIAccountRuntimeBlocked(updated))
+}
+
+func TestUpdateAccountEnablingCodexQuotaOverdraftPreservesNewerRuntimeBlock(t *testing.T) {
+	accountID := int64(117)
+	resetAt := time.Now().UTC().Add(time.Hour)
+	account := &Account{
+		ID:                      accountID,
+		Platform:                PlatformOpenAI,
+		Type:                    AccountTypeOAuth,
+		Status:                  StatusActive,
+		Schedulable:             true,
+		TempUnschedulableUntil:  &resetAt,
+		TempUnschedulableReason: BuildAccountSchedulingThresholdReason("quota exhausted"),
+		Extra:                   map[string]any{},
+	}
+	repo := &accountServiceTestRepo{accounts: map[int64]*Account{accountID: account}}
+	gateway := &OpenAIGatewayService{}
+	gateway.BlockAccountScheduling(account, resetAt.Add(time.Hour), "oauth_401")
+
+	updated, err := (&adminServiceImpl{accountRepo: repo, runtimeBlocker: gateway}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Extra: map[string]any{CodexQuotaOverdraftEnabledExtraKey: true},
+	})
+
+	require.NoError(t, err)
+	require.True(t, gateway.isOpenAIAccountRuntimeBlocked(updated), "开启透支不得清除并发产生的认证阻断")
 }
 
 func TestBulkUpdateAccountsDiscardsCodexFingerprintSeed(t *testing.T) {
