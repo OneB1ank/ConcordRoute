@@ -904,6 +904,8 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	}
 	modelID := openaipkg.CodexUsageProbeModel
 	payload := createOpenAITestPayload(modelID, "", true)
+	fingerprintIDs := resolveCodexProbeFingerprintIDs(account, codexProbePurposeUsageSnapshot, modelID)
+	applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
@@ -946,6 +948,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	// 并让 originator、version 与最终 User-Agent 成套收敛。
 	enforceCodexIdentityHeadersWithUA(req.Header, identityUA)
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
+	applyCodexProbeFingerprintHeaders(req.Header, fingerprintIDs)
 
 	proxyURL := resolveAccountProxyURL(account)
 	resp, err := s.doOpenAICodexProbeRequest(req, account, proxyURL, routerMatch)

@@ -143,6 +143,34 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Contains(t, recorder.Body.String(), "test_complete")
 }
 
+func TestAccountTestService_OpenAIOAuthUsesFullCockpitProbeIdentity(t *testing.T) {
+	ctx, _ := newTestContext()
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{httpUpstream: upstream}
+	account := newTestOAuthAccount(891, map[string]any{
+		codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
+	})
+	account.Concurrency = 1
+	account.Credentials = map[string]any{"access_token": "test-token"}
+
+	require.NoError(t, svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", ""))
+	require.Len(t, upstream.requests, 1)
+	req := upstream.requests[0]
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+
+	require.Equal(t, req.Header.Get("x-codex-installation-id"), gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String())
+	require.Equal(t, req.Header.Get("session-id"), gjson.GetBytes(body, "client_metadata.session_id").String())
+	require.Equal(t, req.Header.Get("thread-id"), gjson.GetBytes(body, "client_metadata.thread_id").String())
+	require.Equal(t, req.Header.Get("x-codex-window-id"), gjson.GetBytes(body, "client_metadata.x-codex-window-id").String())
+	require.Equal(t, req.Header.Get("conversation_id"), gjson.GetBytes(body, "prompt_cache_key").String())
+	require.NotEmpty(t, gjson.GetBytes(body, "client_metadata.turn_id").String())
+}
+
 func TestAccountTestService_OpenAIOAuthTestNormalizesGPT56Alias(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
@@ -221,6 +249,7 @@ func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *t
 			"chatgpt_account_id": "org-parent",
 		},
 	}
+	EnsureCodexFingerprintSeed(parent)
 	shadow := &Account{
 		ID:              200,
 		Platform:        PlatformOpenAI,
@@ -235,6 +264,7 @@ func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *t
 			},
 		},
 	}
+	EnsureCodexFingerprintSeed(shadow)
 
 	repo := &openAIAccountTestRepo{
 		mockAccountRepoForGemini: mockAccountRepoForGemini{
@@ -253,6 +283,8 @@ func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *t
 	req := upstream.requests[0]
 	require.Equal(t, "Bearer parent-token", req.Header.Get("Authorization"))
 	require.Equal(t, "org-parent", req.Header.Get("chatgpt-account-id"))
+	require.Equal(t, resolveConvergedInstallationID(parent), req.Header.Get("x-codex-installation-id"))
+	require.NotEqual(t, resolveConvergedInstallationID(shadow), req.Header.Get("x-codex-installation-id"))
 	body, err := io.ReadAll(req.Body)
 	require.NoError(t, err)
 	require.Equal(t, "gpt-5.3-codex-spark", gjson.GetBytes(body, "model").String())

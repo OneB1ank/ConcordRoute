@@ -383,7 +383,7 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		"stream":       true,
 		"store":        false,
 	}
-	fingerprintIDs := resolveCodexQuotaOverdraftProbeFingerprintIDs(account)
+	fingerprintIDs := resolveCodexProbeFingerprintIDs(account, codexProbePurposeQuotaOverdraft, upstreamModel)
 	applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -441,12 +441,7 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
 	enforceCodexIdentityHeadersWithUA(req.Header, identityUA)
 	account.ApplyHeaderOverrides(req.Header)
-	// 后台探测没有客户端请求可提供会话字段，因此使用账号级稳定的专用
-	// probe thread。它与普通对话隔离，但 installation/session 仍与同账号一致。
-	if fingerprintIDs != nil && fingerprintIDs.mode == codexFingerprintCockpit && fingerprintIDs.promptCacheKey != "" {
-		req.Header.Set("conversation_id", fingerprintIDs.originalPromptCacheKey)
-	}
-	applyCodexFingerprintHeaders(req.Header, fingerprintIDs)
+	applyCodexProbeFingerprintHeaders(req.Header, fingerprintIDs)
 
 	// 与正常推理共用账号唯一出口；账号已绑定代理但对象缺失时保持
 	// fail-closed，避免后台探测静默从服务器公网 IP 直连。
@@ -476,25 +471,6 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 	result.Body = body
 	result.Status, result.ReasonCode = classifyCodexQuotaOverdraftProbe(resp.StatusCode, resp.Header, body)
 	return result
-}
-
-const codexQuotaOverdraftProbeFingerprintSource = "codex-quota-overdraft-probe:v1"
-
-// resolveCodexQuotaOverdraftProbeFingerprintIDs 为后台透支探测生成稳定、隔离的
-// 会话来源。最终 installation/session 继续由账号种子派生；thread/cache key 使用
-// 固定 probe 来源派生，避免探测伪装成某个真实用户对话，也避免每次探测换身份。
-func resolveCodexQuotaOverdraftProbeFingerprintIDs(account *Account) *codexFingerprintIDs {
-	if account == nil {
-		return nil
-	}
-	mode := account.GetCodexFingerprintMode()
-	return resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
-		clientSessionID:      codexQuotaOverdraftProbeFingerprintSource,
-		originalSessionID:    codexQuotaOverdraftProbeFingerprintSource,
-		threadID:             codexQuotaOverdraftProbeFingerprintSource,
-		promptCacheKey:       codexQuotaOverdraftProbeFingerprintSource,
-		promptCacheKeyInBody: mode == codexFingerprintCockpit,
-	}, mode)
 }
 
 // resolveProbeIdentity 让透支探测复用正常推理的账号 UA、TLS Router 与 TLS Profile 决策链。

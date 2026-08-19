@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *testing.T) {
@@ -41,12 +42,21 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 		Credentials: map[string]any{
 			"access_token": "token-123",
 		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
+		},
 	}
+	EnsureCodexFingerprintSeed(account)
 
 	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-2", "draw a cat")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+	require.Equal(t, upstream.lastReq.Header.Get("x-codex-installation-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("session-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("thread-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("conversation_id"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, "image_generation", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
 	require.Contains(t, rec.Body.String(), "Calling Codex /responses image tool")
 	require.Contains(t, rec.Body.String(), "data:image/png;base64,aGVsbG8=")
 	require.Contains(t, rec.Body.String(), "\"success\":true")

@@ -800,6 +800,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, prompt, isOAuth)
+	var fingerprintIDs *codexFingerprintIDs
+	if isOAuth {
+		fingerprintIDs = resolveCodexProbeFingerprintIDs(credentialAccount, codexProbePurposeAccountTest, upstreamTestModelID)
+		applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	// task 失效时会注册新 task 并重试探针，因此开始事件只发送一次。
@@ -850,6 +855,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	credentialAccount.ApplyHeaderOverrides(req.Header)
+	applyCodexProbeFingerprintHeaders(req.Header, fingerprintIDs)
 
 	// Get proxy URL
 	proxyURL := resolveAccountProxyURL(account)
@@ -1131,7 +1137,13 @@ func (s *AccountTestService) testOpenAINativeCompactionV2Connection(c *gin.Conte
 	if isOAuth {
 		testModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
-	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID, isOAuth))
+	payload := createOpenAICompactProbePayload(testModelID, isOAuth)
+	var fingerprintIDs *codexFingerprintIDs
+	if isOAuth {
+		fingerprintIDs = resolveCodexProbeFingerprintIDs(credentialAccount, codexProbePurposeNativeCompactionV2, testModelID)
+		applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
+	}
+	payloadBytes, _ := json.Marshal(payload)
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
@@ -1171,15 +1183,13 @@ func (s *AccountTestService) testOpenAINativeCompactionV2Connection(c *gin.Conte
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
-		if fingerprintIDs := resolveCodexFingerprintIDsFromRequest(credentialAccount, req.Header); fingerprintIDs != nil {
-			applyCodexFingerprintHeaders(req.Header, fingerprintIDs)
-		}
 		enforceCodexIdentityHeadersWithUA(req.Header, s.openAIAccountTestIdentityOverrideUA(c, credentialAccount))
 	}
 
 	// 账号覆盖先执行，再补 V2 协商头，保证探测和真实转发有相同的协议契约。
 	account.ApplyHeaderOverrides(req.Header)
 	ensureOpenAIRemoteCompactionV2BetaFeature(req.Header)
+	applyCodexProbeFingerprintHeaders(req.Header, fingerprintIDs)
 
 	proxyURL := resolveAccountProxyURL(account)
 
@@ -2374,6 +2384,11 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
 	}
+	fingerprintIDs := resolveCodexProbeFingerprintIDs(credentialAccount, codexProbePurposeImageAccountTest, parsed.Model)
+	responsesBody, _, err = applyCodexFingerprintClientMetadataRaw(responsesBody, fingerprintIDs)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to apply Codex probe identity: %s", err.Error()))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexAPIURL, bytes.NewReader(responsesBody))
 	if err != nil {
@@ -2408,6 +2423,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 	// 与真实转发一致：originator 与最终 User-Agent 首段配套（原 opencode 与 Codex UA 错配会 404，issue #3901）。
 	enforceCodexIdentityHeadersWithUA(req.Header, s.openAIAccountTestIdentityOverrideUA(c, credentialAccount))
+	applyCodexProbeFingerprintHeaders(req.Header, fingerprintIDs)
 
 	proxyURL := resolveAccountProxyURL(account)
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.resolveOpenAIAccountTestTLSProfile(c, account))

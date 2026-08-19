@@ -121,6 +121,12 @@ func TestAccountTestService_OpenAICompactShadowUsesParentCodexIdentity(t *testin
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, "parent-chatgpt-account", upstream.lastReq.Header.Get("chatgpt-account-id"))
+	require.Equal(t, upstream.lastReq.Header.Get("x-codex-installation-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("session-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("thread-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("x-codex-window-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-window-id").String())
+	require.Equal(t, upstream.lastReq.Header.Get("conversation_id"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, "compaction_trigger", gjson.GetBytes(upstream.lastBody, "input.1.type").String())
 	<-updateCalls
 }
 

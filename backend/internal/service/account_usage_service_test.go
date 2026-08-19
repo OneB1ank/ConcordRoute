@@ -1213,6 +1213,35 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile(
 	}
 }
 
+func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesFullCockpitIdentity(t *testing.T) {
+	upstream := &accountUsageHTTPUpstreamStub{}
+	svc := &AccountUsageService{httpUpstream: upstream}
+	account := newTestOAuthAccount(460, map[string]any{
+		codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
+	})
+	account.Concurrency = 1
+	account.Credentials = map[string]any{"access_token": "token"}
+
+	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	require.NoError(t, err)
+	require.NotNil(t, upstream.req)
+
+	body, err := io.ReadAll(upstream.req.Body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	metadata, ok := payload["client_metadata"].(map[string]any)
+	require.True(t, ok)
+
+	require.Equal(t, upstream.req.Header.Get("x-codex-installation-id"), metadata["x-codex-installation-id"])
+	require.Equal(t, upstream.req.Header.Get("session-id"), metadata["session_id"])
+	require.Equal(t, upstream.req.Header.Get("thread-id"), metadata["thread_id"])
+	require.Equal(t, upstream.req.Header.Get("x-codex-window-id"), metadata["x-codex-window-id"])
+	require.Equal(t, upstream.req.Header.Get("conversation_id"), payload["prompt_cache_key"])
+	require.NotEmpty(t, metadata["turn_id"])
+	require.Contains(t, upstream.req.Header.Get("x-codex-turn-metadata"), metadata["turn_id"])
+}
+
 func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesTLSRouterProfile(t *testing.T) {
 	const accountUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
 	routedUA := resolveCodexOutboundIdentity(accountUA).userAgent
