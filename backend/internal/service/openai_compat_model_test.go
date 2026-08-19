@@ -1086,11 +1086,12 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 	withCodexCanonicalUA(t, canonicalMacUA)
 	const tuiUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
 	tests := []struct {
-		name           string
-		userAgent      string
-		originator     string
-		wantUserAgent  string
-		wantOriginator string
+		name             string
+		userAgent        string
+		originator       string
+		accountUserAgent string
+		wantUserAgent    string
+		wantOriginator   string
 	}{
 		{
 			name:           "官方入站UA收敛为后台macOS身份",
@@ -1105,6 +1106,14 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 			originator:     "opencode",
 			wantUserAgent:  canonicalMacUA,
 			wantOriginator: openai.CodexDefaultOriginator,
+		},
+		{
+			name:             "账号macOS身份优先于全局身份",
+			userAgent:        "third-party-client/1.0.0",
+			originator:       "opencode",
+			accountUserAgent: "codex_vscode/9.9.9 (Mac OS X 15.6; arm64) vscode (codex_vscode; 9.9.9)",
+			wantUserAgent:    "codex_vscode/0.144.1 (Mac OS X 15.6; arm64) vscode (codex_vscode; 0.144.1)",
+			wantOriginator:   "codex_vscode",
 		},
 	}
 
@@ -1133,6 +1142,9 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 					"access_token":       "oauth-token",
 					"chatgpt_account_id": "chatgpt-acc",
 				},
+			}
+			if tt.accountUserAgent != "" {
+				account.Credentials["user_agent"] = tt.accountUserAgent
 			}
 
 			result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.4")

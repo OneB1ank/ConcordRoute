@@ -310,11 +310,17 @@ func (s *OpenAIOAuthService) resolveChatGPTOAuthTokenRequestOptions(ctx context.
 	if router != nil {
 		tokenUA = strings.TrimSpace(router.ChatGPTOAuthTokenUserAgent)
 	}
+	if tokenUA == "" && account != nil {
+		tokenUA = strings.TrimSpace(account.GetOpenAIUserAgent())
+	}
+	if tokenUA == "" && s.settingService != nil {
+		tokenUA = strings.TrimSpace(s.settingService.GetOpenAICodexUserAgent(ctx))
+	}
+	if tokenUA != "" {
+		tokenUA, _ = CodexAuthIdentityForUserAgent(tokenUA)
+	}
 	option := OpenAIOAuthTokenRequestOptions{
 		UserAgent: tokenUA,
-	}
-	if option.UserAgent == "" && s.settingService != nil {
-		option.UserAgent = strings.TrimSpace(s.settingService.GetOpenAICodexUserAgent(ctx))
 	}
 	if account != nil {
 		option.AccountID = account.ID

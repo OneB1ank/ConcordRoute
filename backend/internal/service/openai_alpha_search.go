@@ -260,6 +260,11 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 	s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, true, tlsRouterMatch...)
 	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))
 	account.ApplyHeaderOverrides(req.Header)
+	match := TLSFingerprintRouterMatchResult{}
+	if len(tlsRouterMatch) > 0 {
+		match = tlsRouterMatch[0]
+	}
+	s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
 	return req, nil
 }
 
@@ -392,6 +397,13 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(
 
 	account.ApplyHeaderOverrides(req.Header)
 	stripOpenAIAlphaSearchResponsesHeaders(req.Header)
+	if account.Type == AccountTypeOAuth {
+		match := TLSFingerprintRouterMatchResult{}
+		if len(tlsRouterMatch) > 0 {
+			match = tlsRouterMatch[0]
+		}
+		s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
+	}
 	return req, nil
 }
 

@@ -116,8 +116,12 @@ func TestGatewayRoutesClientProtocolGateRejectsAliasesBeforeReadingBody(t *testi
 			name:      "responses",
 			platform:  service.PlatformQoder,
 			protocols: []service.GroupClientProtocol{service.GroupClientProtocolAnthropicMessages, service.GroupClientProtocolOpenAIChatCompletions},
-			paths:     []string{"/v1/responses", "/v1/responses/compact", "/responses", "/responses/compact", "/backend-api/codex/responses", "/backend-api/codex/responses/compact"},
-			code:      "protocol_not_allowed",
+			paths: []string{
+				"/v1/responses", "/v1/responses/compact", "/v1/responses/input_tokens",
+				"/responses", "/responses/compact", "/responses/input_tokens",
+				"/backend-api/codex/responses", "/backend-api/codex/responses/compact", "/backend-api/codex/responses/input_tokens",
+			},
+			code: "protocol_not_allowed",
 		},
 		{
 			name:      "chat_completions",
@@ -278,9 +282,12 @@ func TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered(t *testing.T) {
 
 	for _, path := range []string{
 		"/v1/responses/compact",
+		"/v1/responses/input_tokens",
 		"/responses/compact",
+		"/responses/input_tokens",
 		"/backend-api/codex/responses",
 		"/backend-api/codex/responses/compact",
+		"/backend-api/codex/responses/input_tokens",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-5"}`))
 		req.Header.Set("Content-Type", "application/json")

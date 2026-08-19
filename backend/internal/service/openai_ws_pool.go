@@ -78,7 +78,12 @@ type openAIWSAcquireRequest struct {
 }
 
 type openAIWSHandshakeCompatibilityKey struct {
-	betaFeatures        string
+	betaFeatures string
+	// 身份头属于 WebSocket 握手的一部分；连接复用时不会重新发送握手头，
+	// 因此不同设备/路由 UA 不能共享同一条已建立连接。
+	userAgent           string
+	originator          string
+	version             string
 	fingerprintMode     codexFingerprintMode
 	codexInstallationID string
 	sessionIDHyphen     string
@@ -2099,6 +2104,9 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
+		userAgent:    normalizeOpenAIWSStableIdentityHeader(headers, "user-agent"),
+		originator:   normalizeOpenAIWSStableIdentityHeader(headers, "originator"),
+		version:      normalizeOpenAIWSStableIdentityHeader(headers, "version"),
 	}
 	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {

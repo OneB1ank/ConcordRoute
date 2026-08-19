@@ -252,6 +252,8 @@ func (s *OpenAIGatewayService) executeAgentIdentityTaskRegistration(_ context.Co
 	}
 	var profile *tlsfingerprint.Profile
 	var explicitAuthProfile bool
+	var explicitAuthUserAgent bool
+	var routerMatch TLSFingerprintRouterMatchResult
 	if s.tlsFPRouterService != nil && account != nil {
 		router := s.tlsFPRouterService.GetRuntimeRouter(account.GetTLSFingerprintRouterID())
 		if router != nil && router.Enabled {
@@ -260,16 +262,24 @@ func (s *OpenAIGatewayService) executeAgentIdentityTaskRegistration(_ context.Co
 				req.Header.Set("User-Agent", ua)
 				req.Header.Set("Originator", originator)
 				req.Header.Del("Version")
+				explicitAuthUserAgent = true
 			}
 			if router.ChatGPTOAuthTokenTLSFingerprintProfileID != nil && s.tlsFPProfileService != nil {
 				profile, explicitAuthProfile = s.tlsFPProfileService.ResolveTokenTLSProfileByID(*router.ChatGPTOAuthTokenTLSFingerprintProfileID)
 			}
 		}
 	}
+	if !explicitAuthUserAgent {
+		identityUA, match := s.resolveOpenAIBackgroundIdentity(account)
+		ua, originator := CodexAuthIdentityForUserAgent(identityUA)
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Originator", originator)
+		req.Header.Del("Version")
+		routerMatch = match
+	}
 	if !explicitAuthProfile {
 		// auth 专用模板未配置或已失效时，复用普通 Codex 路由/账号模板。
-		routerMatch := TLSFingerprintRouterMatchResult{}
-		if s.tlsFPRouterService != nil && account != nil {
+		if explicitAuthUserAgent && s.tlsFPRouterService != nil && account != nil {
 			routerMatch = s.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), req.Header.Get("User-Agent"))
 		}
 		profile = s.resolveOpenAITLSProfile(account, routerMatch)

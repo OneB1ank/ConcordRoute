@@ -75,6 +75,8 @@ Responses Lite 通道由 HTTP `X-OpenAI-Internal-Codex-Responses-Lite: true` 或
 
 OpenAI OAuth 账号承接 Anthropic `count_tokens` 时会调用 Responses `input_tokens` 端点；缺少 scope、端点不存在，或上游代理在 API 前返回 HTML 格式的 `403` 时，网关改用本地 token 估算并返回成功结果。这类端点级失败不会冷却、临时踢出或标错账号；其它结构化鉴权与上游错误仍进入正常健康策略。
 
+Codex 原生 `POST /v1/responses/input_tokens` 同时支持 `/responses/input_tokens` 与 `/backend-api/codex/responses/input_tokens` 别名，并在 Responses 协议准入之后、普通生成管线之前独立分流。请求继续经过 ConcordRoute Key 鉴权、计费资格检查、用户提示词替换、渠道/账号模型映射、账号调度与故障转移，但不会占用生成用量记录或产生 token 账单。官方 OpenAI API Key/OAuth 账号调用原生端点并保留上游 `input_tokens` 响应；自定义 OpenAI 中转、Grok 与通用上游账号直接使用本地 tiktoken 估算。官方端点返回 `404`、OAuth scope 不足或 OAuth HTML `403` 时同样本地回退，且不改变账号健康状态；其它 HTTP 错误继续使用现有账号健康和切号策略，代理、DNS、TCP 与 TLS 传输故障也在客户端响应尚未开始时复用普通 Responses 的故障转移逻辑。原生请求与真实推理共享最终 Codex UA、Originator、Version、TLS Router/Profile 和账号代理出口，避免预估与生成形成两套出站身份。
+
 OpenAI OAuth 的普通 Responses 请求默认原样保留 Codex namespace 工具声明，并保留 `function_call`、`tool_call`、`custom_tool_call`、`mcp_tool_call` 历史项上的 `namespace`；普通消息等非调用项上的残留字段仍会清理。旧版 Compact 请求始终摊平 namespace 并移除输入项字段，API Key 出口也按标准 Responses schema 清理。API Key Responses 回放还会校验输入项 ID 前缀：message 使用 `msg`、工具调用使用 `fc`、reasoning 使用 `rs`；不符合类型约束的 ID 直接删除而不改写，避免伪造标识指向另一上游对象。仅当 OAuth 账号的兼容中转不接受 namespace 时，才应启用账号 `extra.openai_responses_flatten_namespaces=true` 恢复平名行为。每次 failover attempt 都会清空上一账号登记的平名映射，避免响应还原状态串到下一账号。
 
 Responses 工具定义在进入 OAuth passthrough、Codex transform、Grok 或 API Key Chat 分流前统一修正显式为 `null` 的 `parameters.type`，将其归一为 `object`；处理范围包括顶层 `tools[]` 和多轮历史 `input[].tools[]` 中的嵌套工具。缺失 `type` 的合法宽松 Schema 保持原样，不能为了兼容而补写并收窄客户端语义。

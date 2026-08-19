@@ -204,8 +204,9 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 }
 
 func TestRegisterAgentIdentityTaskFallsBackToAccountTLSProfile(t *testing.T) {
-	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
-	withCodexCanonicalUA(t, macUA)
+	const canonicalUA = "codex-tui/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	const accountUA = "codex-tui/9.9.9 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 9.9.9)"
+	withCodexCanonicalUA(t, canonicalUA)
 	key, privateKey := newTestAgentIdentityKey(t)
 	profileID := int64(73)
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
@@ -231,6 +232,7 @@ func TestRegisterAgentIdentityTaskFallsBackToAccountTLSProfile(t *testing.T) {
 			"auth_mode":         OpenAIAuthModeAgentIdentity,
 			"agent_runtime_id":  key.runtimeID,
 			"agent_private_key": privateKey,
+			"user_agent":        accountUA,
 		},
 		Extra: map[string]any{
 			"enable_tls_fingerprint":     true,
@@ -244,7 +246,8 @@ func TestRegisterAgentIdentityTaskFallsBackToAccountTLSProfile(t *testing.T) {
 	require.Equal(t, "task-routed", taskID)
 	require.NotNil(t, upstream.profile)
 	require.Equal(t, "account macOS TLS", upstream.profile.Name)
-	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
+	expectedUA, _ := CodexAuthIdentityForUserAgent(accountUA)
+	require.Equal(t, expectedUA, upstream.req.Header.Get("User-Agent"))
 }
 
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {

@@ -142,6 +142,7 @@ func TestOpenAIOAuthService_ExchangeCode_UsesRequestTLSRouterConfig(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, info)
 	require.Len(t, client.lastOptions, 1)
-	require.Equal(t, "Exchange UA", client.lastOptions[0].UserAgent)
+	expectedUA, _ := CodexAuthIdentityForUserAgent("Exchange UA")
+	require.Equal(t, expectedUA, client.lastOptions[0].UserAgent)
 	require.Same(t, profile, client.lastOptions[0].TLSProfile)
 }

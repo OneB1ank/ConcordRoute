@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apicompat"
@@ -37,6 +38,215 @@ type openAIInputTokensCountPrepared struct {
 	NormalizedModel string
 	BillingModel    string
 	UpstreamModel   string
+}
+
+// ForwardResponsesInputTokens 处理 Codex 原生 POST /v1/responses/input_tokens。
+// 官方 OpenAI 端点保留原生精确计数；兼容中转、Grok 与不支持该端点的账号使用
+// 本地估算，且整条链路不进入生成用量与结算记录。
+func (s *OpenAIGatewayService) ForwardResponsesInputTokens(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+) error {
+	if account == nil {
+		writeOpenAIResponsesInputTokensError(c, http.StatusServiceUnavailable, "api_error", "No available OpenAI accounts")
+		return fmt.Errorf("responses input_tokens: missing account")
+	}
+
+	prepared, err := prepareNativeOpenAIInputTokensCountRequest(body, account)
+	if err != nil {
+		writeOpenAIResponsesInputTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return err
+	}
+	if shouldEstimateOpenAIInputTokensLocally(account) {
+		writeOpenAIResponsesInputTokensFallback(c, account, prepared, 0, "custom_relay")
+		return nil
+	}
+
+	token, _, err := s.GetAccessToken(ctx, account)
+	if err != nil {
+		writeOpenAIResponsesInputTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to get access token")
+		return fmt.Errorf("responses input_tokens: get access token: %w", err)
+	}
+
+	upstreamBody := ReplaceModelInBody(body, prepared.UpstreamModel)
+	tlsRouterMatch := s.matchTLSFingerprintRouter(c, account)
+	upstreamReq, err := s.buildInputTokensUpstreamRequest(ctx, c, account, upstreamBody, token, tlsRouterMatch)
+	if err != nil {
+		writeOpenAIResponsesInputTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
+		return fmt.Errorf("responses input_tokens: build upstream request: %w", err)
+	}
+
+	// 原生预估与正常 Responses 共用账号代理、TLS Router/Profile 和最终 Codex 身份。
+	proxyURL := resolveAccountProxyURL(account)
+	resp, err := s.httpUpstream.DoWithTLS(
+		upstreamReq,
+		proxyURL,
+		account.ID,
+		account.Concurrency,
+		s.resolveOpenAITLSProfile(account, tlsRouterMatch),
+	)
+	if err != nil {
+		// 与普通 Responses 共用传输错误分类：客户端取消直接结束，其它网络、代理、
+		// DNS 与 TLS 故障在尚未写出响应时交给 handler 切换账号；明确的持久故障
+		// 仍由统一逻辑临时摘除当前账号。
+		return s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeOpenAIResponsesInputTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
+		return fmt.Errorf("responses input_tokens: read upstream response: %w", err)
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		// 端点或 scope 缺失属于预估能力差异，不改变账号健康状态。
+		if isOpenAIResponsesInputTokensUnsupported(account, resp.StatusCode, respBody) {
+			writeOpenAIResponsesInputTokensFallback(c, account, prepared, resp.StatusCode, "upstream_unsupported")
+			return nil
+		}
+
+		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+		var decision UpstreamErrorDecision
+		if account.Platform == PlatformGrok {
+			decision = s.applyGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, prepared.UpstreamModel)
+		} else {
+			decision = s.applyOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, prepared.UpstreamModel)
+		}
+		if decision.ShouldReturnGenericError() {
+			writeOpenAIResponsesInputTokensError(c, http.StatusInternalServerError, "upstream_error", "Upstream gateway error")
+			return fmt.Errorf("responses input_tokens: upstream error %d is configured as generic", resp.StatusCode)
+		}
+
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		if account.Platform == PlatformGrok {
+			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
+		}
+		if decision.ShouldFailover(account, resp.StatusCode, shouldFailover) {
+			return &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           respBody,
+				ResponseHeaders:        resp.Header.Clone(),
+				RetryableOnSameAccount: decision.RetryableOnSameAccount(account, resp.StatusCode),
+			}
+		}
+
+		upstreamDetail := ""
+		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+			maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+			if maxBytes <= 0 {
+				maxBytes = 2048
+			}
+			upstreamDetail = truncateString(string(respBody), maxBytes)
+		}
+		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+			UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+			Kind: "request_error", Message: upstreamMsg, Detail: upstreamDetail,
+		})
+		writeOpenAIResponsesInputTokensError(c, resp.StatusCode, "upstream_error", "Upstream request failed")
+		if upstreamMsg == "" {
+			return fmt.Errorf("responses input_tokens: upstream error: %d", resp.StatusCode)
+		}
+		return fmt.Errorf("responses input_tokens: upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
+	}
+
+	if !gjson.GetBytes(respBody, "input_tokens").Exists() {
+		writeOpenAIResponsesInputTokensError(c, http.StatusBadGateway, "upstream_error", "Upstream response missing input_tokens")
+		return fmt.Errorf("responses input_tokens: upstream response missing input_tokens")
+	}
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	c.Data(http.StatusOK, contentType, respBody)
+	return nil
+}
+
+func prepareNativeOpenAIInputTokensCountRequest(body []byte, account *Account) (*openAIInputTokensCountPrepared, error) {
+	var req openAIInputTokensCountRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, fmt.Errorf("parse responses input_tokens request: %w", err)
+	}
+	originalModel := strings.TrimSpace(req.Model)
+	if originalModel == "" {
+		return nil, fmt.Errorf("parse responses input_tokens request: model is required")
+	}
+	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	req.Model = upstreamModel
+	return &openAIInputTokensCountPrepared{
+		Request: req, OriginalModel: originalModel, NormalizedModel: originalModel,
+		BillingModel: billingModel, UpstreamModel: upstreamModel,
+	}, nil
+}
+
+// shouldEstimateOpenAIInputTokensLocally 将缺少原生预估端点的兼容中转留在本地处理。
+// 官方 api.openai.com API Key 与 OAuth 账号继续请求原生端点以获得精确值。
+func shouldEstimateOpenAIInputTokensLocally(account *Account) bool {
+	if account == nil || account.IsGrok() || account.Type == AccountTypeUpstream {
+		return true
+	}
+	if account.Type != AccountTypeAPIKey {
+		return false
+	}
+	rawBaseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if rawBaseURL == "" {
+		return false
+	}
+	parsed, err := url.Parse(rawBaseURL)
+	if err != nil {
+		return true
+	}
+	return !strings.EqualFold(parsed.Hostname(), "api.openai.com")
+}
+
+func isOpenAIResponsesInputTokensUnsupported(account *Account, statusCode int, body []byte) bool {
+	if statusCode == http.StatusNotFound {
+		return true
+	}
+	return account != nil && account.Type == AccountTypeOAuth && isOpenAIOAuthInputTokensUnsupported(statusCode, body)
+}
+
+func writeOpenAIResponsesInputTokensFallback(c *gin.Context, account *Account, prepared *openAIInputTokensCountPrepared, statusCode int, reason string) {
+	estimated := openAIInputTokensFallbackMinimum
+	var estimateErr error
+	if prepared != nil {
+		if got, err := estimateOpenAIInputTokens(prepared.Request); err == nil && got > 0 {
+			estimated = got
+		} else {
+			estimateErr = err
+		}
+	}
+	accountID := int64(0)
+	upstreamModel := ""
+	if account != nil {
+		accountID = account.ID
+	}
+	if prepared != nil {
+		upstreamModel = prepared.UpstreamModel
+	}
+	fields := []zap.Field{
+		zap.Int64("account_id", accountID),
+		zap.Int("upstream_status", statusCode),
+		zap.Int("estimated_input_tokens", estimated),
+		zap.String("upstream_model", upstreamModel),
+		zap.String("reason", reason),
+	}
+	if estimateErr != nil {
+		fields = append(fields, zap.Error(estimateErr))
+	}
+	logger.L().Info("openai responses input_tokens: local estimate fallback", fields...)
+	c.JSON(http.StatusOK, gin.H{
+		"object":       "response.input_tokens",
+		"input_tokens": estimated,
+	})
+}
+
+func writeOpenAIResponsesInputTokensError(c *gin.Context, status int, errType, message string) {
+	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": message}})
 }
 
 // EstimateGrokCountTokens 在本地估算 Anthropic 兼容的 count_tokens 请求。Grok 没有
@@ -319,6 +529,13 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
+	if account.Type == AccountTypeOAuth {
+		match := TLSFingerprintRouterMatchResult{}
+		if len(tlsRouterMatch) > 0 {
+			match = tlsRouterMatch[0]
+		}
+		s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
+	}
 
 	return req, nil
 }

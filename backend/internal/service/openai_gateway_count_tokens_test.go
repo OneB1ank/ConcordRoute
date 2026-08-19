@@ -95,7 +95,7 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthUsesCodexTLSIde
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
-	c.Request.Header.Set("User-Agent", macUA)
+	c.Request.Header.Set("User-Agent", "count-tokens-client/1.0")
 
 	profileID := int64(81)
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
@@ -106,7 +106,7 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthUsesCodexTLSIde
 		Enabled: true,
 		Rules: []model.TLSFingerprintRouterRule{{
 			Enabled:                 true,
-			Pattern:                 "codex-tui/",
+			Pattern:                 "count-tokens-client/",
 			TLSFingerprintProfileID: profileID,
 			UpstreamUserAgent:       macUA,
 		}},
@@ -146,6 +146,10 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthUsesCodexTLSIde
 	_, expectedOriginator := CodexAuthIdentityForUserAgent(macUA)
 	require.Equal(t, expectedOriginator, upstream.lastReq.Header.Get("Originator"))
 	require.Equal(t, CodexCanonicalClientVersion(), upstream.lastReq.Header.Get("Version"))
+	backgroundUA, backgroundMatch := svc.resolveOpenAIBackgroundIdentity(account)
+	require.Equal(t, macUA, backgroundUA)
+	require.True(t, backgroundMatch.Matched)
+	require.Equal(t, profileID, backgroundMatch.TLSFingerprintProfileID)
 }
 
 func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPlatformEndpointUnsupported(t *testing.T) {

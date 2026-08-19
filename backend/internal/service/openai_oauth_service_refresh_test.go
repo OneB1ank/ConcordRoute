@@ -251,7 +251,8 @@ func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountTLSRouterConfig(t *te
 	require.Equal(t, "new-at", info.AccessToken)
 	require.Equal(t, "client-id", client.lastClientID)
 	require.Len(t, client.lastOptions, 1)
-	require.Equal(t, "Token UA", client.lastOptions[0].UserAgent)
+	expectedUA, _ := CodexAuthIdentityForUserAgent("Token UA")
+	require.Equal(t, expectedUA, client.lastOptions[0].UserAgent)
 	require.Same(t, profile, client.lastOptions[0].TLSProfile)
 	require.Equal(t, int64(77), client.lastOptions[0].AccountID)
 	require.Equal(t, 3, client.lastOptions[0].AccountConcurrency)
@@ -288,6 +289,47 @@ func TestOpenAIOAuthService_RefreshAccountToken_EmptyRouterTokenConfigFallsBackT
 	require.Same(t, accountProfile, client.lastOptions[0].TLSProfile)
 }
 
+func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountUAForNormalRouterFallback(t *testing.T) {
+	const accountUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	profileID := int64(57)
+	routedProfile := &tlsfingerprint.Profile{Name: "account-routed-macOS"}
+	client := &openaiOAuthClientRefreshStub{}
+	svc := NewOpenAIOAuthService(nil, client)
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		9: {
+			ID:      9,
+			Enabled: true,
+			Rules: []model.TLSFingerprintRouterRule{{
+				Enabled:                 true,
+				Pattern:                 "Mac OS X 15.6",
+				TLSFingerprintProfileID: profileID,
+			}},
+		},
+	}}, &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{profileID: routedProfile}})
+	account := &Account{
+		ID:          78,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 2,
+		Credentials: map[string]any{
+			"refresh_token": "old-rt",
+			"client_id":     "client-id",
+			"user_agent":    accountUA,
+		},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":    true,
+			"tls_fingerprint_router_id": int64(9),
+		},
+	}
+
+	_, err := svc.RefreshAccountToken(t.Context(), account)
+	require.NoError(t, err)
+	require.Len(t, client.lastOptions, 1)
+	expectedUA, _ := CodexAuthIdentityForUserAgent(accountUA)
+	require.Equal(t, expectedUA, client.lastOptions[0].UserAgent)
+	require.Same(t, routedProfile, client.lastOptions[0].TLSProfile)
+}
+
 func TestOpenAIOAuthService_ExchangeAuthProfileFallsBackToRouterUARule(t *testing.T) {
 	profileID := int64(56)
 	routedProfile := &tlsfingerprint.Profile{Name: "routed-macOS"}
@@ -308,7 +350,8 @@ func TestOpenAIOAuthService_ExchangeAuthProfileFallsBackToRouterUARule(t *testin
 
 	options := svc.resolveChatGPTOAuthTokenRequestOptions(t.Context(), 11, nil)
 	require.Len(t, options, 1)
-	require.Equal(t, router.ChatGPTOAuthTokenUserAgent, options[0].UserAgent)
+	expectedRouterUA, _ := CodexAuthIdentityForUserAgent(router.ChatGPTOAuthTokenUserAgent)
+	require.Equal(t, expectedRouterUA, options[0].UserAgent)
 	require.Same(t, routedProfile, options[0].TLSProfile)
 }
 
@@ -333,6 +376,7 @@ func TestOpenAIOAuthService_RefreshTokenWithClientIDAndRouter_UsesCodexUAFallbac
 	_, err := svc.RefreshTokenWithClientIDAndRouter(context.Background(), "rt", "", "client-id", &routerID)
 	require.NoError(t, err)
 	require.Len(t, client.lastOptions, 1)
-	require.Equal(t, "codex-custom", client.lastOptions[0].UserAgent)
+	expectedFallbackUA, _ := CodexAuthIdentityForUserAgent("codex-custom")
+	require.Equal(t, expectedFallbackUA, client.lastOptions[0].UserAgent)
 	require.Equal(t, "built-in", client.lastOptions[0].TLSProfile.Name)
 }

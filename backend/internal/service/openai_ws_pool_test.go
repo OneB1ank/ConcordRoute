@@ -74,6 +74,26 @@ func TestNormalizeOpenAIWSRoutingAffinityPrefersCanonicalAndSortsVariants(t *tes
 	require.Equal(t, "variant-uppercase", normalizeOpenAIWSRoutingAffinity(headers))
 }
 
+func TestNormalizeOpenAIWSHandshakeCompatibilitySeparatesOutboundIdentity(t *testing.T) {
+	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	base := http.Header{
+		"User-Agent": []string{"codex-tui/0.144.1 (macOS 14.6; arm64)"},
+		"Originator": []string{"codex-tui"},
+		"Version":    []string{"0.144.1"},
+	}
+	otherUA := base.Clone()
+	otherUA.Set("User-Agent", "codex-tui/0.144.1 (macOS 14.6; x86_64)")
+	otherOriginator := base.Clone()
+	otherOriginator.Set("Originator", "codex_vscode")
+	otherVersion := base.Clone()
+	otherVersion.Set("Version", "0.145.0")
+
+	baseKey := normalizeOpenAIWSHandshakeCompatibility(account, base)
+	require.NotEqual(t, baseKey, normalizeOpenAIWSHandshakeCompatibility(account, otherUA))
+	require.NotEqual(t, baseKey, normalizeOpenAIWSHandshakeCompatibility(account, otherOriginator))
+	require.NotEqual(t, baseKey, normalizeOpenAIWSHandshakeCompatibility(account, otherVersion))
+}
+
 func TestSameOpenAIWSPrewarmTargetKeepsRoutingHintSoftAndTLSHard(t *testing.T) {
 	baseHeaders := http.Header{
 		"X-Codex-Beta-Features":      {"responses_websockets_v2"},

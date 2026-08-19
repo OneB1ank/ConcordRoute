@@ -493,6 +493,7 @@ func (s *OpenAIGatewayService) applyLiveUpstreamRouting(
 	}
 	s.applyOpenAIUpstreamUserAgentHeader(ctx, nil, account, headers, false, routerMatch)
 	applyLiveUpstreamIdentityHeaders(headers, s.codexIdentityOverrideUA(account, routerMatch))
+	s.rememberOpenAIOutboundIdentity(account, headers.Get("User-Agent"), routerMatch)
 }
 
 func (s *OpenAIGatewayService) liveSidebandHeaders(
