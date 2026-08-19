@@ -241,6 +241,7 @@ func ProvideAccountUsageService(
 		quotaAutoPauseSettings,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	service.openAIGatewayService = openAIGatewayService
 	return service
 }
 

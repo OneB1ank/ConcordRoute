@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/model"
 	openaipkg "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/qoder"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
@@ -1208,6 +1209,57 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile(
 	}
 	if got := payload["model"]; got != openaipkg.CodexUsageProbeModel {
 		t.Fatalf("probe model = %v, want %s", got, openaipkg.CodexUsageProbeModel)
+	}
+}
+
+func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesTLSRouterProfile(t *testing.T) {
+	const accountUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	routedUA := resolveCodexOutboundIdentity(accountUA).userAgent
+	upstream := &accountUsageHTTPUpstreamStub{}
+	profileService := &TLSFingerprintProfileService{
+		localCache: map[int64]*model.TLSFingerprintProfile{
+			77: {ID: 77, Name: "macOS Codex routed", ALPNProtocols: []string{"h2", "http/1.1"}},
+		},
+	}
+	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
+		ID:      9,
+		Name:    "Codex devices",
+		Enabled: true,
+		Rules: []model.TLSFingerprintRouterRule{{
+			Name:                    "macOS Codex",
+			Enabled:                 true,
+			MatchType:               model.TLSRouterMatchExact,
+			Pattern:                 routedUA,
+			TLSFingerprintProfileID: 77,
+		}},
+	})
+	gateway := &OpenAIGatewayService{
+		tlsFPProfileService: profileService,
+		tlsFPRouterService:  routerService,
+	}
+	svc := &AccountUsageService{
+		httpUpstream:         upstream,
+		tlsFPProfileService:  profileService,
+		openAIGatewayService: gateway,
+	}
+	account := &Account{
+		ID:          457,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 2,
+		Credentials: map[string]any{"access_token": "token", "user_agent": accountUA},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":    true,
+			"tls_fingerprint_router_id": int64(9),
+		},
+	}
+
+	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	if err != nil {
+		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
+	}
+	if upstream.tlsProfile == nil || upstream.tlsProfile.Name != "macOS Codex routed" {
+		t.Fatalf("TLS profile = %#v, want routed macOS profile", upstream.tlsProfile)
 	}
 }
 

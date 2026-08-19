@@ -350,6 +350,7 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	httpUpstream            HTTPUpstream
 	quotaAutoPauseSettings  OpenAIQuotaAutoPauseSettingsReader
+	openAIGatewayService    *OpenAIGatewayService
 	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
 	qoderSessionProvider    *QoderTokenProvider
@@ -941,7 +942,7 @@ func (s *AccountUsageService) doOpenAICodexProbeRequest(req *http.Request, accou
 	if s != nil && s.httpUpstream != nil {
 		// Codex 后台快照探测也要复用网关上游链路，确保代理、OpenAI HTTP/2 策略和 TLS 指纹与用户请求一致。
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-		return s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.resolveTLSProfile(account))
+		return s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.resolveOpenAICodexProbeTLSProfile(account, req.Header.Get("User-Agent")))
 	}
 	client, err := httppool.GetClient(httppool.Options{
 		ProxyURL:              proxyURL,
@@ -959,6 +960,21 @@ func (s *AccountUsageService) resolveTLSProfile(account *Account) *tlsfingerprin
 		return nil
 	}
 	return s.tlsFPProfileService.ResolveTLSProfile(account)
+}
+
+// resolveOpenAICodexProbeTLSProfile 让后台 Codex 探针与正常推理复用同一条
+// UA -> TLS Router -> TLS Profile 决策链。探针没有入站请求，因此使用最终出站
+// UA 作为路由输入；未注入网关或未命中路由时保持原有账号固定模板兜底。
+func (s *AccountUsageService) resolveOpenAICodexProbeTLSProfile(account *Account, userAgent string) *tlsfingerprint.Profile {
+	if s == nil || s.openAIGatewayService == nil {
+		return s.resolveTLSProfile(account)
+	}
+	gateway := s.openAIGatewayService
+	match := TLSFingerprintRouterMatchResult{}
+	if gateway.tlsFPRouterService != nil && account != nil && account.GetTLSFingerprintRouterID() > 0 {
+		match = gateway.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), userAgent)
+	}
+	return gateway.resolveOpenAITLSProfile(account, match)
 }
 
 func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {
