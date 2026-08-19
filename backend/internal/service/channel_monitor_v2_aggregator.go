@@ -20,6 +20,8 @@ const (
 	// Always refresh a small trailing window so late writes land without
 	// re-aggregating large history every tick.
 	channelMonitorV2RecentOverlap = 10 * time.Minute
+	// 服务暂停或切换到 V1 后重新启用 V2 时，按小块向前补齐 watermark 到最近窗口。
+	channelMonitorV2ForwardCatchupChunk = 2 * time.Hour
 
 	// Gentle backfill: small adaptive chunks, never default 24h hammering.
 	// Initial historical chunk after the 2h seed.
@@ -51,7 +53,9 @@ type ChannelMonitorV2Aggregator struct {
 	kickCh    chan struct{}
 	startOnce sync.Once
 	stopOnce  sync.Once
+	wg        sync.WaitGroup
 	mu        sync.Mutex
+	stopped   bool
 	// backfillAt is the earliest minute already recomputed (mirrors DB cursor).
 	// Zero means "not yet loaded from durable watermark this process".
 	backfillAt       time.Time
@@ -63,9 +67,11 @@ type ChannelMonitorV2Aggregator struct {
 	cursorLoaded bool
 	// hasAggregated is true once any recompute in this process (or durable data) exists.
 	hasAggregated bool
-	unsub         func()
-	ctx           context.Context
-	cancel        context.CancelFunc
+	// dataThrough 是连续向前聚合到达的时间；用于恢复停机或模式切换期间的缺口。
+	dataThrough time.Time
+	unsub       func()
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func NewChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settings channelMonitorRuntimeReader) *ChannelMonitorV2Aggregator {
@@ -86,14 +92,19 @@ func (s *ChannelMonitorV2Aggregator) Start() {
 	}
 	s.startOnce.Do(func() {
 		s.mu.Lock()
+		if s.stopped {
+			s.mu.Unlock()
+			return
+		}
 		s.ctx, s.cancel = context.WithCancel(context.Background())
+		s.wg.Add(1)
 		s.mu.Unlock()
 		if sub, ok := s.settings.(channelMonitorRuntimeSubscriber); ok && sub != nil {
 			unsub := sub.SubscribeChannelMonitorRuntime(func() {
 				s.kick()
 			})
 			s.mu.Lock()
-			stopped := s.ctx == nil
+			stopped := s.stopped || s.ctx == nil
 			if !stopped {
 				select {
 				case <-s.ctx.Done():
@@ -109,7 +120,10 @@ func (s *ChannelMonitorV2Aggregator) Start() {
 				unsub()
 			}
 		}
-		go s.loop()
+		go func() {
+			defer s.wg.Done()
+			s.loop()
+		}()
 	})
 }
 
@@ -119,10 +133,13 @@ func (s *ChannelMonitorV2Aggregator) Stop() {
 	}
 	s.stopOnce.Do(func() {
 		s.mu.Lock()
+		s.stopped = true
 		cancel := s.cancel
 		unsub := s.unsub
+		s.ctx = nil
 		s.cancel = nil
 		s.unsub = nil
+		close(s.stopCh)
 		s.mu.Unlock()
 		if cancel != nil {
 			cancel()
@@ -130,8 +147,9 @@ func (s *ChannelMonitorV2Aggregator) Stop() {
 		if unsub != nil {
 			unsub()
 		}
-		close(s.stopCh)
 	})
+	// 等待聚合循环完全退出，避免服务器关闭数据库后仍有后台 SQL 在执行。
+	s.wg.Wait()
 }
 
 // kick wakes the aggregation loop so mode flips take effect without waiting
@@ -149,7 +167,13 @@ func (s *ChannelMonitorV2Aggregator) kick() {
 func (s *ChannelMonitorV2Aggregator) loop() {
 	for {
 		interval := time.Minute
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		s.mu.Lock()
+		parent := s.ctx
+		s.mu.Unlock()
+		if parent == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 		if !s.passiveAggregationAllowed(ctx) {
 			cancel()
 			if !s.wait(interval) {
@@ -218,7 +242,7 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	parent := s.ctx
 	s.mu.Unlock()
 	if parent == nil {
-		parent = context.Background()
+		return
 	}
 	ctx, cancel := context.WithTimeout(parent, 55*time.Second)
 	defer cancel()
@@ -239,6 +263,7 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	s.mu.Lock()
 	cursor := s.backfillAt
 	hasData := s.hasAggregated
+	dataThrough := s.dataThrough
 	s.mu.Unlock()
 
 	// Phase 1 (first upgrade / empty): seed the default 90m UI window quickly.
@@ -254,11 +279,23 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		return
 	}
 
+	// 先补齐 watermark 与最近重叠窗口之间的连续缺口。若先刷新最近 10 分钟，
+	// watermark 会直接跳到当前时间并永久掩盖中间缺失区间。
+	if start, end, ok := channelMonitorV2ForwardCatchupRange(dataThrough, now); ok {
+		if err := s.repo.RecomputeRange(ctx, start, end); err != nil {
+			logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] forward catch-up failed %s..%s: %v", start, end, err)
+			return
+		}
+		s.recordDataThrough(end)
+		return
+	}
+
 	// Always refresh the trailing overlap so late usage/error writes land in 1m facts.
 	if err := s.repo.RecomputeRange(ctx, now.Add(-channelMonitorV2RecentOverlap), now); err != nil {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
 		return
 	}
+	s.recordDataThrough(now)
 
 	// Phase 2: walk history backward at most one chunk per tick until retention max (90d).
 	// Product UI (30d) fills first; remaining 30–90d continues silently.
@@ -280,18 +317,7 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	if chunk < channelMonitorV2MinBackfillChunk {
 		chunk = channelMonitorV2MinBackfillChunk
 	}
-	start := end.Add(-chunk)
-	// Once bootstrap reaches historical data, keep chunks on day boundaries so
-	// daily rollups never depend on 1m rows from two independently pruned chunks.
-	if end.Before(now.Add(-7 * 24 * time.Hour)) {
-		aligned := end.Add(-chunk).Truncate(24 * time.Hour)
-		if aligned.Before(end) {
-			start = aligned
-		}
-	}
-	if start.Before(retentionCutoff) {
-		start = retentionCutoff
-	}
+	start := channelMonitorV2BackfillStart(end, retentionCutoff, chunk)
 	if !start.Before(end) {
 		return
 	}
@@ -302,6 +328,40 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		return
 	}
 	s.recordBackfillSuccess(start, time.Since(started), now)
+}
+
+// channelMonitorV2BackfillStart 严格遵守自适应分块上限。
+// 1 分钟事实表会在历史回填完成前保留，因此日汇总可以跨多个小块反复重建，
+// 无需把开始时间向整日边界下取整并意外放大单次扫描范围。
+func channelMonitorV2BackfillStart(end, retentionCutoff time.Time, chunk time.Duration) time.Time {
+	start := end.Add(-chunk)
+	if start.Before(retentionCutoff) {
+		return retentionCutoff
+	}
+	return start
+}
+
+// channelMonitorV2ForwardCatchupRange 返回一次有限的向前补洞窗口。
+// gapEnd 留出最近重叠区间，由常规刷新负责吸收迟到写入。
+func channelMonitorV2ForwardCatchupRange(dataThrough, now time.Time) (start, end time.Time, ok bool) {
+	if dataThrough.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+	now = now.UTC().Truncate(time.Minute)
+	gapEnd := now.Add(-channelMonitorV2RecentOverlap)
+	start = dataThrough.UTC().Truncate(time.Minute)
+	retentionCutoff := now.Add(-channelMonitorV2RetentionMax)
+	if start.Before(retentionCutoff) {
+		start = retentionCutoff
+	}
+	if !start.Before(gapEnd) {
+		return time.Time{}, time.Time{}, false
+	}
+	end = start.Add(channelMonitorV2ForwardCatchupChunk)
+	if end.After(gapEnd) {
+		end = gapEnd
+	}
+	return start, end, true
 }
 
 // channelMonitorV2MaxChunkForDepth returns the hard ceiling for a historical
@@ -323,6 +383,9 @@ func (s *ChannelMonitorV2Aggregator) recordBackfillSuccess(coveredFrom time.Time
 	defer s.mu.Unlock()
 	s.backfillAt = coveredFrom
 	s.hasAggregated = true
+	if now.After(s.dataThrough) {
+		s.dataThrough = now
+	}
 	s.backfillFailures = 0
 	s.nextWaitFloor = 0
 	maxChunk := channelMonitorV2MaxChunkForDepth(now, coveredFrom)
@@ -349,6 +412,15 @@ func (s *ChannelMonitorV2Aggregator) recordBackfillSuccess(coveredFrom time.Time
 			s.backfillChunk = maxChunk
 		}
 	}
+}
+
+func (s *ChannelMonitorV2Aggregator) recordDataThrough(through time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if through.After(s.dataThrough) {
+		s.dataThrough = through
+	}
+	s.hasAggregated = true
 }
 
 func (s *ChannelMonitorV2Aggregator) recordBackfillFailure(now, end time.Time) {
@@ -397,6 +469,9 @@ func (s *ChannelMonitorV2Aggregator) ensureCursor(ctx context.Context, now time.
 		return nil
 	}
 	if wm != nil {
+		if !wm.DataThrough.IsZero() {
+			s.dataThrough = wm.DataThrough.UTC().Truncate(time.Minute)
+		}
 		if !wm.BackfillCursor.IsZero() {
 			s.backfillAt = wm.BackfillCursor.UTC().Truncate(time.Minute)
 		}

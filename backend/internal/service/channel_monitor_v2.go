@@ -726,7 +726,7 @@ func (s *ChannelMonitorV2Service) Users(ctx context.Context, filter ChannelMonit
 	}
 	// Viewer with no traffic in this window is still shown (and highlighted) so
 	// ranking always answers "where am I?" — not only when already in the top list.
-	if selfIndex < 0 && viewerID > 0 {
+	if !admin && selfIndex < 0 && viewerID > 0 {
 		id := viewerID
 		selfRow := ChannelMonitorV2UserRow{
 			UserID:       &id,

@@ -382,6 +382,11 @@ func sameFixedRollupBucket(start, end time.Time, seconds int) bool {
 		return true
 	}
 	interval := time.Duration(seconds) * time.Second
+	// 窗口恰好结束在粗粒度边界时必须重建刚完成的桶；否则读侧切换到
+	// 固定汇总表后，会短暂读取到缺失或尚未包含尾部数据的旧桶。
+	if end.Equal(end.Truncate(interval)) {
+		return false
+	}
 	return start.Truncate(interval).Equal(end.Add(-time.Nanosecond).Truncate(interval))
 }
 

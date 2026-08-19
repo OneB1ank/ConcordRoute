@@ -346,6 +346,19 @@ func TestChannelMonitorV2UsersAppendsSelfWhenMissingFromRanking(t *testing.T) {
 	require.Equal(t, 0, self.Rank) // unranked / no traffic in window
 }
 
+func TestChannelMonitorV2AdminUsersDoesNotAppendSyntheticSelf(t *testing.T) {
+	adminID, userID := int64(7), int64(9)
+	repo := &channelMonitorV2RepoStub{config: ChannelMonitorV2Config{Enabled: true}, users: &ChannelMonitorV2List[ChannelMonitorV2UserRow]{Items: []ChannelMonitorV2UserRow{
+		{UserID: &userID, Email: "user@example.com", Username: "user", Metrics: ChannelMonitorV2Metric{RequestCount: 10}},
+	}}}
+
+	result, err := NewChannelMonitorV2Service(repo).Users(context.Background(), ChannelMonitorV2Filter{}, adminID, true)
+
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, userID, *result.Items[0].UserID)
+}
+
 func TestChannelMonitorV2TopUsersKeepsSelfOutsideLimit(t *testing.T) {
 	items := make([]ChannelMonitorV2UserRow, 0, 12)
 	for i := 1; i <= 12; i++ {

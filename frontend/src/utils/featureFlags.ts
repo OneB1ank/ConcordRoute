@@ -174,5 +174,6 @@ export function getChannelMonitorRefreshIntervalSeconds(): number {
 /** Hide RPM/TPM on user-facing monitor (scale privacy). Admin always shows full metrics. */
 export function isChannelMonitorThroughputHidden(): boolean {
   const appStore = useAppStore()
-  return Boolean(appStore.cachedPublicSettings?.channel_monitor_hide_throughput)
+  // 设置尚未注入时按隐藏处理，避免首屏短暂展示可反推实例规模的吞吐栏目。
+  return appStore.cachedPublicSettings?.channel_monitor_hide_throughput !== false
 }

@@ -55,7 +55,7 @@ type ChannelMonitorRepository interface {
 	// DeleteRollupsBefore 软删 bucket_date < beforeDate 的聚合行，返回删除行数。
 	DeleteRollupsBefore(ctx context.Context, beforeDate time.Time) (int64, error)
 	// LoadAggregationWatermark 读 watermark（id=1）。
-	// 返回 nil 表示从未聚合过；watermark 表本身预期已存在单行（migration 110 写入）。
+	// 返回 nil 表示从未聚合过；watermark 表本身预期已存在单行（本地迁移 253 写入）。
 	LoadAggregationWatermark(ctx context.Context) (*time.Time, error)
 	// UpdateAggregationWatermark 写 watermark（UPSERT 到 id=1）。
 	UpdateAggregationWatermark(ctx context.Context, date time.Time) error

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -801,17 +802,28 @@ func (r *channelMonitorV2Repository) loadErrorDetails(ctx context.Context, filte
 	return out, rows.Err()
 }
 
+//nolint:gochecknoglobals // 脱敏规则只读，预编译后供错误详情查询复用。
+var channelMonitorV2SensitiveDetailPatterns = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	// Authorization 需要优先整体处理；若先按普通键值截到 Bearer/Basic，
+	// 后面的真实凭据会脱离标记并残留在错误详情中。
+	{regexp.MustCompile(`(?i)((?:^|[?&,;\s{])["']?authorization["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|(?:bearer|basic|token)\s+[^&,;\s}]+|[^&,;\s}]+)`), `${1}****`},
+	{regexp.MustCompile(`(?i)((?:^|[?&,;\s{])["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|x-api-key|key|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^&,;\s}]+)`), `${1}****`},
+	{regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[^\s,;"']+`), `Bearer ****`},
+	{regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{12,}`), `sk-ant-****`},
+	{regexp.MustCompile(`sk-proj-[A-Za-z0-9_-]{12,}`), `sk-proj-****`},
+	{regexp.MustCompile(`sk-[A-Za-z0-9_-]{12,}`), `sk-****`},
+	{regexp.MustCompile(`xai-[A-Za-z0-9_-]{6,}`), `xai-****`},
+	{regexp.MustCompile(`AIza[A-Za-z0-9_-]{20,}`), `AIza****`},
+	{regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), `eyJ****.JWT`},
+}
+
 func sanitizeChannelMonitorV2ErrorDetail(message string) string {
 	message = strings.Join(strings.Fields(message), " ")
-	replacements := []string{"Bearer ", "bearer ", "sk-", "sk-proj-"}
-	for _, marker := range replacements {
-		if idx := strings.Index(message, marker); idx >= 0 {
-			end := idx + len(marker)
-			for end < len(message) && message[end] != ' ' && message[end] != ',' && message[end] != '"' {
-				end++
-			}
-			message = message[:idx] + marker + "****" + message[end:]
-		}
+	for _, rule := range channelMonitorV2SensitiveDetailPatterns {
+		message = rule.pattern.ReplaceAllString(message, rule.replacement)
 	}
 	if len(message) > 240 {
 		message = message[:240] + "…"
@@ -1092,30 +1104,109 @@ func channelMonitorV2FixedBucketSeconds(filter service.ChannelMonitorV2Filter) i
 
 func channelMonitorV2MetricsTable(filter service.ChannelMonitorV2Filter) string {
 	if channelMonitorV2FixedBucketSeconds(filter) > 0 {
-		return "channel_monitor_v2_metrics_rollup"
+		return channelMonitorV2TableWithLiveCoarseBucket(
+			filter,
+			"channel_monitor_v2_metrics_rollup",
+			"channel_monitor_v2_metrics_1m",
+			[]string{"platform", "group_id", "model"},
+			[]string{
+				"success_requests", "error_requests", "upstream_affected_requests", "upstream_attempt_count",
+				"input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
+				"ttft_sum_ms", "ttft_count", "duration_sum_ms", "duration_count",
+			},
+		)
 	}
 	return "channel_monitor_v2_metrics_1m"
 }
 
 func channelMonitorV2UserMetricsTable(filter service.ChannelMonitorV2Filter) string {
 	if channelMonitorV2FixedBucketSeconds(filter) > 0 {
-		return "channel_monitor_v2_user_metrics_rollup"
+		return channelMonitorV2TableWithLiveCoarseBucket(
+			filter,
+			"channel_monitor_v2_user_metrics_rollup",
+			"channel_monitor_v2_user_metrics_1m",
+			[]string{"platform", "group_id", "model", "user_id"},
+			[]string{
+				"success_requests", "error_requests", "input_tokens", "output_tokens",
+				"cache_creation_tokens", "cache_read_tokens", "ttft_sum_ms", "ttft_count",
+				"duration_sum_ms", "duration_count",
+			},
+		)
 	}
 	return "channel_monitor_v2_user_metrics_1m"
 }
 
 func channelMonitorV2ErrorMetricsTable(filter service.ChannelMonitorV2Filter) string {
 	if channelMonitorV2FixedBucketSeconds(filter) > 0 {
-		return "channel_monitor_v2_error_metrics_rollup"
+		return channelMonitorV2TableWithLiveCoarseBucket(
+			filter,
+			"channel_monitor_v2_error_metrics_rollup",
+			"channel_monitor_v2_error_metrics_1m",
+			[]string{"platform", "group_id", "model", "error_category", "taxonomy_version"},
+			[]string{"error_requests"},
+		)
 	}
 	return "channel_monitor_v2_error_metrics_1m"
 }
 
 func channelMonitorV2HistogramTable(filter service.ChannelMonitorV2Filter) string {
 	if channelMonitorV2FixedBucketSeconds(filter) > 0 {
-		return "channel_monitor_v2_latency_histograms_rollup"
+		return channelMonitorV2TableWithLiveCoarseBucket(
+			filter,
+			"channel_monitor_v2_latency_histograms_rollup",
+			"channel_monitor_v2_latency_histograms_1m",
+			[]string{"platform", "group_id", "model", "user_id", "metric", "upper_bound_ms"},
+			[]string{"sample_count"},
+		)
 	}
 	return "channel_monitor_v2_latency_histograms_1m"
+}
+
+// channelMonitorV2TableWithLiveCoarseBucket 让 12 小时/1 天视图读取：
+// 已完成桶走固定汇总表，当前未完成桶直接由 1 分钟事实表聚合。
+// 这样既保持实时数据，又避免后台每五分钟重扫整段 12 小时或整天数据。
+func channelMonitorV2TableWithLiveCoarseBucket(
+	filter service.ChannelMonitorV2Filter,
+	rollupTable string,
+	factTable string,
+	dimensions []string,
+	values []string,
+) string {
+	seconds := channelMonitorV2FixedBucketSeconds(filter)
+	if seconds < 43200 {
+		return rollupTable
+	}
+	interval := fmt.Sprintf("%d seconds", seconds)
+	// 以查询实际可见终点所在的桶作为实时叠加边界。未来对齐终点（例如
+	// 30d 视图的次日零点）必须钳制到当前时间，否则当前未完成桶会误读旧汇总。
+	now := time.Now().UTC()
+	liveEndAt := now
+	if !filter.End.IsZero() && filter.End.Before(liveEndAt) {
+		liveEndAt = filter.End.UTC()
+	}
+	boundaryAt := liveEndAt.Truncate(filter.Bucket)
+	boundary := fmt.Sprintf("TIMESTAMPTZ '%s'", boundaryAt.Format(time.RFC3339Nano))
+	liveEnd := fmt.Sprintf("TIMESTAMPTZ '%s'", liveEndAt.Format(time.RFC3339Nano))
+	rollupColumns := append([]string{"bucket_start", "bucket_seconds"}, dimensions...)
+	rollupColumns = append(rollupColumns, values...)
+	liveColumns := []string{
+		fmt.Sprintf("date_bin(INTERVAL '%s', bucket_start, TIMESTAMPTZ '1970-01-01') AS bucket_start", interval),
+		fmt.Sprintf("%d AS bucket_seconds", seconds),
+	}
+	liveColumns = append(liveColumns, dimensions...)
+	for _, value := range values {
+		liveColumns = append(liveColumns, "SUM("+value+") AS "+value)
+	}
+	groupBy := []string{"1"}
+	for i := range dimensions {
+		groupBy = append(groupBy, fmt.Sprintf("%d", i+3))
+	}
+	return fmt.Sprintf(
+		"(SELECT %s FROM %s WHERE bucket_seconds = %d AND bucket_start < %s UNION ALL "+
+			"SELECT %s FROM %s WHERE bucket_start >= %s AND bucket_start < %s GROUP BY %s)",
+		strings.Join(rollupColumns, ", "), rollupTable, seconds, boundary,
+		strings.Join(liveColumns, ", "), factTable, boundary, liveEnd, strings.Join(groupBy, ", "),
+	)
 }
 
 func channelMonitorV2WhereWithRollup(filter service.ChannelMonitorV2Filter, cfg service.ChannelMonitorV2Config, alias string) (string, []any, int) {

@@ -15,6 +15,7 @@ type stubMonitorSvc struct {
 	enabled    []*ChannelMonitor
 	runCount   atomic.Int64
 	runCalled  chan int64 // 每次 RunCheck 触发时 push 一次（缓冲足够大避免阻塞）
+	runExited  chan int64 // RunCheck 返回时通知，验证停止流程已排空 worker
 	runErr     error
 	listErr    error
 	runHoldFor time.Duration // RunCheck 内额外阻塞的时长，用来测试 Stop 等待行为
@@ -29,6 +30,14 @@ func (s *stubMonitorSvc) ListEnabledMonitors(_ context.Context) ([]*ChannelMonit
 
 func (s *stubMonitorSvc) RunCheck(ctx context.Context, id int64) ([]*CheckResult, error) {
 	s.runCount.Add(1)
+	defer func() {
+		if s.runExited != nil {
+			select {
+			case s.runExited <- id:
+			default:
+			}
+		}
+	}()
 	if s.runCalled != nil {
 		select {
 		case s.runCalled <- id:
@@ -298,11 +307,13 @@ func TestStop_DrainsAllGoroutines(t *testing.T) {
 	stoppedWithin(t, r, 3*time.Second)
 }
 
-// TestStop_WaitsForInFlightCheck 验证 Stop 会等待正在执行的 RunCheck 退出（pool.StopAndWait）。
-func TestStop_WaitsForInFlightCheck(t *testing.T) {
+// TestStop_CancelsAndDrainsInFlightCheck 验证停止信号会传递给正在执行的检测，
+// 并在 worker 完全退出后再返回。
+func TestStop_CancelsAndDrainsInFlightCheck(t *testing.T) {
 	svc := &stubMonitorSvc{
 		runCalled:  make(chan int64, 1),
-		runHoldFor: 200 * time.Millisecond,
+		runExited:  make(chan int64, 1),
+		runHoldFor: 5 * time.Second,
 	}
 	r := newRunnerForTest(svc)
 	r.Start()
@@ -317,9 +328,16 @@ func TestStop_WaitsForInFlightCheck(t *testing.T) {
 	start := time.Now()
 	stoppedWithin(t, r, 3*time.Second)
 	elapsed := time.Since(start)
-	// Stop 必须等待 in-flight check 跑完（runHoldFor=200ms），耗时下界约 100ms。
-	if elapsed < 100*time.Millisecond {
-		t.Fatalf("Stop returned too fast (%v); did not wait for in-flight check", elapsed)
+	if elapsed >= time.Second {
+		t.Fatalf("停止未及时取消在途检测，耗时 %v", elapsed)
+	}
+	select {
+	case id := <-svc.runExited:
+		if id != 1 {
+			t.Fatalf("退出检测 id=%d，期望 1", id)
+		}
+	default:
+		t.Fatal("Stop 返回前未排空在途检测")
 	}
 }
 

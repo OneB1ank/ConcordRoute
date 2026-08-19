@@ -202,6 +202,59 @@ func TestSameFixedRollupBucket(t *testing.T) {
 	require.True(t, sameFixedRollupBucket(start, start.Add(10*time.Minute), 86400))
 	require.False(t, sameFixedRollupBucket(start, start.Add(15*time.Hour), 43200))
 	require.False(t, sameFixedRollupBucket(start, start.Add(24*time.Hour), 86400))
+	boundaryStart := time.Date(2026, 8, 7, 23, 50, 0, 0, time.UTC)
+	require.False(t, sameFixedRollupBucket(boundaryStart, time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC), 86400))
+}
+
+func TestChannelMonitorV2CoarseTablesOverlayLiveBucket(t *testing.T) {
+	filter := service.ChannelMonitorV2Filter{
+		Bucket: 24 * time.Hour,
+		End:    time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC),
+	}
+
+	for _, table := range []string{
+		channelMonitorV2MetricsTable(filter),
+		channelMonitorV2UserMetricsTable(filter),
+		channelMonitorV2ErrorMetricsTable(filter),
+		channelMonitorV2HistogramTable(filter),
+	} {
+		require.Contains(t, table, "UNION ALL")
+		require.Contains(t, table, "bucket_start < TIMESTAMPTZ '2026-08-08T00:00:00Z'")
+		require.Contains(t, table, "bucket_start >= TIMESTAMPTZ '2026-08-08T00:00:00Z'")
+		require.Contains(t, table, "bucket_start < TIMESTAMPTZ '2026-08-08T10:00:00Z'")
+		require.Contains(t, table, "86400 AS bucket_seconds")
+	}
+
+	boundaryFilter := service.ChannelMonitorV2Filter{
+		Bucket: 24 * time.Hour,
+		End:    time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC),
+	}
+	boundaryTable := channelMonitorV2MetricsTable(boundaryFilter)
+	require.Contains(t, boundaryTable, "bucket_start < TIMESTAMPTZ '2026-08-08T00:00:00Z'")
+	require.Contains(t, boundaryTable, "bucket_start >= TIMESTAMPTZ '2026-08-08T00:00:00Z'")
+
+	require.Equal(t, "channel_monitor_v2_metrics_rollup", channelMonitorV2MetricsTable(service.ChannelMonitorV2Filter{Bucket: time.Hour}))
+	require.Equal(t, "channel_monitor_v2_metrics_1m", channelMonitorV2MetricsTable(service.ChannelMonitorV2Filter{Bucket: 10 * time.Minute}))
+}
+
+func TestSanitizeChannelMonitorV2ErrorDetailRedactsEveryCredential(t *testing.T) {
+	message := `Bearer first.secret api_key:"plain-secret" sk-proj-abcdefghijklmnop xai-abcdef123456 ` +
+		`AIza01234567890123456789012345678901234 eyJabcdefgh.eyJijklmnop.qrstuvwxyz ?access_token=query-secret ` +
+		`Bearer second.secret Authorization: Bearer header-secret {"token":"json-secret"} refresh_token=refresh-secret ` +
+		`Authorization: Basic basic-secret`
+
+	sanitized := sanitizeChannelMonitorV2ErrorDetail(message)
+
+	for _, secret := range []string{
+		"first.secret", "plain-secret", "abcdefghijklmnop", "abcdef123456",
+		"01234567890123456789012345678901234", "eyJijklmnop", "query-secret", "second.secret",
+		"header-secret", "json-secret", "refresh-secret", "basic-secret",
+	} {
+		require.NotContains(t, sanitized, secret)
+	}
+	require.Contains(t, sanitized, "Bearer ****")
+	require.Contains(t, sanitized, `api_key:****`)
+	require.Contains(t, sanitized, "access_token=****")
 }
 
 // Needles present in service.ClassifyChannelMonitorV2Error must appear in the
