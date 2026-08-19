@@ -313,6 +313,11 @@ type SystemSettings struct {
 	AccountQuotaNotifyEnabled       bool               `json:"account_quota_notify_enabled"`
 	AccountQuotaNotifyEmails        []NotifyEmailEntry `json:"account_quota_notify_emails"`
 
+	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
+	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
+	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
+	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
+
 	// OpenAI fast/flex 策略
 	OpenAIFastPolicySettings *OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
 
@@ -398,19 +403,23 @@ type PublicSettings struct {
 	DataSharingEnabled                  bool                     `json:"data_sharing_enabled"`
 	Version                             string                   `json:"version"`
 	// 服务器全局时区与当前 UTC 偏移，供前端标注高峰计费窗口等服务端本地时间。
-	ServerTimezone              string  `json:"server_timezone"`
-	ServerUTCOffset             string  `json:"server_utc_offset"`
-	BalanceUnitName             string  `json:"balance_unit_name"`
-	BalanceUnitSymbol           string  `json:"balance_unit_symbol"`
-	BalanceIconSVG              string  `json:"balance_icon_svg"`
-	BalanceLowNotifyEnabled     bool    `json:"balance_low_notify_enabled"`
-	AccountQuotaNotifyEnabled   bool    `json:"account_quota_notify_enabled"`
-	RiskControlEnabled          bool    `json:"risk_control_enabled"` // 风控中心入口开关
-	CyberSessionBlockEnabled    bool    `json:"cyber_session_block_enabled"`
-	CyberSessionBlockTTLSeconds int     `json:"cyber_session_block_ttl_seconds"`
-	AffiliateEnabled            bool    `json:"affiliate_enabled"` // 邀请返利入口开关
-	BalanceLowNotifyThreshold   float64 `json:"balance_low_notify_threshold"`
-	BalanceLowNotifyRechargeURL string  `json:"balance_low_notify_recharge_url"`
+	ServerTimezone                       string  `json:"server_timezone"`
+	ServerUTCOffset                      string  `json:"server_utc_offset"`
+	BalanceUnitName                      string  `json:"balance_unit_name"`
+	BalanceUnitSymbol                    string  `json:"balance_unit_symbol"`
+	BalanceIconSVG                       string  `json:"balance_icon_svg"`
+	BalanceLowNotifyEnabled              bool    `json:"balance_low_notify_enabled"`
+	AccountQuotaNotifyEnabled            bool    `json:"account_quota_notify_enabled"`
+	ChannelMonitorEnabled                bool    `json:"channel_monitor_enabled"`
+	ChannelMonitorMode                   string  `json:"channel_monitor_mode"`
+	ChannelMonitorDefaultIntervalSeconds int     `json:"channel_monitor_default_interval_seconds"`
+	ChannelMonitorHideThroughput         bool    `json:"channel_monitor_hide_throughput"`
+	RiskControlEnabled                   bool    `json:"risk_control_enabled"` // 风控中心入口开关
+	CyberSessionBlockEnabled             bool    `json:"cyber_session_block_enabled"`
+	CyberSessionBlockTTLSeconds          int     `json:"cyber_session_block_ttl_seconds"`
+	AffiliateEnabled                     bool    `json:"affiliate_enabled"` // 邀请返利入口开关
+	BalanceLowNotifyThreshold            float64 `json:"balance_low_notify_threshold"`
+	BalanceLowNotifyRechargeURL          string  `json:"balance_low_notify_recharge_url"`
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`

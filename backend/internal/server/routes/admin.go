@@ -5,7 +5,9 @@ import (
 	"net/http"
 
 	"github.com/TokenFlux/TokenRouter/internal/handler"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/response"
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
+	"github.com/TokenFlux/TokenRouter/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +19,7 @@ func RegisterAdminRoutes(
 	adminAuth middleware.AdminAuthMiddleware,
 	auditLog middleware.AuditLogMiddleware,
 	stepUpAuth middleware.StepUpAuthMiddleware,
+	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
 	// 管理端数据共享下载只允许读取已预生成文件，避免下载请求中实时处理大批量数据。
@@ -112,6 +115,10 @@ func RegisterAdminRoutes(
 
 		// 渠道管理
 		registerChannelRoutes(admin, h)
+
+		// 渠道监控
+		registerChannelMonitorRoutes(admin, h, settingService)
+		registerChannelMonitorV2Routes(admin, h, settingService)
 
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
@@ -857,5 +864,90 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		channels.POST("", h.Admin.Channel.Create)
 		channels.PUT("/:id", h.Admin.Channel.Update)
 		channels.DELETE("/:id", h.Admin.Channel.Delete)
+	}
+}
+
+func registerChannelMonitorRoutes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
+	guard := channelMonitorAdminFeatureGuard(settingService)
+	monitors := admin.Group("/channel-monitors")
+	monitors.Use(guard)
+	{
+		monitors.GET("", h.Admin.ChannelMonitor.List)
+		monitors.POST("", h.Admin.ChannelMonitor.Create)
+		monitors.GET("/:id", h.Admin.ChannelMonitor.Get)
+		monitors.POST("/:id/duplicate", h.Admin.ChannelMonitor.Duplicate)
+		monitors.PUT("/:id", h.Admin.ChannelMonitor.Update)
+		monitors.DELETE("/:id", h.Admin.ChannelMonitor.Delete)
+		monitors.POST("/:id/run", h.Admin.ChannelMonitor.Run)
+		monitors.GET("/:id/history", h.Admin.ChannelMonitor.History)
+	}
+
+	templates := admin.Group("/channel-monitor-templates")
+	templates.Use(guard)
+	{
+		templates.GET("", h.Admin.ChannelMonitorTemplate.List)
+		templates.POST("", h.Admin.ChannelMonitorTemplate.Create)
+		templates.GET("/:id", h.Admin.ChannelMonitorTemplate.Get)
+		templates.PUT("/:id", h.Admin.ChannelMonitorTemplate.Update)
+		templates.DELETE("/:id", h.Admin.ChannelMonitorTemplate.Delete)
+		templates.GET("/:id/monitors", h.Admin.ChannelMonitorTemplate.AssociatedMonitors)
+		templates.POST("/:id/apply", h.Admin.ChannelMonitorTemplate.Apply)
+	}
+}
+
+func registerChannelMonitorV2Routes(admin *gin.RouterGroup, h *handler.Handlers, settingService *service.SettingService) {
+	featureGuard := channelMonitorAdminFeatureGuard(settingService)
+	modeV2Guard := channelMonitorModeV2Guard(settingService)
+	monitor := admin.Group("/channel-monitor-v2")
+	{
+		config := monitor.Group("")
+		config.Use(featureGuard)
+		{
+			config.GET("/config", h.ChannelMonitorV2.GetConfig)
+			config.PUT("/config", h.ChannelMonitorV2.UpdateConfig)
+		}
+		reads := monitor.Group("")
+		reads.Use(modeV2Guard)
+		{
+			reads.GET("/dimensions", h.ChannelMonitorV2.Dimensions)
+			reads.GET("/snapshot", h.ChannelMonitorV2.AdminSnapshot)
+			reads.GET("/models", h.ChannelMonitorV2.AdminModels)
+			reads.GET("/matrix", h.ChannelMonitorV2.AdminMatrix)
+			reads.GET("/errors", h.ChannelMonitorV2.Errors)
+			reads.GET("/users", h.ChannelMonitorV2.AdminUsers)
+		}
+	}
+}
+
+func channelMonitorAdminFeatureGuard(settingService *service.SettingService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if settingService != nil && settingService.GetChannelMonitorRuntime(c.Request.Context()).Enabled {
+			c.Next()
+			return
+		}
+		response.ErrorFrom(c, service.ErrChannelMonitorDisabled)
+		c.Abort()
+	}
+}
+
+func channelMonitorModeV2Guard(settingService *service.SettingService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if settingService == nil {
+			response.ErrorFrom(c, service.ErrChannelMonitorDisabled)
+			c.Abort()
+			return
+		}
+		runtime := settingService.GetChannelMonitorRuntime(c.Request.Context())
+		if !runtime.Enabled {
+			response.ErrorFrom(c, service.ErrChannelMonitorDisabled)
+			c.Abort()
+			return
+		}
+		if !runtime.PassiveAggregationAllowed() {
+			response.ErrorFrom(c, service.ErrChannelMonitorModeMismatch)
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }

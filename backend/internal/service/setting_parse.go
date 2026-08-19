@@ -209,6 +209,13 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpsRealtimeMonitoringEnabled: "true",
 		SettingKeyOpsMetricsIntervalSeconds:    "60",
 
+		// Channel monitor defaults. V2 remains opt-in; throughput is hidden by
+		// default to avoid exposing fleet volume to non-admin users.
+		SettingKeyChannelMonitorEnabled:                "true",
+		SettingKeyChannelMonitorMode:                   ChannelMonitorModeV1,
+		SettingKeyChannelMonitorDefaultIntervalSeconds: "60",
+		SettingKeyChannelMonitorHideThroughput:         "true",
+
 		// Claude Code version check (default: empty = disabled)
 		SettingKeyMinClaudeCodeVersion: "",
 		SettingKeyMaxClaudeCodeVersion: "",
@@ -825,6 +832,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 			result.OpsMetricsIntervalSeconds = v
 		}
 	}
+
+	result.ChannelMonitorEnabled = !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled])
+	result.ChannelMonitorMode = normalizeChannelMonitorMode(settings[SettingKeyChannelMonitorMode])
+	result.ChannelMonitorDefaultIntervalSeconds = parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds])
+	result.ChannelMonitorHideThroughput = !isFalseSettingValue(settings[SettingKeyChannelMonitorHideThroughput])
 
 	// Claude Code version check
 	result.MinClaudeCodeVersion = settings[SettingKeyMinClaudeCodeVersion]

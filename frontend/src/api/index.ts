@@ -23,6 +23,7 @@ export { marketplaceAPI } from './marketplace'
 export { dataSharingAPI } from './dataSharing'
 export { passkeyAPI, type PasskeyCredentialSummary } from './passkey'
 export { default as announcementsAPI } from './announcements'
+export { channelMonitorUserAPI } from './channelMonitor'
 
 // Admin APIs
 export { adminAPI } from './admin'

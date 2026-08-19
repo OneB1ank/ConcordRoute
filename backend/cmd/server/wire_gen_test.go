@@ -94,6 +94,8 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // groupAvailabilityProbeRunner
 		nil, // backupSvc
 		nil, // paymentOrderExpiry
+		nil, // channelMonitorRunner
+		nil, // channelMonitorV2Aggregator
 		nil, // quotaFlusher
 		nil, // tlsFingerprintCollector
 		nil, // ollamaCloudUsage

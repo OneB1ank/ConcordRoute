@@ -101,6 +101,9 @@ var ProviderSet = wire.NewSet(
 	NewTLSFingerprintProfileRepository,
 	NewTLSFingerprintRouterRepository,
 	NewChannelRepository,
+	NewChannelMonitorRepository,
+	NewChannelMonitorV2Repository,
+	NewChannelMonitorRequestTemplateRepository,
 	NewContentModerationRepository,
 	NewAffiliateRepository,
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota

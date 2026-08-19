@@ -303,12 +303,16 @@ type UpdateSettingsRequest struct {
 	OpenAIQuotaAutoPauseSettings *service.OpsOpenAIAccountQuotaAutoPauseSettings `json:"openai_account_quota_auto_pause"`
 
 	// 余额不足提醒
-	BalanceLowNotifyEnabled         *bool                   `json:"balance_low_notify_enabled"`
-	BalanceLowNotifyThreshold       *float64                `json:"balance_low_notify_threshold"`
-	BalanceLowNotifyRechargeURL     *string                 `json:"balance_low_notify_recharge_url"`
-	SubscriptionExpiryNotifyEnabled *bool                   `json:"subscription_expiry_notify_enabled"`
-	AccountQuotaNotifyEnabled       *bool                   `json:"account_quota_notify_enabled"`
-	AccountQuotaNotifyEmails        *[]dto.NotifyEmailEntry `json:"account_quota_notify_emails"`
+	BalanceLowNotifyEnabled              *bool                   `json:"balance_low_notify_enabled"`
+	BalanceLowNotifyThreshold            *float64                `json:"balance_low_notify_threshold"`
+	BalanceLowNotifyRechargeURL          *string                 `json:"balance_low_notify_recharge_url"`
+	SubscriptionExpiryNotifyEnabled      *bool                   `json:"subscription_expiry_notify_enabled"`
+	AccountQuotaNotifyEnabled            *bool                   `json:"account_quota_notify_enabled"`
+	AccountQuotaNotifyEmails             *[]dto.NotifyEmailEntry `json:"account_quota_notify_emails"`
+	ChannelMonitorEnabled                *bool                   `json:"channel_monitor_enabled"`
+	ChannelMonitorMode                   *string                 `json:"channel_monitor_mode"`
+	ChannelMonitorDefaultIntervalSeconds *int                    `json:"channel_monitor_default_interval_seconds"`
+	ChannelMonitorHideThroughput         *bool                   `json:"channel_monitor_hide_throughput"`
 
 	// Payment configuration (integrated into settings, full replace)
 	PaymentEnabled                   *bool                     `json:"payment_enabled"`
@@ -2003,6 +2007,30 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AccountQuotaNotifyEmails
 		}(),
+		ChannelMonitorEnabled: func() bool {
+			if req.ChannelMonitorEnabled != nil {
+				return *req.ChannelMonitorEnabled
+			}
+			return previousSettings.ChannelMonitorEnabled
+		}(),
+		ChannelMonitorMode: func() string {
+			if req.ChannelMonitorMode != nil {
+				return *req.ChannelMonitorMode
+			}
+			return previousSettings.ChannelMonitorMode
+		}(),
+		ChannelMonitorDefaultIntervalSeconds: func() int {
+			if req.ChannelMonitorDefaultIntervalSeconds != nil {
+				return *req.ChannelMonitorDefaultIntervalSeconds
+			}
+			return previousSettings.ChannelMonitorDefaultIntervalSeconds
+		}(),
+		ChannelMonitorHideThroughput: func() bool {
+			if req.ChannelMonitorHideThroughput != nil {
+				return *req.ChannelMonitorHideThroughput
+			}
+			return previousSettings.ChannelMonitorHideThroughput
+		}(),
 	}
 
 	// req.AuthSourceXxxPlatformQuotas 为 nil 表示本次请求未包含该 source 的 quota 配置（保留 previousAuthSourceDefaults 中的值）；
@@ -2373,6 +2401,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SubscriptionExpiryNotifyEnabled:                  updatedSettings.SubscriptionExpiryNotifyEnabled,
 		AccountQuotaNotifyEnabled:                        updatedSettings.AccountQuotaNotifyEnabled,
 		AccountQuotaNotifyEmails:                         dto.NotifyEmailEntriesFromService(updatedSettings.AccountQuotaNotifyEmails),
+		ChannelMonitorEnabled:                            updatedSettings.ChannelMonitorEnabled,
+		ChannelMonitorMode:                               updatedSettings.ChannelMonitorMode,
+		ChannelMonitorDefaultIntervalSeconds:             updatedSettings.ChannelMonitorDefaultIntervalSeconds,
+		ChannelMonitorHideThroughput:                     updatedSettings.ChannelMonitorHideThroughput,
 		PaymentEnabled:                                   updatedPaymentCfg.Enabled,
 		PaymentMinAmount:                                 updatedPaymentCfg.MinAmount,
 		PaymentMaxAmount:                                 updatedPaymentCfg.MaxAmount,

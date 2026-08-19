@@ -433,6 +433,15 @@ const (
 	// SettingKeyOpsMetricsIntervalSeconds controls the ops metrics collector interval (>=60).
 	SettingKeyOpsMetricsIntervalSeconds = "ops_metrics_interval_seconds"
 
+	// Channel monitor feature flags. V1 performs active probes; V2 passively
+	// aggregates existing usage logs and exposes privacy-filtered health data.
+	SettingKeyChannelMonitorEnabled                = "channel_monitor_enabled"
+	SettingKeyChannelMonitorMode                   = "channel_monitor_mode"
+	SettingKeyChannelMonitorDefaultIntervalSeconds = "channel_monitor_default_interval_seconds"
+	SettingKeyChannelMonitorHideThroughput         = "channel_monitor_hide_throughput"
+	ChannelMonitorModeV1                           = "v1"
+	ChannelMonitorModeV2                           = "v2"
+
 	// SettingKeyOpsAdvancedSettings stores JSON config for ops advanced settings (data retention, aggregation).
 	SettingKeyOpsAdvancedSettings = "ops_advanced_settings"
 

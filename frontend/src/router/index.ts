@@ -521,6 +521,31 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/channels/monitor',
+    name: 'AdminChannelMonitor',
+    component: () => import('@/views/admin/ChannelMonitorView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      requiresChannelMonitor: true,
+      title: 'Channel Monitor',
+      titleKey: 'admin.channelMonitor.title',
+      descriptionKey: 'admin.channelMonitor.description'
+    }
+  },
+  {
+    path: '/monitor',
+    name: 'ChannelStatus',
+    component: () => import('@/views/user/ChannelStatusView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      requiresChannelMonitor: true,
+      title: 'Channel Status',
+      titleKey: 'nav.channelStatus'
+    }
+  },
+  {
     path: '/admin/subscriptions',
     name: 'AdminSubscriptions',
     component: () => import('@/views/admin/SubscriptionsView.vue'),
@@ -894,6 +919,7 @@ router.beforeEach(async (to, _from, next) => {
     || to.meta.requiresRiskControl
     || to.meta.requiresTeam
     || to.meta.requiresDataSharing
+    || to.meta.requiresChannelMonitor
   if (requiresPublicFeature && !appStore.publicSettingsLoaded) {
     try {
       await appStore.fetchPublicSettings()
@@ -935,6 +961,15 @@ router.beforeEach(async (to, _from, next) => {
     to.meta.requiresDataSharing &&
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.data_sharing_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
+  }
+
+  if (
+    to.meta.requiresChannelMonitor &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.channel_monitor_enabled === false
   ) {
     next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
     return

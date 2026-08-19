@@ -30,6 +30,8 @@ import backupAPI from './backup'
 import tlsFingerprintProfileAPI from './tlsFingerprintProfile'
 import tlsFingerprintRouterAPI from './tlsFingerprintRouter'
 import channelsAPI from './channels'
+import channelMonitorAPI from './channelMonitor'
+import channelMonitorTemplateAPI from './channelMonitorTemplate'
 import adminPaymentAPI from './payment'
 import riskControlAPI from './riskControl'
 import adminDataSharingAPI from './dataSharing'
@@ -67,6 +69,8 @@ export const adminAPI = {
   tlsFingerprintProfiles: tlsFingerprintProfileAPI,
   tlsFingerprintRouters: tlsFingerprintRouterAPI,
   channels: channelsAPI,
+  channelMonitor: channelMonitorAPI,
+  channelMonitorTemplate: channelMonitorTemplateAPI,
   payment: adminPaymentAPI,
   riskControl: riskControlAPI,
   dataSharing: adminDataSharingAPI,
@@ -102,6 +106,8 @@ export {
   tlsFingerprintProfileAPI,
   tlsFingerprintRouterAPI,
   channelsAPI,
+  channelMonitorAPI,
+  channelMonitorTemplateAPI,
   adminPaymentAPI,
   riskControlAPI,
   adminDataSharingAPI,

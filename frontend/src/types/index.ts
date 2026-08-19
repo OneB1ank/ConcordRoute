@@ -294,6 +294,10 @@ export interface PublicSettings {
   account_quota_notify_enabled: boolean
   risk_control_enabled: boolean
   service_quota_enabled?: boolean
+  channel_monitor_enabled: boolean
+  channel_monitor_mode?: 'v1' | 'v2'
+  channel_monitor_default_interval_seconds: number
+  channel_monitor_hide_throughput?: boolean
   balance_low_notify_threshold: number
   balance_low_notify_recharge_url?: string
   allow_user_view_error_requests?: boolean

@@ -19,6 +19,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/ent/batchimageevent"
 	"github.com/TokenFlux/TokenRouter/ent/batchimageitem"
 	"github.com/TokenFlux/TokenRouter/ent/batchimagejob"
+	"github.com/TokenFlux/TokenRouter/ent/channelmonitor"
+	"github.com/TokenFlux/TokenRouter/ent/channelmonitordailyrollup"
+	"github.com/TokenFlux/TokenRouter/ent/channelmonitorhistory"
+	"github.com/TokenFlux/TokenRouter/ent/channelmonitorrequesttemplate"
 	"github.com/TokenFlux/TokenRouter/ent/datasharesession"
 	"github.com/TokenFlux/TokenRouter/ent/errorpassthroughrule"
 	"github.com/TokenFlux/TokenRouter/ent/group"
@@ -405,6 +409,114 @@ func (f TraverseBatchImageJob) Traverse(ctx context.Context, q ent.Query) error 
 		return f(ctx, q)
 	}
 	return fmt.Errorf("unexpected query type %T. expect *ent.BatchImageJobQuery", q)
+}
+
+// The ChannelMonitorFunc type is an adapter to allow the use of ordinary function as a Querier.
+type ChannelMonitorFunc func(context.Context, *ent.ChannelMonitorQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f ChannelMonitorFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.ChannelMonitorQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorQuery", q)
+}
+
+// The TraverseChannelMonitor type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseChannelMonitor func(context.Context, *ent.ChannelMonitorQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseChannelMonitor) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseChannelMonitor) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.ChannelMonitorQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorQuery", q)
+}
+
+// The ChannelMonitorDailyRollupFunc type is an adapter to allow the use of ordinary function as a Querier.
+type ChannelMonitorDailyRollupFunc func(context.Context, *ent.ChannelMonitorDailyRollupQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f ChannelMonitorDailyRollupFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.ChannelMonitorDailyRollupQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorDailyRollupQuery", q)
+}
+
+// The TraverseChannelMonitorDailyRollup type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseChannelMonitorDailyRollup func(context.Context, *ent.ChannelMonitorDailyRollupQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseChannelMonitorDailyRollup) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseChannelMonitorDailyRollup) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.ChannelMonitorDailyRollupQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorDailyRollupQuery", q)
+}
+
+// The ChannelMonitorHistoryFunc type is an adapter to allow the use of ordinary function as a Querier.
+type ChannelMonitorHistoryFunc func(context.Context, *ent.ChannelMonitorHistoryQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f ChannelMonitorHistoryFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.ChannelMonitorHistoryQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorHistoryQuery", q)
+}
+
+// The TraverseChannelMonitorHistory type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseChannelMonitorHistory func(context.Context, *ent.ChannelMonitorHistoryQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseChannelMonitorHistory) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseChannelMonitorHistory) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.ChannelMonitorHistoryQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorHistoryQuery", q)
+}
+
+// The ChannelMonitorRequestTemplateFunc type is an adapter to allow the use of ordinary function as a Querier.
+type ChannelMonitorRequestTemplateFunc func(context.Context, *ent.ChannelMonitorRequestTemplateQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f ChannelMonitorRequestTemplateFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.ChannelMonitorRequestTemplateQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorRequestTemplateQuery", q)
+}
+
+// The TraverseChannelMonitorRequestTemplate type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseChannelMonitorRequestTemplate func(context.Context, *ent.ChannelMonitorRequestTemplateQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseChannelMonitorRequestTemplate) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseChannelMonitorRequestTemplate) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.ChannelMonitorRequestTemplateQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.ChannelMonitorRequestTemplateQuery", q)
 }
 
 // The DataShareSessionFunc type is an adapter to allow the use of ordinary function as a Querier.
@@ -1296,6 +1408,14 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.BatchImageItemQuery, predicate.BatchImageItem, batchimageitem.OrderOption]{typ: ent.TypeBatchImageItem, tq: q}, nil
 	case *ent.BatchImageJobQuery:
 		return &query[*ent.BatchImageJobQuery, predicate.BatchImageJob, batchimagejob.OrderOption]{typ: ent.TypeBatchImageJob, tq: q}, nil
+	case *ent.ChannelMonitorQuery:
+		return &query[*ent.ChannelMonitorQuery, predicate.ChannelMonitor, channelmonitor.OrderOption]{typ: ent.TypeChannelMonitor, tq: q}, nil
+	case *ent.ChannelMonitorDailyRollupQuery:
+		return &query[*ent.ChannelMonitorDailyRollupQuery, predicate.ChannelMonitorDailyRollup, channelmonitordailyrollup.OrderOption]{typ: ent.TypeChannelMonitorDailyRollup, tq: q}, nil
+	case *ent.ChannelMonitorHistoryQuery:
+		return &query[*ent.ChannelMonitorHistoryQuery, predicate.ChannelMonitorHistory, channelmonitorhistory.OrderOption]{typ: ent.TypeChannelMonitorHistory, tq: q}, nil
+	case *ent.ChannelMonitorRequestTemplateQuery:
+		return &query[*ent.ChannelMonitorRequestTemplateQuery, predicate.ChannelMonitorRequestTemplate, channelmonitorrequesttemplate.OrderOption]{typ: ent.TypeChannelMonitorRequestTemplate, tq: q}, nil
 	case *ent.DataShareSessionQuery:
 		return &query[*ent.DataShareSessionQuery, predicate.DataShareSession, datasharesession.OrderOption]{typ: ent.TypeDataShareSession, tq: q}, nil
 	case *ent.ErrorPassthroughRuleQuery:

@@ -7101,6 +7101,94 @@
           <div class="card">
             <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
               <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.features.channelMonitor.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.features.channelMonitor.description") }}
+              </p>
+              <router-link
+                to="/admin/channels/monitor"
+                class="mt-1.5 inline-flex items-center gap-1 text-xs text-primary-600 hover:underline dark:text-primary-400"
+              >
+                {{ t("admin.settings.features.channelMonitor.configureLink") }}
+                <span aria-hidden="true">→</span>
+              </router-link>
+            </div>
+            <div class="space-y-5 p-6">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.features.channelMonitor.enabled") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.features.channelMonitor.enabledHint") }}
+                  </p>
+                </div>
+                <Toggle v-model="form.channel_monitor_enabled" />
+              </div>
+
+              <template v-if="form.channel_monitor_enabled">
+                <div>
+                  <label class="input-label">
+                    {{ t("admin.settings.features.channelMonitor.mode") }}
+                  </label>
+                  <div class="mt-1.5 inline-flex w-full max-w-md rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-dark-600 dark:bg-dark-900/40">
+                    <button
+                      type="button"
+                      class="inline-flex flex-1 items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition"
+                      :class="form.channel_monitor_mode === 'v1' ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300' : 'text-gray-600 dark:text-dark-300'"
+                      @click="form.channel_monitor_mode = 'v1'"
+                    >
+                      {{ t("admin.settings.features.channelMonitor.modeV1") }}
+                    </button>
+                    <button
+                      type="button"
+                      class="inline-flex flex-1 items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition"
+                      :class="form.channel_monitor_mode === 'v2' ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300' : 'text-gray-600 dark:text-dark-300'"
+                      @click="form.channel_monitor_mode = 'v2'"
+                    >
+                      {{ t("admin.settings.features.channelMonitor.modeV2") }}
+                    </button>
+                  </div>
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ form.channel_monitor_mode === 'v2' ? t("admin.settings.features.channelMonitor.modeV2Hint") : t("admin.settings.features.channelMonitor.modeV1Hint") }}
+                  </p>
+                </div>
+
+                <div v-if="form.channel_monitor_mode === 'v1'">
+                  <label class="input-label">
+                    {{ t("admin.settings.features.channelMonitor.defaultInterval") }}
+                  </label>
+                  <input
+                    v-model.number="form.channel_monitor_default_interval_seconds"
+                    type="number"
+                    min="15"
+                    max="3600"
+                    class="input"
+                  />
+                  <p class="mt-1 text-xs text-gray-400">
+                    {{ t("admin.settings.features.channelMonitor.defaultIntervalHint") }}
+                  </p>
+                </div>
+
+                <div v-if="form.channel_monitor_mode === 'v2'" class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.features.channelMonitor.hideThroughput") }}
+                    </p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.features.channelMonitor.hideThroughputHint") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.channel_monitor_hide_throughput" />
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
                 {{ t("admin.settings.features.team.title") }}
               </h2>
               <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -9086,6 +9174,8 @@ type SettingsForm = Omit<
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
 > & {
+  // 管理表单始终绑定具体布尔值，兼容升级前没有该字段的设置记录。
+  channel_monitor_hide_throughput: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   tencent_captcha_app_secret_key: string;
@@ -9391,6 +9481,10 @@ const form = reactive<SettingsForm>({
   team_enabled: true,
   data_sharing_enabled: true,
   risk_control_enabled: false,
+  channel_monitor_enabled: true,
+  channel_monitor_mode: "v1",
+  channel_monitor_default_interval_seconds: 60,
+  channel_monitor_hide_throughput: true,
   cyber_session_block_enabled: false,
   cyber_session_block_ttl_seconds: 3600,
   antigravity_user_agent_version: "",
@@ -10530,6 +10624,10 @@ async function loadSettings() {
     syncCaptchaProviderSelection();
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
+    form.channel_monitor_mode =
+      settings.channel_monitor_mode === "v2" ? "v2" : "v1";
+    form.channel_monitor_hide_throughput =
+      settings.channel_monitor_hide_throughput !== false;
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
     form.login_agreement_documents =
@@ -11190,6 +11288,19 @@ async function saveSettings() {
       team_enabled: form.team_enabled,
       data_sharing_enabled: form.data_sharing_enabled,
       risk_control_enabled: form.risk_control_enabled,
+      channel_monitor_enabled: form.channel_monitor_enabled,
+      channel_monitor_mode:
+        form.channel_monitor_mode === "v2" ? "v2" : "v1",
+      channel_monitor_default_interval_seconds: Math.min(
+        3600,
+        Math.max(
+          15,
+          Math.floor(Number(form.channel_monitor_default_interval_seconds) || 60),
+        ),
+      ),
+      channel_monitor_hide_throughput: Boolean(
+        form.channel_monitor_hide_throughput,
+      ),
       cyber_session_block_enabled: form.cyber_session_block_enabled,
       cyber_session_block_ttl_seconds: Math.max(
         1,

@@ -532,8 +532,9 @@ func ProvideOpsCleanupService(
 	db *sql.DB,
 	redisClient *redis.Client,
 	cfg *config.Config,
+	channelMonitorSvc *ChannelMonitorService,
 ) *OpsCleanupService {
-	svc := NewOpsCleanupService(opsRepo, db, redisClient, cfg, settingRepo)
+	svc := NewOpsCleanupService(opsRepo, db, redisClient, cfg, settingRepo, channelMonitorSvc)
 	svc.Start()
 	if opsService != nil {
 		opsService.SetCleanupReloader(svc)
@@ -950,6 +951,11 @@ var ProviderSet = wire.NewSet(
 	NewGroupCapacityService,
 	NewChannelService,
 	wire.Bind(new(ChannelCacheInvalidator), new(*ChannelService)),
+	ProvideChannelMonitorService,
+	ProvideChannelMonitorRunner,
+	ProvideChannelMonitorV2Service,
+	ProvideChannelMonitorV2Aggregator,
+	NewChannelMonitorRequestTemplateService,
 	NewModelPricingResolver,
 	ProvideContentModerationService,
 	ProvidePaymentConfigService,
@@ -958,6 +964,44 @@ var ProviderSet = wire.NewSet(
 	ProvideUserPlatformQuotaUsageFlusher,
 	ProvideBalanceNotifyService,
 )
+
+// ProvideChannelMonitorService creates the monitor CRUD and active-check service.
+func ProvideChannelMonitorService(
+	repo ChannelMonitorRepository,
+	encryptor SecretEncryptor,
+	settingService *SettingService,
+) *ChannelMonitorService {
+	svc := NewChannelMonitorService(repo, encryptor)
+	svc.SetRuntimeReader(settingService)
+	return svc
+}
+
+// ProvideChannelMonitorRunner starts the V1 active-probe scheduler. The runner
+// remains idle while V2 mode is selected.
+func ProvideChannelMonitorRunner(svc *ChannelMonitorService, settingService *SettingService) *ChannelMonitorRunner {
+	runner := NewChannelMonitorRunner(svc, settingService)
+	if svc != nil {
+		svc.SetRuntimeReader(settingService)
+		svc.SetScheduler(runner)
+	}
+	runner.Start()
+	return runner
+}
+
+func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingService *SettingService, apiKeyService *APIKeyService) *ChannelMonitorV2Service {
+	svc := NewChannelMonitorV2Service(repo)
+	svc.SetRuntimeReader(settingService)
+	svc.SetGroupAccessReader(apiKeyService)
+	return svc
+}
+
+func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService) *ChannelMonitorV2Aggregator {
+	aggregator := NewChannelMonitorV2Aggregator(repo, db, settingService)
+	if os.Getenv("CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR") != "1" {
+		aggregator.Start()
+	}
+	return aggregator
+}
 
 // ProvideContentModerationService 创建内容审计服务并注入代理仓储。
 func ProvideContentModerationService(

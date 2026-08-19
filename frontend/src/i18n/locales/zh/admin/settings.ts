@@ -89,6 +89,22 @@ dataSharing: {
         bucketLimitHint: '如果窗口和粒度会产生超过 720 根柱子，后端会自动放大单柱时间窗口。'
       },
       features: {
+        channelMonitor: {
+          title: '渠道监控',
+          description: 'V1 主动探测与 V2 被动聚合互斥运行；关闭后停止后台任务并隐藏用户入口。',
+          configureLink: '前往渠道监控配置',
+          enabled: '启用渠道监控',
+          enabledHint: '关闭后保留已有配置和历史数据。',
+          mode: '监控模式',
+          modeV1: 'V1 主动探测',
+          modeV2: 'V2 被动聚合',
+          modeV1Hint: '按配置的地址、模型和密钥定时发起健康检查。',
+          modeV2Hint: '从真实网关请求被动聚合成功率、首字延迟、缓存率和趋势。',
+          defaultInterval: '默认探测间隔（秒）',
+          defaultIntervalHint: '新建 V1 监控时的默认值，范围 15–3600 秒。',
+          hideThroughput: '对普通用户隐藏吞吐量',
+          hideThroughputHint: '隐藏 RPM/TPM 和请求规模，管理员仍可查看完整诊断。'
+        },
         team: {
           title: '团队功能',
           description: '控制用户团队页和管理员团队管理页是否开放。',

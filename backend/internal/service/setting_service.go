@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -142,6 +143,9 @@ type SettingService struct {
 	// 每个 SettingService 实例拥有自己的缓存，不共享包级状态。
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
+
+	channelMonitorRuntimeListenersMu sync.Mutex
+	channelMonitorRuntimeListeners   []func()
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）
@@ -358,6 +362,43 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 // This is used for cache invalidation (e.g., HTML cache in frontend server)
 func (s *SettingService) SetOnUpdateCallback(callback func()) {
 	s.onUpdate = callback
+}
+
+func (s *SettingService) SubscribeChannelMonitorRuntime(listener func()) (unsubscribe func()) {
+	if s == nil || listener == nil {
+		return func() {}
+	}
+	s.channelMonitorRuntimeListenersMu.Lock()
+	s.channelMonitorRuntimeListeners = append(s.channelMonitorRuntimeListeners, listener)
+	idx := len(s.channelMonitorRuntimeListeners) - 1
+	s.channelMonitorRuntimeListenersMu.Unlock()
+	return func() {
+		s.channelMonitorRuntimeListenersMu.Lock()
+		defer s.channelMonitorRuntimeListenersMu.Unlock()
+		if idx >= 0 && idx < len(s.channelMonitorRuntimeListeners) {
+			s.channelMonitorRuntimeListeners[idx] = nil
+		}
+	}
+}
+
+func (s *SettingService) notifyChannelMonitorRuntimeListeners() {
+	if s == nil {
+		return
+	}
+	s.channelMonitorRuntimeListenersMu.Lock()
+	listeners := make([]func(), 0, len(s.channelMonitorRuntimeListeners))
+	for _, listener := range s.channelMonitorRuntimeListeners {
+		if listener != nil {
+			listeners = append(listeners, listener)
+		}
+	}
+	s.channelMonitorRuntimeListenersMu.Unlock()
+	for _, listener := range listeners {
+		func(fn func()) {
+			defer func() { _ = recover() }()
+			fn()
+		}(listener)
+	}
 }
 
 // SetVersion sets the application version for injection into public settings

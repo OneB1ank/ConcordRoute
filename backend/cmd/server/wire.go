@@ -114,6 +114,8 @@ func provideCleanup(
 	groupAvailabilityProbeRunner *service.GroupAvailabilityProbeRunnerService,
 	backupSvc *service.BackupService,
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
+	channelMonitorRunner *service.ChannelMonitorRunner,
+	channelMonitorV2Aggregator *service.ChannelMonitorV2Aggregator,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	tlsFingerprintCollector *service.TLSFingerprintCollectorService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
@@ -131,6 +133,18 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行；数据共享采集需先 drain worker 再 flush 缓冲池。
 		parallelSteps := []cleanupStep{
+			{"ChannelMonitorV2Aggregator", func() error {
+				if channelMonitorV2Aggregator != nil {
+					channelMonitorV2Aggregator.Stop()
+				}
+				return nil
+			}},
+			{"ChannelMonitorRunner", func() error {
+				if channelMonitorRunner != nil {
+					channelMonitorRunner.Stop()
+				}
+				return nil
+			}},
 			{"ClashProxyService", func() error {
 				if clashProxy != nil {
 					return clashProxy.Close()

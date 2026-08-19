@@ -68,6 +68,12 @@ declare module 'vue-router' {
     requiresDataSharing?: boolean
 
     /**
+     * 是否要求渠道监控功能开关已启用
+     * @default false
+     */
+    requiresChannelMonitor?: boolean
+
+    /**
      * 是否要求邀请返利功能开关已启用
      * @default false
      */

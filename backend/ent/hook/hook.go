@@ -141,6 +141,54 @@ func (f BatchImageJobFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Valu
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.BatchImageJobMutation", m)
 }
 
+// The ChannelMonitorFunc type is an adapter to allow the use of ordinary
+// function as ChannelMonitor mutator.
+type ChannelMonitorFunc func(context.Context, *ent.ChannelMonitorMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ChannelMonitorFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ChannelMonitorMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ChannelMonitorMutation", m)
+}
+
+// The ChannelMonitorDailyRollupFunc type is an adapter to allow the use of ordinary
+// function as ChannelMonitorDailyRollup mutator.
+type ChannelMonitorDailyRollupFunc func(context.Context, *ent.ChannelMonitorDailyRollupMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ChannelMonitorDailyRollupFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ChannelMonitorDailyRollupMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ChannelMonitorDailyRollupMutation", m)
+}
+
+// The ChannelMonitorHistoryFunc type is an adapter to allow the use of ordinary
+// function as ChannelMonitorHistory mutator.
+type ChannelMonitorHistoryFunc func(context.Context, *ent.ChannelMonitorHistoryMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ChannelMonitorHistoryFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ChannelMonitorHistoryMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ChannelMonitorHistoryMutation", m)
+}
+
+// The ChannelMonitorRequestTemplateFunc type is an adapter to allow the use of ordinary
+// function as ChannelMonitorRequestTemplate mutator.
+type ChannelMonitorRequestTemplateFunc func(context.Context, *ent.ChannelMonitorRequestTemplateMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ChannelMonitorRequestTemplateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ChannelMonitorRequestTemplateMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ChannelMonitorRequestTemplateMutation", m)
+}
+
 // The DataShareSessionFunc type is an adapter to allow the use of ordinary
 // function as DataShareSession mutator.
 type DataShareSessionFunc func(context.Context, *ent.DataShareSessionMutation) (ent.Value, error)

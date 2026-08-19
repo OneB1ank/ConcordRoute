@@ -713,6 +713,182 @@ var (
 			},
 		},
 	}
+	// ChannelMonitorsColumns holds the columns for the "channel_monitors" table.
+	ChannelMonitorsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok"}},
+		{Name: "api_mode", Type: field.TypeString, Size: 32, Default: "chat_completions"},
+		{Name: "endpoint", Type: field.TypeString, Size: 500},
+		{Name: "api_key_encrypted", Type: field.TypeString},
+		{Name: "primary_model", Type: field.TypeString, Size: 200},
+		{Name: "extra_models", Type: field.TypeJSON},
+		{Name: "group_name", Type: field.TypeString, Nullable: true, Size: 100, Default: ""},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "interval_seconds", Type: field.TypeInt},
+		{Name: "jitter_seconds", Type: field.TypeInt, Default: 0},
+		{Name: "last_checked_at", Type: field.TypeTime, Nullable: true},
+		{Name: "created_by", Type: field.TypeInt64},
+		{Name: "extra_headers", Type: field.TypeJSON},
+		{Name: "body_override_mode", Type: field.TypeString, Size: 10, Default: "off"},
+		{Name: "body_override", Type: field.TypeJSON, Nullable: true},
+		{Name: "template_id", Type: field.TypeInt64, Nullable: true},
+	}
+	// ChannelMonitorsTable holds the schema information for the "channel_monitors" table.
+	ChannelMonitorsTable = &schema.Table{
+		Name:       "channel_monitors",
+		Columns:    ChannelMonitorsColumns,
+		PrimaryKey: []*schema.Column{ChannelMonitorsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "channel_monitors_channel_monitor_request_templates_request_template",
+				Columns:    []*schema.Column{ChannelMonitorsColumns[19]},
+				RefColumns: []*schema.Column{ChannelMonitorRequestTemplatesColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "channelmonitor_enabled_last_checked_at",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorsColumns[11], ChannelMonitorsColumns[14]},
+			},
+			{
+				Name:    "channelmonitor_provider",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorsColumns[4]},
+			},
+			{
+				Name:    "channelmonitor_provider_api_mode",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorsColumns[4], ChannelMonitorsColumns[5]},
+			},
+			{
+				Name:    "channelmonitor_group_name",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorsColumns[10]},
+			},
+			{
+				Name:    "channelmonitor_template_id",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorsColumns[19]},
+			},
+		},
+	}
+	// ChannelMonitorDailyRollupsColumns holds the columns for the "channel_monitor_daily_rollups" table.
+	ChannelMonitorDailyRollupsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "model", Type: field.TypeString, Size: 200},
+		{Name: "bucket_date", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "date"}},
+		{Name: "total_checks", Type: field.TypeInt, Default: 0},
+		{Name: "ok_count", Type: field.TypeInt, Default: 0},
+		{Name: "operational_count", Type: field.TypeInt, Default: 0},
+		{Name: "degraded_count", Type: field.TypeInt, Default: 0},
+		{Name: "failed_count", Type: field.TypeInt, Default: 0},
+		{Name: "error_count", Type: field.TypeInt, Default: 0},
+		{Name: "sum_latency_ms", Type: field.TypeInt64, Default: 0},
+		{Name: "count_latency", Type: field.TypeInt, Default: 0},
+		{Name: "sum_ping_latency_ms", Type: field.TypeInt64, Default: 0},
+		{Name: "count_ping_latency", Type: field.TypeInt, Default: 0},
+		{Name: "computed_at", Type: field.TypeTime},
+		{Name: "monitor_id", Type: field.TypeInt64},
+	}
+	// ChannelMonitorDailyRollupsTable holds the schema information for the "channel_monitor_daily_rollups" table.
+	ChannelMonitorDailyRollupsTable = &schema.Table{
+		Name:       "channel_monitor_daily_rollups",
+		Columns:    ChannelMonitorDailyRollupsColumns,
+		PrimaryKey: []*schema.Column{ChannelMonitorDailyRollupsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "channel_monitor_daily_rollups_channel_monitors_daily_rollups",
+				Columns:    []*schema.Column{ChannelMonitorDailyRollupsColumns[14]},
+				RefColumns: []*schema.Column{ChannelMonitorsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "channelmonitordailyrollup_monitor_id_model_bucket_date",
+				Unique:  true,
+				Columns: []*schema.Column{ChannelMonitorDailyRollupsColumns[14], ChannelMonitorDailyRollupsColumns[1], ChannelMonitorDailyRollupsColumns[2]},
+			},
+			{
+				Name:    "channelmonitordailyrollup_bucket_date",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorDailyRollupsColumns[2]},
+			},
+		},
+	}
+	// ChannelMonitorHistoriesColumns holds the columns for the "channel_monitor_histories" table.
+	ChannelMonitorHistoriesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "model", Type: field.TypeString, Size: 200},
+		{Name: "status", Type: field.TypeEnum, Enums: []string{"operational", "degraded", "failed", "error"}},
+		{Name: "latency_ms", Type: field.TypeInt, Nullable: true},
+		{Name: "ping_latency_ms", Type: field.TypeInt, Nullable: true},
+		{Name: "message", Type: field.TypeString, Nullable: true, Size: 500, Default: ""},
+		{Name: "checked_at", Type: field.TypeTime},
+		{Name: "monitor_id", Type: field.TypeInt64},
+	}
+	// ChannelMonitorHistoriesTable holds the schema information for the "channel_monitor_histories" table.
+	ChannelMonitorHistoriesTable = &schema.Table{
+		Name:       "channel_monitor_histories",
+		Columns:    ChannelMonitorHistoriesColumns,
+		PrimaryKey: []*schema.Column{ChannelMonitorHistoriesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "channel_monitor_histories_channel_monitors_history",
+				Columns:    []*schema.Column{ChannelMonitorHistoriesColumns[7]},
+				RefColumns: []*schema.Column{ChannelMonitorsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "channelmonitorhistory_monitor_id_model_checked_at",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorHistoriesColumns[7], ChannelMonitorHistoriesColumns[1], ChannelMonitorHistoriesColumns[6]},
+			},
+			{
+				Name:    "channelmonitorhistory_checked_at",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorHistoriesColumns[6]},
+			},
+		},
+	}
+	// ChannelMonitorRequestTemplatesColumns holds the columns for the "channel_monitor_request_templates" table.
+	ChannelMonitorRequestTemplatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok"}},
+		{Name: "api_mode", Type: field.TypeString, Size: 32, Default: "chat_completions"},
+		{Name: "description", Type: field.TypeString, Nullable: true, Size: 500, Default: ""},
+		{Name: "extra_headers", Type: field.TypeJSON},
+		{Name: "body_override_mode", Type: field.TypeString, Size: 10, Default: "off"},
+		{Name: "body_override", Type: field.TypeJSON, Nullable: true},
+	}
+	// ChannelMonitorRequestTemplatesTable holds the schema information for the "channel_monitor_request_templates" table.
+	ChannelMonitorRequestTemplatesTable = &schema.Table{
+		Name:       "channel_monitor_request_templates",
+		Columns:    ChannelMonitorRequestTemplatesColumns,
+		PrimaryKey: []*schema.Column{ChannelMonitorRequestTemplatesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "channelmonitorrequesttemplate_provider_name",
+				Unique:  true,
+				Columns: []*schema.Column{ChannelMonitorRequestTemplatesColumns[4], ChannelMonitorRequestTemplatesColumns[3]},
+			},
+			{
+				Name:    "channelmonitorrequesttemplate_provider_api_mode",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorRequestTemplatesColumns[4], ChannelMonitorRequestTemplatesColumns[5]},
+			},
+		},
+	}
 	// DataShareSessionsColumns holds the columns for the "data_share_sessions" table.
 	DataShareSessionsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -2388,6 +2564,10 @@ var (
 		BatchImageEventsTable,
 		BatchImageItemsTable,
 		BatchImageJobsTable,
+		ChannelMonitorsTable,
+		ChannelMonitorDailyRollupsTable,
+		ChannelMonitorHistoriesTable,
+		ChannelMonitorRequestTemplatesTable,
 		DataShareSessionsTable,
 		ErrorPassthroughRulesTable,
 		GroupsTable,
@@ -2469,6 +2649,21 @@ func init() {
 	}
 	BatchImageJobsTable.Annotation = &entsql.Annotation{
 		Table: "batch_image_jobs",
+	}
+	ChannelMonitorsTable.ForeignKeys[0].RefTable = ChannelMonitorRequestTemplatesTable
+	ChannelMonitorsTable.Annotation = &entsql.Annotation{
+		Table: "channel_monitors",
+	}
+	ChannelMonitorDailyRollupsTable.ForeignKeys[0].RefTable = ChannelMonitorsTable
+	ChannelMonitorDailyRollupsTable.Annotation = &entsql.Annotation{
+		Table: "channel_monitor_daily_rollups",
+	}
+	ChannelMonitorHistoriesTable.ForeignKeys[0].RefTable = ChannelMonitorsTable
+	ChannelMonitorHistoriesTable.Annotation = &entsql.Annotation{
+		Table: "channel_monitor_histories",
+	}
+	ChannelMonitorRequestTemplatesTable.Annotation = &entsql.Annotation{
+		Table: "channel_monitor_request_templates",
 	}
 	DataShareSessionsTable.Annotation = &entsql.Annotation{
 		Table: "data_share_sessions",

@@ -221,6 +221,12 @@ type SystemSettings struct {
 	OpsRealtimeMonitoringEnabled bool
 	OpsMetricsIntervalSeconds    int
 
+	// Channel Monitor feature
+	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
+	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
+	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
+	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
+
 	// Claude Code version check
 	MinClaudeCodeVersion string
 	MaxClaudeCodeVersion string
@@ -359,27 +365,31 @@ type PublicSettings struct {
 	FooterLinks                 string // JSON array of footer link groups
 	FooterText                  string // Extra footer text (ICP number etc.)
 
-	LinuxDoOAuthEnabled      bool
-	DingTalkOAuthEnabled     bool
-	WeChatOAuthEnabled       bool
-	WeChatOAuthOpenEnabled   bool
-	WeChatOAuthMPEnabled     bool
-	WeChatOAuthMobileEnabled bool
-	BackendModeEnabled       bool
-	PaymentEnabled           bool
-	TeamEnabled              bool
-	TeamSelfServiceEnabled   bool
-	DataSharingEnabled       bool // 暴露给前端用于控制数据共享页面入口
-	OIDCOAuthEnabled         bool
-	OIDCOAuthProviderName    string
-	GitHubOAuthEnabled       bool
-	GoogleOAuthEnabled       bool
-	GoogleOneTapEnabled      bool
-	GoogleOAuthClientID      string
-	Version                  string
-	BalanceUnitName          string
-	BalanceUnitSymbol        string
-	BalanceIconSVG           string
+	LinuxDoOAuthEnabled                  bool
+	DingTalkOAuthEnabled                 bool
+	WeChatOAuthEnabled                   bool
+	WeChatOAuthOpenEnabled               bool
+	WeChatOAuthMPEnabled                 bool
+	WeChatOAuthMobileEnabled             bool
+	BackendModeEnabled                   bool
+	PaymentEnabled                       bool
+	TeamEnabled                          bool
+	TeamSelfServiceEnabled               bool
+	DataSharingEnabled                   bool   // 暴露给前端用于控制数据共享页面入口
+	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
+	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
+	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
+	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
+	OIDCOAuthEnabled                     bool
+	OIDCOAuthProviderName                string
+	GitHubOAuthEnabled                   bool
+	GoogleOAuthEnabled                   bool
+	GoogleOneTapEnabled                  bool
+	GoogleOAuthClientID                  string
+	Version                              string
+	BalanceUnitName                      string
+	BalanceUnitSymbol                    string
+	BalanceIconSVG                       string
 
 	BalanceLowNotifyEnabled   bool
 	AccountQuotaNotifyEnabled bool

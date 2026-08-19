@@ -747,6 +747,12 @@ export interface SystemSettings {
   subscription_expiry_notify_enabled: boolean;
   account_quota_notify_enabled: boolean;
   account_quota_notify_emails: NotifyEmailEntry[];
+
+  // 渠道监控功能开关与互斥运行模式。
+  channel_monitor_enabled: boolean;
+  channel_monitor_mode?: "v1" | "v2";
+  channel_monitor_default_interval_seconds: number;
+  channel_monitor_hide_throughput?: boolean;
   // OpenAI fast/flex 策略
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
 
@@ -1035,6 +1041,10 @@ export interface UpdateSettingsRequest {
   subscription_expiry_notify_enabled?: boolean;
   account_quota_notify_enabled?: boolean;
   account_quota_notify_emails?: NotifyEmailEntry[];
+  channel_monitor_enabled?: boolean;
+  channel_monitor_mode?: "v1" | "v2";
+  channel_monitor_default_interval_seconds?: number;
+  channel_monitor_hide_throughput?: boolean;
   // OpenAI fast/flex 策略
   openai_fast_policy_settings?: OpenAIFastPolicySettings;
 

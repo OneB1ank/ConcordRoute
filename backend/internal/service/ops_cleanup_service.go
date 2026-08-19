@@ -39,12 +39,16 @@ return 0
 // - Scheduling: 5-field cron spec (minute hour dom month dow).
 // - Multi-instance: best-effort Redis leader lock so only one node runs cleanup.
 // - Safety: deletes in batches to avoid long transactions.
+//
+// 渠道监控的日聚合与历史清理复用同一套 cron、leader lock 和维护锁，
+// 避免多实例重复执行或与其他重型数据库维护任务并发。
 type OpsCleanupService struct {
-	opsRepo     OpsRepository
-	db          *sql.DB
-	redisClient *redis.Client
-	cfg         *config.Config
-	settingRepo SettingRepository
+	opsRepo           OpsRepository
+	db                *sql.DB
+	redisClient       *redis.Client
+	cfg               *config.Config
+	settingRepo       SettingRepository
+	channelMonitorSvc *ChannelMonitorService
 
 	instanceID string
 
@@ -66,14 +70,16 @@ func NewOpsCleanupService(
 	redisClient *redis.Client,
 	cfg *config.Config,
 	settingRepo SettingRepository,
+	channelMonitorSvc *ChannelMonitorService,
 ) *OpsCleanupService {
 	return &OpsCleanupService{
-		opsRepo:     opsRepo,
-		db:          db,
-		redisClient: redisClient,
-		cfg:         cfg,
-		settingRepo: settingRepo,
-		instanceID:  uuid.NewString(),
+		opsRepo:           opsRepo,
+		db:                db,
+		redisClient:       redisClient,
+		cfg:               cfg,
+		settingRepo:       settingRepo,
+		channelMonitorSvc: channelMonitorSvc,
+		instanceID:        uuid.NewString(),
 	}
 }
 
@@ -374,6 +380,14 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 		logger.LegacyPrintf("service.ops_cleanup",
 			"[OpsCleanup] table complete: table=%s deleted=%d batches=%d throttled_ms=%d",
 			t.table, result.deleted, result.batches, result.throttled.Milliseconds())
+	}
+
+	// 渠道监控维护内部按步骤记录告警并保持幂等；这里仍传播意外错误，
+	// 让运维心跳能够反映维护链路异常。
+	if s.channelMonitorSvc != nil {
+		if err := s.channelMonitorSvc.RunDailyMaintenance(ctx); err != nil {
+			return out, fmt.Errorf("channel monitor maintenance: %w", err)
+		}
 	}
 
 	return out, nil

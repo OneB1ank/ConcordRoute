@@ -169,6 +169,7 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
+import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 
 interface NavItem {
   path: string
@@ -595,6 +596,7 @@ const ChevronDownIcon = {
 const flagBatchImageAccess = () => canUseBatchImage.value
 const flagTeamAccess = () => appStore.cachedPublicSettings?.team_enabled !== false
 const flagDataSharingAccess = () => appStore.cachedPublicSettings?.data_sharing_enabled !== false
+const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
 
 // 普通用户导航项。
 const userNavItems = computed((): NavItem[] => {
@@ -606,6 +608,7 @@ const userNavItems = computed((): NavItem[] => {
     { path: '/team', label: t('nav.team'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagTeamAccess },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
+    { path: '/monitor', label: t('nav.channelStatus'), icon: ChartIcon, featureFlag: flagChannelMonitor },
     { path: '/data-sharing', label: t('nav.dataSharing'), icon: DatabaseIcon, hideInSimpleMode: true, featureFlag: flagDataSharingAccess },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     ...(appStore.cachedPublicSettings?.payment_enabled
@@ -661,6 +664,7 @@ const personalNavItems = computed((): NavItem[] => {
     { path: '/team', label: t('nav.team'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagTeamAccess },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
+    { path: '/monitor', label: t('nav.channelStatus'), icon: ChartIcon, featureFlag: flagChannelMonitor },
     { path: '/data-sharing', label: t('nav.dataSharing'), icon: DatabaseIcon, hideInSimpleMode: true, featureFlag: flagDataSharingAccess },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     ...(appStore.cachedPublicSettings?.payment_enabled
@@ -731,6 +735,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/teams', label: t('nav.teams'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagTeamAccess },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
     { path: '/admin/channels', label: t('nav.channels', '渠道管理'), icon: ChannelIcon, hideInSimpleMode: true },
+    { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: ChartIcon, hideInSimpleMode: true, featureFlag: flagChannelMonitor },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },

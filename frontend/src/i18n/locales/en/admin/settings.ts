@@ -91,6 +91,22 @@ dataSharing: {
           'If the window and bucket size would produce more than 720 bars, the backend widens the bucket size automatically.'
       },
       features: {
+        channelMonitor: {
+          title: 'Channel Monitor',
+          description: 'Run either V1 active probes or V2 passive aggregation. Disabling stops background jobs and hides the user entry.',
+          configureLink: 'Open channel monitor settings',
+          enabled: 'Enable Channel Monitor',
+          enabledHint: 'Existing configuration and history are preserved when disabled.',
+          mode: 'Monitor mode',
+          modeV1: 'V1 active probes',
+          modeV2: 'V2 passive aggregation',
+          modeV1Hint: 'Periodically checks configured endpoints, models, and credentials.',
+          modeV2Hint: 'Aggregates success rate, TTFT, cache rate, and trends from real gateway traffic.',
+          defaultInterval: 'Default probe interval (seconds)',
+          defaultIntervalHint: 'Default for newly created V1 monitors, from 15 to 3600 seconds.',
+          hideThroughput: 'Hide throughput from users',
+          hideThroughputHint: 'Hide RPM/TPM and fleet scale from regular users while admins retain diagnostics.'
+        },
         team: {
           title: 'Team Features',
           description: 'Control whether team pages are available to users and administrators.',
