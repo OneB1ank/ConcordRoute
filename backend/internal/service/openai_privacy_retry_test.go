@@ -48,6 +48,33 @@ func TestAdminService_EnsureOpenAIPrivacy_RetriesNonSuccessModes(t *testing.T) {
 	}
 }
 
+func TestAdminService_OpenAIPrivacyConfiguredProxyMissingFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	proxyID := int64(7001)
+	privacyCalls := 0
+	svc := &adminServiceImpl{
+		accountRepo: &mockAccountRepoForGemini{},
+		privacyClientFactory: func(proxyURL string) (*req.Client, error) {
+			privacyCalls++
+			return nil, errors.New("unexpected privacy request")
+		},
+	}
+	account := &Account{
+		ID:       303,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		ProxyID:  &proxyID,
+		Credentials: map[string]any{
+			"access_token": "token-3",
+		},
+	}
+
+	require.Empty(t, svc.EnsureOpenAIPrivacy(context.Background(), account))
+	require.Empty(t, svc.ForceOpenAIPrivacy(context.Background(), account))
+	require.Zero(t, privacyCalls, "代理对象缺失时不得回退服务器直连")
+}
+
 func TestTokenRefreshService_ensureOpenAIPrivacy_RetriesNonSuccessModes(t *testing.T) {
 	t.Parallel()
 

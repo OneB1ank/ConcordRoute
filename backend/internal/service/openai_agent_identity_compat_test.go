@@ -12,9 +12,29 @@ import (
 	"testing"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+// agentIdentityCompatHTTPUpstream 将注册请求送往本地 auth 服务，
+// 其余推理请求继续由响应队列驱动，贴合生产统一 HTTPUpstream 的实际行为。
+type agentIdentityCompatHTTPUpstream struct {
+	inference        *httpUpstreamRecorder
+	registrationBase string
+	registrationHTTP *http.Client
+}
+
+func (u *agentIdentityCompatHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return u.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+}
+
+func (u *agentIdentityCompatHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	if req != nil && strings.HasPrefix(req.URL.String(), u.registrationBase) {
+		return u.registrationHTTP.Do(req)
+	}
+	return u.inference.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
+}
 
 func TestAccountTestServiceOpenAICompactAgentIdentityUsesFreshAssertion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -323,7 +343,11 @@ func TestOpenAIAgentIdentityTaskInvalidRetriesExactlyOnce(t *testing.T) {
 		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(successBody))},
 	}}
 	require.True(t, isAgentIdentityTaskInvalidHTTPResponse(http.StatusUnauthorized, []byte(`{"error":{"code":"invalid_task_id"}}`)))
-	svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: repo, httpUpstream: upstream}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: repo, httpUpstream: &agentIdentityCompatHTTPUpstream{
+		inference:        upstream,
+		registrationBase: registerServer.URL,
+		registrationHTTP: registerServer.Client(),
+	}}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4","instructions":"Reply OK","input":[],"stream":false}`))
@@ -424,7 +448,11 @@ func TestOpenAIAgentIdentityCompatRoutesRecoverInvalidTaskOnce(t *testing.T) {
 				{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
 				{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_task_id"}}`))},
 			}}
-			svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: repo, httpUpstream: upstream}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, accountRepo: repo, httpUpstream: &agentIdentityCompatHTTPUpstream{
+				inference:        upstream,
+				registrationBase: registerServer.URL,
+				registrationHTTP: registerServer.Client(),
+			}}
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(tt.body))

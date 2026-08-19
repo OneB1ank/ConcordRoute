@@ -111,14 +111,21 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 		return fmt.Errorf("get access token: %w", err)
 	}
 
-	upstreamReq, err := s.buildInputTokensUpstreamRequest(ctx, c, account, upstreamBody, token)
+	tlsRouterMatch := s.matchTLSFingerprintRouter(c, account)
+	upstreamReq, err := s.buildInputTokensUpstreamRequest(ctx, c, account, upstreamBody, token, tlsRouterMatch)
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
 		return fmt.Errorf("build input_tokens request: %w", err)
 	}
 
 	proxyURL := resolveAccountProxyURL(account)
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.DoWithTLS(
+		upstreamReq,
+		proxyURL,
+		account.ID,
+		account.Concurrency,
+		s.resolveOpenAITLSProfile(account, tlsRouterMatch),
+	)
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
@@ -262,6 +269,7 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 	account *Account,
 	body []byte,
 	token string,
+	tlsRouterMatch ...TLSFingerprintRouterMatchResult,
 ) (*http.Request, error) {
 	targetURL := openaiPlatformAPIInputTokensURL
 	if account.Type == AccountTypeAPIKey {
@@ -302,8 +310,11 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 			}
 		}
 	}
-	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
-		req.Header.Set("user-agent", customUA)
+	// 与普通 Responses 请求共用最终 UA、originator 和 TLS Router 决策。
+	s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, false, tlsRouterMatch...)
+	if account.Type == AccountTypeOAuth {
+		ensureCodexIdentityHeaders(req.Header)
+		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))
 	}
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,68 @@ func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_APIKeyUsesResponsesI
 	require.Equal(t, "gpt-5.3-codex", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+}
+
+func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthUsesCodexTLSIdentityAndProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, macUA)
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+	c.Request.Header.Set("User-Agent", macUA)
+
+	profileID := int64(81)
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		profileID: {ID: profileID, Name: "count-tokens macOS TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+	}}
+	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
+		ID:      18,
+		Enabled: true,
+		Rules: []model.TLSFingerprintRouterRule{{
+			Enabled:                 true,
+			Pattern:                 "codex-tui/",
+			TLSFingerprintProfileID: profileID,
+			UpstreamUserAgent:       macUA,
+		}},
+	})
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"input_tokens":11}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:                 &config.Config{},
+		httpUpstream:        upstream,
+		tlsFPProfileService: profileService,
+		tlsFPRouterService:  routerService,
+	}
+	proxyID := int64(82)
+	account := &Account{
+		ID:          203,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 2,
+		ProxyID:     &proxyID,
+		Proxy:       &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
+		Credentials: map[string]any{"access_token": "oauth-token"},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":    true,
+			"tls_fingerprint_router_id": int64(18),
+		},
+	}
+
+	err := svc.ForwardCountTokensAsAnthropic(t.Context(), c, account, body, "gpt-5.4")
+	require.NoError(t, err)
+	require.Equal(t, "http://proxy.example:8080", upstream.lastProxyURL)
+	require.NotNil(t, upstream.lastTLSProfile)
+	require.Equal(t, "count-tokens macOS TLS", upstream.lastTLSProfile.Name)
+	require.Equal(t, macUA, upstream.lastReq.Header.Get("User-Agent"))
+	_, expectedOriginator := CodexAuthIdentityForUserAgent(macUA)
+	require.Equal(t, expectedOriginator, upstream.lastReq.Header.Get("Originator"))
+	require.Equal(t, CodexCanonicalClientVersion(), upstream.lastReq.Header.Get("Version"))
 }
 
 func TestOpenAIGatewayService_ForwardCountTokensAsAnthropic_OAuthFallsBackWhenPlatformEndpointUnsupported(t *testing.T) {

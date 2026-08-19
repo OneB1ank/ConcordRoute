@@ -203,6 +203,50 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 	require.Empty(t, upstream.req.Header.Get("Version"))
 }
 
+func TestRegisterAgentIdentityTaskFallsBackToAccountTLSProfile(t *testing.T) {
+	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, macUA)
+	key, privateKey := newTestAgentIdentityKey(t)
+	profileID := int64(73)
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		profileID: {ID: profileID, Name: "account macOS TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+	}}
+	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
+		ID:      12,
+		Name:    "Codex auth fallback",
+		Enabled: true,
+	})
+	upstream := &agentIdentityRegistrationUpstream{}
+	gateway := &OpenAIGatewayService{
+		httpUpstream:        upstream,
+		tlsFPProfileService: profileService,
+		tlsFPRouterService:  routerService,
+	}
+	account := &Account{
+		ID:          92,
+		Type:        AccountTypeOAuth,
+		Platform:    PlatformOpenAI,
+		Concurrency: 2,
+		Credentials: map[string]any{
+			"auth_mode":         OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":  key.runtimeID,
+			"agent_private_key": privateKey,
+		},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":     true,
+			"tls_fingerprint_profile_id": profileID,
+			"tls_fingerprint_router_id":  int64(12),
+		},
+	}
+
+	taskID, err := registerAgentIdentityTask(t.Context(), account, gateway)
+	require.NoError(t, err)
+	require.Equal(t, "task-routed", taskID)
+	require.NotNil(t, upstream.profile)
+	require.Equal(t, "account macOS TLS", upstream.profile.Name)
+	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
+}
+
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

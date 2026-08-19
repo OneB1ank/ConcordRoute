@@ -1471,11 +1471,18 @@ func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Acc
 		return ""
 	}
 
-	var proxyURL string
+	proxyURL := resolveAccountProxyURL(account)
 	if account.ProxyID != nil {
-		if p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && p != nil {
-			proxyURL = p.URL()
+		if s.proxyRepo == nil {
+			logger.LegacyPrintf("service.admin", "ensure_openai_privacy_proxy_unavailable: account_id=%d", account.ID)
+			return ""
 		}
+		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+		if err != nil || p == nil {
+			logger.LegacyPrintf("service.admin", "ensure_openai_privacy_proxy_unavailable: account_id=%d err=%v", account.ID, err)
+			return ""
+		}
+		proxyURL = p.URL()
 	}
 
 	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)
@@ -1505,11 +1512,18 @@ func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Acco
 		return ""
 	}
 
-	var proxyURL string
+	proxyURL := resolveAccountProxyURL(account)
 	if account.ProxyID != nil {
-		if p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID); err == nil && p != nil {
-			proxyURL = p.URL()
+		if s.proxyRepo == nil {
+			logger.LegacyPrintf("service.admin", "force_openai_privacy_proxy_unavailable: account_id=%d", account.ID)
+			return ""
 		}
+		p, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+		if err != nil || p == nil {
+			logger.LegacyPrintf("service.admin", "force_openai_privacy_proxy_unavailable: account_id=%d err=%v", account.ID, err)
+			return ""
+		}
+		proxyURL = p.URL()
 	}
 
 	mode := disableOpenAITraining(ctx, s.privacyClientFactory, token, proxyURL)
