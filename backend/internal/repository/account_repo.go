@@ -15,7 +15,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -3000,10 +2999,17 @@ func tempUnschedulablePredicate(ctx context.Context) dbpredicate.Account {
 		if service.CodexQuotaOverdraftSchedulingEnabled(ctx) {
 			reasonCol := s.C("temp_unschedulable_reason")
 			extraCol := s.C("extra")
-			enabledExpr := entsql.ExprP(
-				fmt.Sprintf("LOWER(BTRIM(COALESCE(%s ->> ?, ''))) IN ('1', 't', 'true')", extraCol),
-				service.CodexQuotaOverdraftEnabledExtraKey,
-			)
+			enabledExpr := entsql.P(func(b *entsql.Builder) {
+				// ExprP keeps literal '?' placeholders when nested in a PostgreSQL
+				// selector. PostgreSQL then interprets '?' as a JSON operator and the
+				// query fails at the following comma. Build the argument through the
+				// active Ent builder so it receives the correct $n placeholder.
+				b.WriteString("LOWER(BTRIM(COALESCE(")
+				b.WriteString(extraCol)
+				b.WriteString(" ->> ")
+				b.Arg(service.CodexQuotaOverdraftEnabledExtraKey)
+				b.WriteString(", ''))) IN ('1', 't', 'true')")
+			})
 			predicates = append(predicates, entsql.And(
 				entsql.EQ(s.C("platform"), service.PlatformOpenAI),
 				entsql.EQ(s.C("type"), service.AccountTypeOAuth),

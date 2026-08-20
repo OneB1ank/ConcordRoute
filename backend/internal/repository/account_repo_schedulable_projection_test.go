@@ -109,7 +109,37 @@ func TestSchedulableAccountQueryScopesCodexQuotaOverdraftToMarkedContext(t *test
 	require.Contains(t, overdraftSQL, `"type" =`)
 	require.Contains(t, overdraftSQL, `"parent_account_id" IS NULL`)
 	require.Contains(t, overdraftSQL, `"extra"`)
+	require.Contains(t, overdraftSQL, `"extra" ->> $4`)
+	require.NotContains(t, overdraftSQL, `?`, "PostgreSQL query must not retain Ent's generic placeholder")
 	require.NotContains(t, overdraftSQL, `::boolean`, "畸形历史值不得让可调度查询因布尔强转失败")
+}
+
+func TestListSchedulableByGroupIDAndPlatformUsesPostgresOverdraftPlaceholder(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	mock.ExpectQuery("group snapshot account query").
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "group_id", "created_at"}))
+	accounts, err := repo.ListSchedulableByGroupIDAndPlatform(
+		service.WithCodexQuotaOverdraftScheduling(context.Background()),
+		2,
+		service.PlatformOpenAI,
+	)
+	require.NoError(t, err)
+	require.Empty(t, accounts)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, `"temp_unschedulable_reason" LIKE`)
+	require.Regexp(t, `"extra" ->> \$[0-9]+`, normalized)
+	require.NotContains(t, normalized, `?`, "snapshot rebuild SQL must be valid PostgreSQL")
 }
 
 func TestClaimCodexQuotaOverdraftProbeAllowsCooledPassedCycleRecheck(t *testing.T) {
