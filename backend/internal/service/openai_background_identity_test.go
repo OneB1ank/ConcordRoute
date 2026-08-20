@@ -31,6 +31,9 @@ func TestOpenAIBackgroundIdentityReusesLatestNormalRequestSnapshot(t *testing.T)
 	userAgent, resolved := gateway.resolveOpenAIBackgroundIdentity(account)
 
 	require.Equal(t, match.UpstreamUserAgent, userAgent)
+	require.NotNil(t, resolved.identityAccount)
+	require.Equal(t, account.ID, resolved.identityAccount.ID)
+	resolved.identityAccount = nil
 	require.Equal(t, match, resolved)
 }
 

@@ -568,10 +568,17 @@ func (s *OpenAIGatewayService) dialLiveSidebandForAccount(ctx context.Context, r
 
 // matchLiveTLSFingerprintRouter 使用创建 Live 会话时记录的入站 UA 选择 fork 的 TLS 路由模板。
 func (s *OpenAIGatewayService) matchLiveTLSFingerprintRouter(account *Account, userAgent string) TLSFingerprintRouterMatchResult {
-	if s == nil || s.tlsFPRouterService == nil || account == nil || account.GetTLSFingerprintRouterID() <= 0 {
-		return TLSFingerprintRouterMatchResult{}
+	identityAccount := account
+	if s != nil {
+		identityAccount = s.resolveOpenAITransportIdentityAccount(context.Background(), account)
 	}
-	return s.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), userAgent)
+	result := TLSFingerprintRouterMatchResult{identityAccount: identityAccount}
+	if s == nil || s.tlsFPRouterService == nil || identityAccount == nil || identityAccount.GetTLSFingerprintRouterID() <= 0 {
+		return result
+	}
+	result = s.tlsFPRouterService.MatchUserAgent(identityAccount.GetTLSFingerprintRouterID(), userAgent)
+	result.identityAccount = identityAccount
+	return result
 }
 
 // liveClientPolicyResult 复用 fork 的 OAuth 客户端限制检测，不在 service 层写 HTTP 响应。

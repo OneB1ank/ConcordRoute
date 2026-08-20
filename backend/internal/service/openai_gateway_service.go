@@ -1339,14 +1339,18 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgent(
 	if req == nil {
 		return
 	}
+	identityAccount := account
+	if len(routerMatch) > 0 && routerMatch[0].identityAccount != nil {
+		identityAccount = routerMatch[0].identityAccount
+	}
 	if len(routerMatch) > 0 && routerMatch[0].Matched {
 		if ua := strings.TrimSpace(routerMatch[0].UpstreamUserAgent); ua != "" {
 			req.Header.Set("user-agent", ua)
 			return
 		}
 	}
-	if account != nil {
-		if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+	if identityAccount != nil {
+		if customUA := strings.TrimSpace(identityAccount.GetOpenAIUserAgent()); customUA != "" {
 			req.Header.Set("user-agent", customUA)
 		}
 	}
@@ -1354,9 +1358,9 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgent(
 		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 		return
 	}
-	wasBrowserUA := account != nil && account.Type == AccountTypeOAuth && openai.IsBrowserUserAgent(req.Header.Get("user-agent"))
-	s.overrideBrowserUserAgent(ctx, account, req)
-	if passthrough && account != nil && account.Type == AccountTypeOAuth && !wasBrowserUA && !openai.IsCodexOfficialClientRequest(req.Header.Get("user-agent")) {
+	wasBrowserUA := identityAccount != nil && identityAccount.Type == AccountTypeOAuth && openai.IsBrowserUserAgent(req.Header.Get("user-agent"))
+	s.overrideBrowserUserAgent(ctx, identityAccount, req)
+	if passthrough && identityAccount != nil && identityAccount.Type == AccountTypeOAuth && !wasBrowserUA && !openai.IsCodexOfficialClientRequest(req.Header.Get("user-agent")) {
 		// OAuth 安全透传：非浏览器、非官方 Codex UA 使用标准 Codex TUI 兜底。
 		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 	}
@@ -1372,6 +1376,9 @@ func (s *OpenAIGatewayService) codexIdentityOverrideUA(account *Account, routerM
 		if ua := strings.TrimSpace(routerMatch[0].UpstreamUserAgent); ua != "" {
 			return ua
 		}
+	}
+	if len(routerMatch) > 0 && routerMatch[0].identityAccount != nil {
+		account = routerMatch[0].identityAccount
 	}
 	if account == nil {
 		return ""
@@ -1396,14 +1403,38 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgentHeader(
 }
 
 func (s *OpenAIGatewayService) matchTLSFingerprintRouter(c *gin.Context, account *Account) TLSFingerprintRouterMatchResult {
-	if s == nil || s.tlsFPRouterService == nil || account == nil || account.GetTLSFingerprintRouterID() <= 0 {
-		return TLSFingerprintRouterMatchResult{}
+	identityAccount := account
+	if s != nil && account != nil {
+		ctx := context.Background()
+		if c != nil && c.Request != nil {
+			ctx = c.Request.Context()
+		}
+		identityAccount = s.resolveOpenAITransportIdentityAccount(ctx, account)
+	}
+	result := TLSFingerprintRouterMatchResult{identityAccount: identityAccount}
+	if s == nil || s.tlsFPRouterService == nil || identityAccount == nil || identityAccount.GetTLSFingerprintRouterID() <= 0 {
+		return result
 	}
 	userAgent := ""
 	if c != nil {
 		userAgent = c.GetHeader("User-Agent")
 	}
-	return s.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), userAgent)
+	result = s.tlsFPRouterService.MatchUserAgent(identityAccount.GetTLSFingerprintRouterID(), userAgent)
+	result.identityAccount = identityAccount
+	return result
+}
+
+// resolveOpenAITransportIdentityAccount 返回真正持有 OAuth 凭据和传输配置的账号。
+// Spark 影子只保留逻辑额度维度；UA、TLS Router/Profile 必须与父账号共用同一来源。
+func (s *OpenAIGatewayService) resolveOpenAITransportIdentityAccount(ctx context.Context, account *Account) *Account {
+	if s == nil || account == nil || !account.IsCredentialShadow() || s.accountRepo == nil {
+		return account
+	}
+	resolved, err := resolveCredentialAccount(ctx, s.accountRepo, account)
+	if err != nil || resolved == nil {
+		return account
+	}
+	return resolved
 }
 
 // rememberOpenAIOutboundIdentity 记录真实推理最终采用的 UA 与 TLS Router 命中结果。
@@ -1416,10 +1447,16 @@ func (s *OpenAIGatewayService) rememberOpenAIOutboundIdentity(account *Account, 
 	if userAgent == "" {
 		return
 	}
+	identityAccount := account
+	if match.identityAccount != nil {
+		identityAccount = match.identityAccount
+	}
+	storedMatch := match
+	storedMatch.identityAccount = nil
 	s.openaiOutboundIdentities.Store(account.ID, openAIOutboundIdentitySnapshot{
-		RouterID:            account.GetTLSFingerprintRouterID(),
-		ConfiguredUserAgent: openAIBackgroundIdentityBaseUA(account),
-		Match:               match,
+		RouterID:            identityAccount.GetTLSFingerprintRouterID(),
+		ConfiguredUserAgent: openAIBackgroundIdentityBaseUA(identityAccount),
+		Match:               storedMatch,
 		UserAgent:           userAgent,
 		UpdatedAt:           time.Now().UTC(),
 	})
@@ -1443,8 +1480,9 @@ func (s *OpenAIGatewayService) resolveOpenAIBackgroundIdentity(account *Account)
 	if s == nil || account == nil {
 		return CodexCanonicalUserAgent(), TLSFingerprintRouterMatchResult{}
 	}
-	routerID := account.GetTLSFingerprintRouterID()
-	configuredUA := openAIBackgroundIdentityBaseUA(account)
+	identityAccount := s.resolveOpenAITransportIdentityAccount(context.Background(), account)
+	routerID := identityAccount.GetTLSFingerprintRouterID()
+	configuredUA := openAIBackgroundIdentityBaseUA(identityAccount)
 	if raw, ok := s.openaiOutboundIdentities.Load(account.ID); ok {
 		if snapshot, valid := raw.(openAIOutboundIdentitySnapshot); valid &&
 			snapshot.RouterID == routerID &&
@@ -1452,7 +1490,9 @@ func (s *OpenAIGatewayService) resolveOpenAIBackgroundIdentity(account *Account)
 			!snapshot.UpdatedAt.After(time.Now().UTC()) &&
 			time.Since(snapshot.UpdatedAt) <= openAIOutboundIdentitySnapshotTTL &&
 			strings.TrimSpace(snapshot.UserAgent) != "" {
-			return snapshot.UserAgent, snapshot.Match
+			restoredMatch := snapshot.Match
+			restoredMatch.identityAccount = identityAccount
+			return snapshot.UserAgent, restoredMatch
 		}
 		s.openaiOutboundIdentities.Delete(account.ID)
 	}
@@ -1463,7 +1503,8 @@ func (s *OpenAIGatewayService) resolveOpenAIBackgroundIdentity(account *Account)
 	if s.tlsFPRouterService != nil && routerID > 0 {
 		match = s.tlsFPRouterService.MatchUserAgent(routerID, configuredUA)
 	}
-	identity := resolveCodexOutboundIdentity(s.codexIdentityOverrideUA(account, match))
+	match.identityAccount = identityAccount
+	identity := resolveCodexOutboundIdentity(s.codexIdentityOverrideUA(identityAccount, match))
 	return identity.userAgent, match
 }
 
@@ -1471,13 +1512,17 @@ func (s *OpenAIGatewayService) resolveOpenAITLSProfile(account *Account, routerM
 	if s == nil || s.tlsFPProfileService == nil {
 		return nil
 	}
+	identityAccount := account
+	if len(routerMatch) > 0 && routerMatch[0].identityAccount != nil {
+		identityAccount = routerMatch[0].identityAccount
+	}
 	if len(routerMatch) > 0 && routerMatch[0].Matched {
-		if profile, ok := s.tlsFPProfileService.ResolveRoutableTLSProfileByID(account, routerMatch[0].TLSFingerprintProfileID); ok {
+		if profile, ok := s.tlsFPProfileService.ResolveRoutableTLSProfileByID(identityAccount, routerMatch[0].TLSFingerprintProfileID); ok {
 			return profile
 		}
 	}
 	// ResolveTLSProfile 内部会按账号类型兜底，OpenAI API Key 即使手写 extra 也不会生效。
-	return s.tlsFPProfileService.ResolveTLSProfile(account)
+	return s.tlsFPProfileService.ResolveTLSProfile(identityAccount)
 }
 
 func (s *OpenAIGatewayService) resolveOpenAIWSTLSProfile(account *Account, routerMatch ...TLSFingerprintRouterMatchResult) (*tlsfingerprint.Profile, string) {

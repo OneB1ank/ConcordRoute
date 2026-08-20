@@ -38,6 +38,9 @@ type TLSFingerprintRouterMatchResult struct {
 	TLSFingerprintProfileID int64
 	UpstreamUserAgent       string
 	UpstreamOriginator      string
+	// identityAccount 绑定本次决策实际使用的 OAuth 凭据账号。
+	// Spark 影子账号据此让 UA、TLS Router/Profile 与父账号保持同源，逻辑账号 ID 仍用于计费和并发。
+	identityAccount *Account
 }
 
 type cachedTLSFingerprintRouter struct {

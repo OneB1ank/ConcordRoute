@@ -495,3 +495,55 @@ func TestAccountTestService_ManualOpenAITestDoesNotEnforceAutomaticPolicy(t *tes
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
 }
+
+func TestAccountTestService_ManualOpenAITestReusesStableRouterIdentity(t *testing.T) {
+	account := Account{
+		ID:          1701,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token": "test-token",
+			"user_agent":   "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+		},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":     true,
+			"tls_fingerprint_profile_id": int64(10),
+			"tls_fingerprint_router_id":  int64(9),
+		},
+	}
+	router := &model.TLSFingerprintRouter{
+		ID:      9,
+		Name:    "manual-probe-router",
+		Enabled: true,
+		Rules: []model.TLSFingerprintRouterRule{{
+			Enabled:                 true,
+			MatchType:               model.TLSRouterMatchExact,
+			Pattern:                 "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+			TLSFingerprintProfileID: 20,
+			UpstreamUserAgent:       "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+			UpstreamOriginator:      "codex-tui",
+		}},
+	}
+	upstream := &httpUpstreamRecorder{resp: successfulOpenAIAutomaticProbeResponse()}
+	svc := newOpenAIAutomaticProbeTestService(
+		[]Account{account},
+		upstream,
+		router,
+		map[int64]*model.TLSFingerprintProfile{
+			10: {ID: 10, Name: "fixed"},
+			20: {ID: 20, Name: "routed"},
+		},
+		nil,
+	)
+	c, _ := newTestContext()
+	c.Request.Header.Set("User-Agent", "Mozilla/5.0 admin-browser")
+
+	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "hi", AccountTestModeDefault)
+
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "routed", upstream.lastTLSProfile.Name)
+	require.Equal(t, "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
+}

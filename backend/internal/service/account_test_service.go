@@ -52,7 +52,8 @@ type accountTestBackgroundOptions struct {
 }
 
 type openAIAutomaticProbeDecision struct {
-	tlsRouterMatch TLSFingerprintRouterMatchResult
+	identityUserAgent string
+	tlsRouterMatch    TLSFingerprintRouterMatchResult
 }
 
 // withAccountTestUserAgent 标记无人值守测试，并保留显式配置的探针 User-Agent。
@@ -189,6 +190,15 @@ func (s *AccountTestService) resolveTLSProfile(account *Account) *tlsfingerprint
 func (s *AccountTestService) prepareOpenAIAutomaticProbe(c *gin.Context, account *Account) error {
 	options, automatic := accountTestBackgroundOptionsFromContext(c.Request.Context())
 	if !automatic {
+		// 管理页手动测试没有真实 Codex 入站 UA，复用账号最近一次真实出站身份；
+		// 快照缺失时按账号 UA/全局 UA 稳定匹配 TLS Router，避免固定模板与 Router 脱节。
+		if s.openAIGatewayService != nil && account.IsOpenAIOAuth() {
+			identityUA, routerMatch := s.openAIGatewayService.resolveOpenAIBackgroundIdentity(account)
+			c.Set(openAIAutomaticProbeDecisionKey, openAIAutomaticProbeDecision{
+				identityUserAgent: identityUA,
+				tlsRouterMatch:    routerMatch,
+			})
+		}
 		return nil
 	}
 	if s.openAIGatewayService == nil {
@@ -225,7 +235,10 @@ func (s *AccountTestService) prepareOpenAIAutomaticProbe(c *gin.Context, account
 	if policyResult.Enabled && !policyResult.Matched {
 		return fmt.Errorf("OpenAI automatic probe rejected: policy=%s reason=%s", policyResult.Policy, policyResult.Reason)
 	}
-	c.Set(openAIAutomaticProbeDecisionKey, openAIAutomaticProbeDecision{tlsRouterMatch: routerMatch})
+	c.Set(openAIAutomaticProbeDecisionKey, openAIAutomaticProbeDecision{
+		identityUserAgent: userAgent,
+		tlsRouterMatch:    routerMatch,
+	})
 	return nil
 }
 
@@ -238,33 +251,33 @@ func openAIAutomaticProbeDecisionFromContext(c *gin.Context) (openAIAutomaticPro
 	return decision, ok
 }
 
-// applyOpenAIAccountTestRouting 让自动探针复用正常网关的上游身份优先级，手动测试保持原样。
+// applyOpenAIAccountTestRouting 让自动与手动探针都复用正常网关的上游身份优先级。
 func (s *AccountTestService) applyOpenAIAccountTestRouting(c *gin.Context, account *Account, req *http.Request, isOAuth bool) {
-	decision, automatic := openAIAutomaticProbeDecisionFromContext(c)
-	if !automatic {
+	decision, routed := openAIAutomaticProbeDecisionFromContext(c)
+	if !routed {
 		applyAccountTestUserAgent(req)
 		return
 	}
 
-	if userAgent := strings.TrimSpace(c.GetHeader("User-Agent")); userAgent != "" {
+	if userAgent := strings.TrimSpace(decision.identityUserAgent); userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
 	if isOAuth {
-		isOfficialClient := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
+		isOfficialClient := openai.IsCodexOfficialClientByHeaders(req.Header.Get("User-Agent"), req.Header.Get("originator"))
 		req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isOfficialClient, decision.tlsRouterMatch))
 	}
 	s.openAIGatewayService.applyOpenAIUpstreamUserAgent(req.Context(), c, account, req, false, decision.tlsRouterMatch)
 }
 
 func (s *AccountTestService) openAIAccountTestIdentityOverrideUA(c *gin.Context, account *Account) string {
-	if decision, automatic := openAIAutomaticProbeDecisionFromContext(c); automatic {
+	if decision, routed := openAIAutomaticProbeDecisionFromContext(c); routed {
 		if s != nil && s.openAIGatewayService != nil {
 			if ua := s.openAIGatewayService.codexIdentityOverrideUA(account, decision.tlsRouterMatch); ua != "" {
 				return ua
 			}
-			// 无 TLS Router/账号 UA 时，保留后台探针显式指定的设备后缀。
-			if c != nil && c.Request != nil {
-				return accountTestUserAgentFromContext(c.Request.Context())
+			// 无 TLS Router/账号 UA 时，保留已解析的后台或手动探针设备身份。
+			if ua := strings.TrimSpace(decision.identityUserAgent); ua != "" {
+				return ua
 			}
 			return ""
 		}
@@ -289,7 +302,7 @@ func (s *AccountTestService) openAIAccountTestIdentityOverrideUA(c *gin.Context,
 }
 
 func (s *AccountTestService) resolveOpenAIAccountTestTLSProfile(c *gin.Context, account *Account) *tlsfingerprint.Profile {
-	if decision, automatic := openAIAutomaticProbeDecisionFromContext(c); automatic {
+	if decision, routed := openAIAutomaticProbeDecisionFromContext(c); routed {
 		return s.openAIGatewayService.resolveOpenAITLSProfile(account, decision.tlsRouterMatch)
 	}
 	return s.resolveTLSProfile(account)
