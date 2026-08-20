@@ -880,9 +880,21 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 				}),
 			)
 		case "unschedulable":
+			// “不可调度”仅表示人工关闭调度；运行时限流和临时封禁由各自筛选项展示。
 			q = q.Where(
 				dbaccount.StatusEQ(service.StatusActive),
 				dbaccount.SchedulableEQ(false),
+				dbaccount.Or(
+					dbaccount.RateLimitResetAtIsNil(),
+					dbaccount.RateLimitResetAtLTE(time.Now()),
+				),
+				dbpredicate.Account(func(s *entsql.Selector) {
+					col := s.C("temp_unschedulable_until")
+					s.Where(entsql.Or(
+						entsql.IsNull(col),
+						entsql.LTE(col, entsql.Expr("NOW()")),
+					))
+				}),
 			)
 		default:
 			q = q.Where(dbaccount.StatusEQ(status))
