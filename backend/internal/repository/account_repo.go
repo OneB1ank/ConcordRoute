@@ -2394,6 +2394,46 @@ func (r *accountRepository) UpdateCodexQuotaOverdraftProbeState(
 	return true, nil
 }
 
+// PersistCodexQuotaOverdraftProbeUnlessFailed 写入非失败状态时保留同周期已确认的失败终态。
+// 真实业务 429 与后台探测可能并发结束，此条件更新防止较慢的成功结果重新放行账号。
+func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
+	ctx context.Context,
+	id int64,
+	state *service.CodexQuotaOverdraftProbeState,
+) (bool, error) {
+	if state == nil || strings.TrimSpace(state.CycleKey) == "" || state.Status == "failed" {
+		return false, nil
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
+			updated_at = NOW()
+		WHERE id = $3
+			AND deleted_at IS NULL
+			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
+			AND (
+				COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $5
+				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,status}', '') <> 'failed'
+			)
+	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return false, err
+	}
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft non-failed state update failed: account=%d err=%v", id, err)
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return true, nil
+}
+
 func (r *accountRepository) ClearAntigravityQuotaScopes(ctx context.Context, id int64) error {
 	client := clientFromContext(ctx, r.client)
 	result, err := client.ExecContext(

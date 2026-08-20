@@ -35,6 +35,10 @@ type codexOverdraftCASRepoStub struct {
 	updateCalls  int
 }
 
+type codexOverdraftUsageRepoStub struct {
+	UsageLogRepository
+}
+
 func (b *codexOverdraftRuntimeBlockerStub) BlockAccountScheduling(*Account, time.Time, string) {}
 
 func (b *codexOverdraftRuntimeBlockerStub) ClearAccountSchedulingBlock(int64) {
@@ -269,6 +273,70 @@ func TestCodexQuotaOverdraftProbeRequiresFiveExplicitQuotaFailures(t *testing.T)
 	require.Equal(t, 1, repo.tempPauseCalls)
 	require.True(t, codexQuotaOverdraftPauseReason(account.TempUnschedulableReason))
 	require.False(t, codexQuotaOverdraftSchedulingAllowed(account, now), "同周期确认失败后不得继续绕过限额")
+}
+
+func TestCodexQuotaOverdraftBusinessSuccessPassesAndClearsPause(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.TempUnschedulableUntil = codexQuotaOverdraftTimePtr(now.Add(time.Hour))
+	account.TempUnschedulableReason = BuildAccountSchedulingThresholdReason("")
+	repo := &codexOverdraftProbeRepoStub{account: account}
+	coordinator := &CodexQuotaOverdraftCoordinator{accountRepo: repo, now: func() time.Time { return now }}
+
+	coordinator.observeBusinessSuccess(account, "gpt-5.4")
+
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	require.True(t, ok)
+	require.Equal(t, codexQuotaOverdraftProbePassed, state.Status)
+	require.Equal(t, "business_request_ok", state.ReasonCode)
+	require.NotNil(t, state.FiveHourStartedAt)
+	require.Equal(t, 1, repo.clearTempCalls)
+	require.Nil(t, account.TempUnschedulableUntil)
+}
+
+func TestCodexQuotaOverdraftInjectedBusiness429FailsImmediately(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	repo := &codexOverdraftProbeRepoStub{account: account}
+	coordinator := &CodexQuotaOverdraftCoordinator{
+		accountRepo:  repo,
+		httpUpstream: &accountUsageHTTPUpstreamStub{},
+		now:          func() time.Time { return now },
+	}
+	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+	markCodexQuotaOverdraftInjected(ctx, account.ID)
+
+	handled := coordinator.HandleQuota429(ctx, account, nil, []byte(`{"error":{"type":"usage_limit_reached"}}`), "gpt-5.4")
+
+	require.True(t, handled)
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	require.True(t, ok)
+	require.Equal(t, codexQuotaOverdraftProbeFailed, state.Status)
+	require.Equal(t, "business_quota_limited", state.ReasonCode)
+	require.Equal(t, 1, state.Attempts)
+	require.Equal(t, 1, repo.tempPauseCalls)
+}
+
+func TestCodexQuotaOverdraftFailedStateDoesNotShowActiveOverdraft(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	started := now.Add(-time.Hour)
+	recoverAt := now.Add(4 * time.Hour)
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = &CodexQuotaOverdraftProbeState{
+		Status:             codexQuotaOverdraftProbeFailed,
+		CycleKey:           "5h:" + formatCodexOverdraftUnix(recoverAt),
+		RecoverAt:          codexQuotaOverdraftTimePtr(recoverAt),
+		FiveHourRecoverAt:  codexQuotaOverdraftTimePtr(recoverAt),
+		OverdraftStartedAt: codexQuotaOverdraftTimePtr(started),
+		FiveHourStartedAt:  codexQuotaOverdraftTimePtr(started),
+	}
+	usage := &UsageInfo{FiveHour: &UsageProgress{Utilization: 100}}
+
+	applyCodexQuotaOverdraftUsage(context.Background(), &codexOverdraftUsageRepoStub{}, account, usage, now)
+
+	require.False(t, usage.FiveHour.OverdraftActive)
+	require.Nil(t, usage.FiveHour.OverdraftStats)
+	require.Nil(t, usage.FiveHour.OverdraftStarted)
 }
 
 func TestCodexQuotaOverdraftProbeInconclusiveNeverPauses(t *testing.T) {

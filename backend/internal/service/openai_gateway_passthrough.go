@@ -308,6 +308,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 		}
 	}
+	if codexQuotaOverdraftWasInjected(ctx, account.ID) && s.codexQuotaOverdraft != nil {
+		s.codexQuotaOverdraft.ObserveBusinessSuccess(account, reqModel)
+	}
 
 	if usage == nil {
 		usage = &OpenAIUsage{}

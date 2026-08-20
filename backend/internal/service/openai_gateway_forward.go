@@ -1018,6 +1018,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 			}
 		}
+		if codexQuotaOverdraftWasInjected(ctx, account.ID) && s.codexQuotaOverdraft != nil {
+			s.codexQuotaOverdraft.ObserveBusinessSuccess(account, originalModel)
+		}
 
 		if usage == nil {
 			usage = &OpenAIUsage{}

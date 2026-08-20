@@ -194,3 +194,30 @@ func TestUpdateCodexQuotaOverdraftProbeStateUsesCycleCAS(t *testing.T) {
 	require.Contains(t, normalized, "extra ->> $4")
 	require.Contains(t, normalized, "cycle_key}' = $5")
 }
+
+func TestPersistCodexQuotaOverdraftProbeUnlessFailedKeepsFailedTerminal(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	mock.ExpectExec("persist non-failed overdraft state").WillReturnResult(sqlmock.NewResult(0, 0))
+	persisted, err := repo.PersistCodexQuotaOverdraftProbeUnlessFailed(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
+		Status:    "passed",
+		CycleKey:  "5h:1787166000",
+		StartedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.False(t, persisted)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, "cycle_key}', '') <> $5")
+	require.Contains(t, normalized, "status}', '') <> 'failed'")
+	require.NotContains(t, normalized, "?", "PostgreSQL 条件更新不能残留通用占位符")
+}

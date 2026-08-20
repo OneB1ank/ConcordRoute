@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tidwall/sjson"
@@ -14,9 +15,11 @@ import (
 const (
 	// CodexQuotaOverdraftEnabledExtraKey 保存账号级透支开关，默认关闭。
 	CodexQuotaOverdraftEnabledExtraKey = "codex_quota_overdraft_enabled"
-	// codexQuotaOverdraftStartPercent 只有上游精确额度达到 100% 才进入有限真实探测。
-	// 99.5% 等近似值保持普通请求路径，避免提前消耗额度。
+	// codexQuotaOverdraftStartPercent 仍用于确认额度周期已经耗尽。
 	codexQuotaOverdraftStartPercent = 100.0
+	// codexQuotaOverdraftPrearmPercent 提前为接近限额的真实请求附加透支上下文，
+	// 让跨过 100% 的第一条业务请求本身成为最可靠的可用性证据。
+	codexQuotaOverdraftPrearmPercent = 95.0
 	codexQuotaOverdraftCallIDPrefix = "call_sub2api_overdraft_"
 	codexQuotaOverdraftExecInput    = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
 	codexQuotaOverdraftMaxBodyBytes = 32 << 20
@@ -32,12 +35,21 @@ func isCodexQuotaOverdraftAccount(account *Account) bool {
 
 type codexQuotaOverdraftSchedulingCtxKey struct{}
 
+// codexQuotaOverdraftRequestState 记录本次请求实际向哪些账号发送了透支载荷。
+// 使用并发映射是因为流式响应与状态落库可能位于不同协程。
+type codexQuotaOverdraftRequestState struct {
+	injectedAccounts sync.Map
+}
+
 // WithCodexQuotaOverdraftScheduling 标记允许进入账号级透支调度的普通文本请求。
 func WithCodexQuotaOverdraftScheduling(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, codexQuotaOverdraftSchedulingCtxKey{}, true)
+	if codexQuotaOverdraftRequestStateFromContext(ctx) != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, codexQuotaOverdraftSchedulingCtxKey{}, &codexQuotaOverdraftRequestState{})
 }
 
 // CodexQuotaOverdraftSchedulingEnabled 判断当前端点是否允许执行透支调度。
@@ -45,47 +57,76 @@ func CodexQuotaOverdraftSchedulingEnabled(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	enabled, _ := ctx.Value(codexQuotaOverdraftSchedulingCtxKey{}).(bool)
-	return enabled
+	return codexQuotaOverdraftRequestStateFromContext(ctx) != nil
 }
 
 func codexQuotaOverdraftSchedulingEnabled(ctx context.Context) bool {
 	return CodexQuotaOverdraftSchedulingEnabled(ctx)
 }
 
-func (s *OpenAIGatewayService) shouldInjectCodexQuotaOverdraft(ctx context.Context, account *Account, compact bool) bool {
-	return codexQuotaOverdraftSchedulingEnabled(ctx) && !compact &&
-		s != nil && codexQuotaOverdraftRequestActive(account, time.Now().UTC())
+func codexQuotaOverdraftRequestStateFromContext(ctx context.Context) *codexQuotaOverdraftRequestState {
+	if ctx == nil {
+		return nil
+	}
+	state, _ := ctx.Value(codexQuotaOverdraftSchedulingCtxKey{}).(*codexQuotaOverdraftRequestState)
+	return state
 }
 
-// codexQuotaOverdraftRequestActive 将请求体修改严格限制在真实透支周期内。
-// 账号开关只表示允许透支；低于启动阈值时普通请求必须保持原始结构。
-// 若上游没有返回百分比，但已经通过明确的额度耗尽 429 建立了 fallback
-// 周期，则在该周期恢复时间前继续沿用状态机结论。
-func codexQuotaOverdraftRequestActive(account *Account, now time.Time) bool {
+func markCodexQuotaOverdraftInjected(ctx context.Context, accountID int64) {
+	if accountID <= 0 {
+		return
+	}
+	if state := codexQuotaOverdraftRequestStateFromContext(ctx); state != nil {
+		state.injectedAccounts.Store(accountID, struct{}{})
+	}
+}
+
+func codexQuotaOverdraftWasInjected(ctx context.Context, accountID int64) bool {
+	if accountID <= 0 {
+		return false
+	}
+	state := codexQuotaOverdraftRequestStateFromContext(ctx)
+	if state == nil {
+		return false
+	}
+	_, ok := state.injectedAccounts.Load(accountID)
+	return ok
+}
+
+func (s *OpenAIGatewayService) shouldInjectCodexQuotaOverdraft(ctx context.Context, account *Account, compact bool) bool {
+	return codexQuotaOverdraftSchedulingEnabled(ctx) && !compact &&
+		s != nil && codexQuotaOverdraftInjectionEligible(account, time.Now().UTC())
+}
+
+// codexQuotaOverdraftInjectionEligible 在 95% 预热区间开始注入；已确认失败或
+// 已恢复的当前周期保持关闭，避免重复发送已知无效的载荷。
+func codexQuotaOverdraftInjectionEligible(account *Account, now time.Time) bool {
 	if !isCodexQuotaOverdraftAccount(account) {
 		return false
 	}
 	state, _ := codexQuotaOverdraftStateFromAccount(account)
-	if state != nil {
+	if state != nil && state.RecoverAt != nil && state.RecoverAt.After(now) {
 		switch state.Status {
+		case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbePassed, codexQuotaOverdraftProbeInconclusive:
+			return true
 		case codexQuotaOverdraftProbeFailed, codexQuotaOverdraftProbeRecovered:
 			return false
 		}
 	}
-	if _, exhausted := codexQuotaOverdraftSignalFromAccount(account, state, now); exhausted {
-		return codexQuotaOverdraftSchedulingAllowed(account, now)
+	windowEligible := func(usedKey, resetKey string) bool {
+		if parseExtraFloat64(account.Extra[usedKey]) < codexQuotaOverdraftPrearmPercent {
+			return false
+		}
+		resetAt := codexQuotaOverdraftResetAt(account.Extra[resetKey], now)
+		return resetAt == nil || resetAt.After(now)
 	}
-	if state == nil || state.RecoverAt == nil || !state.RecoverAt.After(now) ||
-		!strings.HasPrefix(state.CycleKey, "multiple:") {
-		return false
-	}
-	switch state.Status {
-	case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbePassed, codexQuotaOverdraftProbeInconclusive:
-		return true
-	default:
-		return false
-	}
+	return windowEligible("codex_5h_used_percent", "codex_5h_reset_at") ||
+		windowEligible("codex_7d_used_percent", "codex_7d_reset_at")
+}
+
+// codexQuotaOverdraftRequestActive 保留旧调用名，统一复用新的预热判定。
+func codexQuotaOverdraftRequestActive(account *Account, now time.Time) bool {
+	return codexQuotaOverdraftInjectionEligible(account, now)
 }
 
 func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Context, account *Account, compact bool, body []byte) []byte {
@@ -93,10 +134,14 @@ func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Contex
 		return body
 	}
 	updated, changed, _ := injectCodexQuotaOverdraft(body)
-	if !changed {
-		return body
+	if changed {
+		markCodexQuotaOverdraftInjected(ctx, account.ID)
+		return updated
 	}
-	return updated
+	if codexQuotaOverdraftBodyHasInjection(body) {
+		markCodexQuotaOverdraftInjected(ctx, account.ID)
+	}
+	return body
 }
 
 type codexQuotaOverdraftDocument struct {
@@ -107,6 +152,26 @@ type codexQuotaOverdraftInputItem struct {
 	Type   string `json:"type"`
 	Role   string `json:"role"`
 	CallID string `json:"call_id"`
+}
+
+func codexQuotaOverdraftBodyHasInjection(body []byte) bool {
+	var document codexQuotaOverdraftDocument
+	if len(body) == 0 || json.Unmarshal(body, &document) != nil {
+		return false
+	}
+	return codexQuotaOverdraftInputHasInjection(document.Input)
+}
+
+func codexQuotaOverdraftInputHasInjection(input []json.RawMessage) bool {
+	for _, raw := range input {
+		var item codexQuotaOverdraftInputItem
+		if err := json.Unmarshal(raw, &item); err == nil &&
+			item.Type == "custom_tool_call" &&
+			strings.HasPrefix(item.CallID, codexQuotaOverdraftCallIDPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // injectCodexQuotaOverdraft 追加一组无操作工具调用历史；不支持的请求结构保持原样。
@@ -123,13 +188,8 @@ func injectCodexQuotaOverdraft(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 
-	for _, raw := range document.Input {
-		var item codexQuotaOverdraftInputItem
-		if err := json.Unmarshal(raw, &item); err == nil &&
-			item.Type == "custom_tool_call" &&
-			strings.HasPrefix(item.CallID, codexQuotaOverdraftCallIDPrefix) {
-			return body, false, nil
-		}
+	if codexQuotaOverdraftInputHasInjection(document.Input) {
+		return body, false, nil
 	}
 
 	var last codexQuotaOverdraftInputItem

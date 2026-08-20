@@ -18,7 +18,7 @@ func TestCodexQuotaOverdraftInjection(t *testing.T) {
 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
 	svc := &OpenAIGatewayService{}
 	reset := time.Now().UTC().Add(time.Hour)
-	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+	oauth := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
 		CodexQuotaOverdraftEnabledExtraKey: true,
 		"codex_5h_used_percent":            100,
 		"codex_5h_reset_at":                reset.Format(time.RFC3339),
@@ -27,6 +27,7 @@ func TestCodexQuotaOverdraftInjection(t *testing.T) {
 
 	updated := svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, body)
 	require.NotEqual(t, string(body), string(updated))
+	require.True(t, codexQuotaOverdraftWasInjected(ctx, oauth.ID))
 
 	var document codexQuotaOverdraftDocument
 	require.NoError(t, json.Unmarshal(updated, &document))
@@ -81,7 +82,7 @@ func TestCodexQuotaOverdraftInjectionGuards(t *testing.T) {
 	require.Equal(t, oversized, svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, oversized))
 }
 
-func TestCodexQuotaOverdraftInjectionStartsAtThreshold(t *testing.T) {
+func TestCodexQuotaOverdraftInjectionStartsAtPrearmThreshold(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)
 	past := now.Add(-time.Minute)
@@ -92,19 +93,19 @@ func TestCodexQuotaOverdraftInjectionStartsAtThreshold(t *testing.T) {
 	}
 
 	below := base()
-	below.Extra["codex_5h_used_percent"] = 99.99
+	below.Extra["codex_5h_used_percent"] = codexQuotaOverdraftPrearmPercent - 0.01
 	below.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 	require.False(t, codexQuotaOverdraftRequestActive(below, now))
 
 	atThreshold := base()
-	atThreshold.Extra["codex_5h_used_percent"] = codexQuotaOverdraftStartPercent
+	atThreshold.Extra["codex_5h_used_percent"] = codexQuotaOverdraftPrearmPercent
 	atThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 	require.True(t, codexQuotaOverdraftRequestActive(atThreshold, now))
 
 	nearThreshold := base()
 	nearThreshold.Extra["codex_5h_used_percent"] = 99.5
 	nearThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
-	require.False(t, codexQuotaOverdraftRequestActive(nearThreshold, now))
+	require.True(t, codexQuotaOverdraftRequestActive(nearThreshold, now))
 
 	exhausted := base()
 	exhausted.Extra["codex_5h_used_percent"] = 100.0
