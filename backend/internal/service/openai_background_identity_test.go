@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,4 +82,51 @@ func TestOpenAIBackgroundIdentityRejectsSnapshotAfterConfiguredUAChanges(t *test
 	require.Equal(t, resolveCodexOutboundIdentity(account.GetOpenAIUserAgent()).userAgent, userAgent)
 	_, exists := gateway.openaiOutboundIdentities.Load(account.ID)
 	require.False(t, exists)
+}
+
+func TestOpenAIBackgroundIdentityDoesNotRematchUnknownForegroundUA(t *testing.T) {
+	account := &Account{
+		ID:       45,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"user_agent": "codex-tui/2.0.0 (Mac OS 15.6; arm64) Apple_Terminal",
+		},
+		Extra: map[string]any{"tls_fingerprint_router_id": int64(9)},
+	}
+	match := TLSFingerprintRouterMatchResult{
+		Matched:                 true,
+		RouterID:                9,
+		RouterName:              "macos-router",
+		RuleName:                "darwin-client",
+		TLSFingerprintProfileID: 12,
+		UpstreamUserAgent:       "codex-cli/1.2.3 (Mac OS 15.6; arm64) Apple_Terminal",
+		UpstreamOriginator:      "codex_cli_rs",
+	}
+	router := &model.TLSFingerprintRouter{ID: 9, Name: "macos-router", Enabled: true}
+	routerService := &TLSFingerprintRouterService{
+		localCache: map[int64]*cachedTLSFingerprintRouter{
+			9: {
+				TLSFingerprintRouter: router,
+				rules: []cachedTLSFingerprintRouterRule{{
+					TLSFingerprintRouterRule: model.TLSFingerprintRouterRule{},
+				}},
+			},
+		},
+	}
+	// Populate the embedded rule with the same outputs as the saved snapshot.
+	routerService.localCache[9].rules[0].TLSFingerprintRouterRule = model.TLSFingerprintRouterRule{
+		Name:                    "darwin-client",
+		Enabled:                 true,
+		TLSFingerprintProfileID: 12,
+		UpstreamUserAgent:       match.UpstreamUserAgent,
+		UpstreamOriginator:      match.UpstreamOriginator,
+	}
+	gateway := &OpenAIGatewayService{tlsFPRouterService: routerService}
+	gateway.rememberOpenAIOutboundIdentity(account, match.UpstreamUserAgent, match)
+
+	userAgent, resolved := gateway.resolveOpenAIBackgroundIdentity(account)
+	require.Equal(t, match.UpstreamUserAgent, userAgent)
+	resolved.identityAccount = nil
+	require.Equal(t, match, resolved)
 }

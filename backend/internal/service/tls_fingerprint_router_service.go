@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -84,13 +85,72 @@ func NewTLSFingerprintRouterService(
 
 	if cache != nil {
 		cache.SubscribeUpdates(ctx, func() {
+			before := svc.identityRouterState()
+			// 先刷新本地规则，再清除后台身份快照，避免快照被清理后
+			// 恢复流程在旧的本地 Router 缓存上重新生成身份。
 			if err := svc.refreshLocalCache(context.Background()); err != nil {
 				logger.LegacyPrintf("service.tls_fp_router", "[TLSFPRouterService] Failed to refresh cache on notification: %v", err)
+				// 缓存和数据库都不可读时保留现有快照，等待下一次通知或 TTL，
+				// 避免一次基础设施抖动造成所有账号重新生成设备身份。
+				return
+			}
+			// Pub/Sub 消息不携带 Router ID。只清理实际发生变化或被删除
+			// 的 Router，避免无关 Router 更新导致所有账号的身份快照抖动。
+			for id := range changedTLSFingerprintRouterIDs(before, svc.identityRouterState()) {
+				invalidateOpenAIOutboundIdentitiesForTLSRouter(id)
 			}
 		})
 	}
 
 	return svc
+}
+
+// identityRouterState 返回 Router 的出站匹配相关字段快照。
+// 时间戳变化本身不影响 UA 路由，因此比较时会忽略 CreatedAt/UpdatedAt。
+func (s *TLSFingerprintRouterService) identityRouterState() map[int64]*model.TLSFingerprintRouter {
+	state := make(map[int64]*model.TLSFingerprintRouter)
+	if s == nil {
+		return state
+	}
+	s.localMu.RLock()
+	defer s.localMu.RUnlock()
+	for id, cached := range s.localCache {
+		if cached == nil || cached.TLSFingerprintRouter == nil {
+			continue
+		}
+		router := *cached.TLSFingerprintRouter
+		router.Rules = append([]model.TLSFingerprintRouterRule(nil), cached.Rules...)
+		state[id] = &router
+	}
+	return state
+}
+
+func changedTLSFingerprintRouterIDs(before, after map[int64]*model.TLSFingerprintRouter) map[int64]struct{} {
+	changed := make(map[int64]struct{})
+	for id, previous := range before {
+		current, ok := after[id]
+		if !ok || !sameTLSFingerprintRouterIdentity(previous, current) {
+			changed[id] = struct{}{}
+		}
+	}
+	for id := range after {
+		if _, ok := before[id]; !ok {
+			changed[id] = struct{}{}
+		}
+	}
+	return changed
+}
+
+func sameTLSFingerprintRouterIdentity(a, b *model.TLSFingerprintRouter) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	left, right := *a, *b
+	left.CreatedAt = time.Time{}
+	left.UpdatedAt = time.Time{}
+	right.CreatedAt = time.Time{}
+	right.UpdatedAt = time.Time{}
+	return reflect.DeepEqual(left, right)
 }
 
 // List 获取所有 TLS 路由器。
@@ -118,6 +178,7 @@ func (s *TLSFingerprintRouterService) Create(ctx context.Context, router *model.
 	refreshCtx, cancel := s.newCacheRefreshContext()
 	defer cancel()
 	s.invalidateAndNotify(refreshCtx)
+	invalidateOpenAIOutboundIdentitiesForTLSRouter(created.ID)
 
 	return created, nil
 }
@@ -137,6 +198,7 @@ func (s *TLSFingerprintRouterService) Update(ctx context.Context, router *model.
 	refreshCtx, cancel := s.newCacheRefreshContext()
 	defer cancel()
 	s.invalidateAndNotify(refreshCtx)
+	invalidateOpenAIOutboundIdentitiesForTLSRouter(updated.ID)
 
 	return updated, nil
 }
@@ -150,6 +212,7 @@ func (s *TLSFingerprintRouterService) Delete(ctx context.Context, id int64) erro
 	refreshCtx, cancel := s.newCacheRefreshContext()
 	defer cancel()
 	s.invalidateAndNotify(refreshCtx)
+	invalidateOpenAIOutboundIdentitiesForTLSRouter(id)
 
 	return nil
 }
@@ -185,6 +248,66 @@ func (s *TLSFingerprintRouterService) MatchUserAgent(routerID int64, userAgent s
 		}
 	}
 	return TLSFingerprintRouterMatchResult{RouterID: router.ID, RouterName: router.Name}
+}
+
+// SnapshotMatchIsCurrent reports whether a previously selected Router rule is
+// still present with the same transport outputs. It deliberately does not try
+// to rematch an unknown inbound UA: background probes have no request UA, and
+// rematching with the account's configured UA could select a different rule
+// from the one used by the last foreground request.
+func (s *TLSFingerprintRouterService) SnapshotMatchIsCurrent(snapshot TLSFingerprintRouterMatchResult) bool {
+	if s == nil || snapshot.RouterID <= 0 {
+		return true
+	}
+	router, verified := s.getRouterForIdentitySnapshot(snapshot.RouterID)
+	if !verified {
+		// 临时缓存/数据库错误时保留旧快照，继续使用 6 小时 TTL 兜底；
+		// 这样单次 Redis/数据库抖动不会让后台探测生成新设备身份。
+		return true
+	}
+	if router == nil || router.TLSFingerprintRouter == nil {
+		return false
+	}
+	if snapshot.RouterName != router.Name || !router.Enabled {
+		return !snapshot.Matched && snapshot.RouterName == router.Name && !router.Enabled
+	}
+	if !snapshot.Matched {
+		// There is no source UA to re-evaluate. Active CRUD/PubSub invalidation
+		// handles rule-set changes; the router identity itself is still stable.
+		return true
+	}
+	for _, rule := range router.rules {
+		if rule.Name == snapshot.RuleName &&
+			rule.TLSFingerprintProfileID == snapshot.TLSFingerprintProfileID &&
+			rule.UpstreamUserAgent == snapshot.UpstreamUserAgent &&
+			rule.UpstreamOriginator == snapshot.UpstreamOriginator {
+			return rule.Enabled
+		}
+	}
+	return false
+}
+
+// getRouterForIdentitySnapshot distinguishes a verified missing Router from a
+// transient cache/database read failure. The latter must not evict a stable
+// foreground identity snapshot.
+func (s *TLSFingerprintRouterService) getRouterForIdentitySnapshot(id int64) (*cachedTLSFingerprintRouter, bool) {
+	if s == nil || id <= 0 {
+		return nil, true
+	}
+	s.localMu.RLock()
+	router, ok := s.localCache[id]
+	s.localMu.RUnlock()
+	if ok {
+		return router, true
+	}
+	if err := s.refreshLocalCache(context.Background()); err != nil {
+		logger.LegacyPrintf("service.tls_fp_router", "[TLSFPRouterService] Failed to refresh identity snapshot cache: %v", err)
+		return nil, false
+	}
+	s.localMu.RLock()
+	router = s.localCache[id]
+	s.localMu.RUnlock()
+	return router, true
 }
 
 // GetRuntimeRouter 从本地缓存读取路由器运行时配置，供后台 token 刷新等非请求路径使用。

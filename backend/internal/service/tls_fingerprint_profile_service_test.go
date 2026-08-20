@@ -2,6 +2,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,38 @@ func TestTLSFingerprintProfileService_ResolveTLSProfileOpenAI(t *testing.T) {
 		Extra:    map[string]any{"enable_tls_fingerprint": true},
 	}
 	require.Nil(t, svc.ResolveTLSProfile(openAIAPIKey), "OpenAI API Key 不应启用 TLS 指纹伪装")
+}
+
+func TestChangedTLSFingerprintProfileIDsOnlyReportsHandshakeChanges(t *testing.T) {
+	base := &model.TLSFingerprintProfile{
+		ID:                3,
+		Name:              "macos",
+		EnableGREASE:      true,
+		CipherSuites:      []uint16{4865, 4866},
+		SupportedVersions: []uint16{0x0304, 0x0303},
+	}
+	updatedTimestampOnly := *base
+	updatedTimestampOnly.UpdatedAt = updatedTimestampOnly.UpdatedAt.Add(time.Hour)
+	require.Empty(t, changedTLSFingerprintProfileIDs(
+		map[int64]*model.TLSFingerprintProfile{3: base},
+		map[int64]*model.TLSFingerprintProfile{3: &updatedTimestampOnly},
+	))
+
+	changedProfile := updatedTimestampOnly
+	changedProfile.CipherSuites = []uint16{4865, 4867}
+	changed := changedTLSFingerprintProfileIDs(
+		map[int64]*model.TLSFingerprintProfile{3: base},
+		map[int64]*model.TLSFingerprintProfile{3: &changedProfile},
+	)
+	_, ok := changed[3]
+	require.True(t, ok)
+
+	removed := changedTLSFingerprintProfileIDs(
+		map[int64]*model.TLSFingerprintProfile{3: base},
+		map[int64]*model.TLSFingerprintProfile{},
+	)
+	_, ok = removed[3]
+	require.True(t, ok)
 }
 
 func TestTLSFingerprintProfileService_ResolveTLSProfileQoderCosy(t *testing.T) {

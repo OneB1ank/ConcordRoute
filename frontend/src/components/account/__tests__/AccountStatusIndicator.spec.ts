@@ -78,7 +78,7 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.text()).not.toContain('claude-sonnet-5')
   })
 
-  it('Grok 账号额度限流时显示自动恢复时间而非临时不可调度', () => {
+	it('Grok 账号额度限流时显示自动恢复时间而非临时不可调度', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {
         account: makeAccount({
@@ -100,8 +100,28 @@ describe('AccountStatusIndicator', () => {
 
     expect(wrapper.find('.badge-warning').text()).toBe('admin.accounts.status.rateLimited')
     expect(wrapper.text()).toContain('admin.accounts.status.rateLimitedAutoResume')
-    expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
-  })
+		expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
+	})
+
+	it('429 与真实临时不可调度同时存在时分别显示两个恢复边界', () => {
+		const wrapper = mount(AccountStatusIndicator, {
+			props: {
+				account: makeAccount({
+					platform: 'openai',
+					rate_limit_reset_at: '2099-07-11T13:00:00Z',
+					temp_unschedulable_until: '2099-07-11T13:30:00Z',
+					temp_unschedulable_reason: '{"source":"codex_quota_overdraft"}'
+				})
+			},
+			global: {
+				stubs: { Icon: true }
+			}
+		})
+
+		expect(wrapper.text()).toContain('admin.accounts.status.rateLimited')
+		expect(wrapper.text()).toContain('admin.accounts.status.tempUnschedulable')
+		expect(wrapper.text()).toContain('admin.accounts.status.tempUnschedulableUntil')
+	})
 
   it('模型限流 + overages 启用 + 无 AICredits key → 显示 ⚡ (credits_active)', () => {
     const wrapper = mount(AccountStatusIndicator, {

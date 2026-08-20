@@ -1,20 +1,13 @@
 <template>
   <div class="flex items-center gap-2">
-    <!-- Rate Limit Display (429) - Two-line layout -->
+    <!-- Rate Limit Display (429) - independent from temporary unschedulable state -->
     <div v-if="isRateLimited" class="flex flex-col items-center gap-1">
       <span class="badge text-xs badge-warning">{{ t('admin.accounts.status.rateLimited') }}</span>
       <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ rateLimitResumeText }}</span>
     </div>
 
-    <!-- Overload Display (529) - Two-line layout -->
-    <div v-else-if="isOverloaded" class="flex flex-col items-center gap-1">
-      <span class="badge text-xs badge-danger">{{ t('admin.accounts.status.overloaded') }}</span>
-      <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ overloadCountdown }}</span>
-    </div>
-
-    <!-- Main Status Badge (shown when not rate limited/overloaded) -->
-    <template v-else>
-      <div v-if="isTempUnschedulable" class="flex flex-col items-center gap-1">
+    <!-- Temporary unschedulable state is shown alongside 429 when both are active. -->
+    <div v-if="showTempUnschedulable" class="flex flex-col items-center gap-1">
         <button
           type="button"
           :class="['badge text-xs', statusClass, 'cursor-pointer']"
@@ -26,11 +19,18 @@
         <span class="max-w-[180px] text-center text-[11px] leading-4 text-gray-500 dark:text-gray-400">
           {{ tempUnschedRecoveryText }}
         </span>
-      </div>
-      <span v-else :class="['badge text-xs', statusClass]">
-        {{ statusText }}
-      </span>
-    </template>
+    </div>
+
+    <!-- Overload Display (529) - independent from 429 and temporary state -->
+    <div v-if="isOverloaded" class="flex flex-col items-center gap-1">
+      <span class="badge text-xs badge-danger">{{ t('admin.accounts.status.overloaded') }}</span>
+      <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ overloadCountdown }}</span>
+    </div>
+
+    <!-- Main Status Badge (shown when no transient state is active) -->
+    <span v-if="!isRateLimited && !showTempUnschedulable && !isOverloaded" :class="['badge text-xs', statusClass]">
+      {{ statusText }}
+    </span>
 
     <!-- Error Info Indicator -->
     <div v-if="hasError && account.error_message" class="group/error relative">
@@ -275,6 +275,13 @@ const isTempUnschedulable = computed(() => {
   return new Date(props.account.temp_unschedulable_until) > new Date()
 })
 
+// Older Grok records used a temporary field as a presentation-only alias for 429.
+// Keep that legacy duplicate hidden while exposing real combinations for all accounts.
+const showTempUnschedulable = computed(() => {
+  if (!isTempUnschedulable.value) return false
+  return !(props.account.platform === 'grok' && props.account.temp_unschedulable_reason === 'legacy grok rate limited')
+})
+
 // Computed: has error status
 const hasError = computed(() => {
   return props.account.status === 'error'
@@ -306,7 +313,7 @@ const overloadCountdown = computed(() => {
 })
 
 const tempUnschedRecoveryText = computed(() => {
-  if (!isTempUnschedulable.value || !props.account.temp_unschedulable_until) return ''
+  if (!showTempUnschedulable.value || !props.account.temp_unschedulable_until) return ''
   return t('admin.accounts.status.tempUnschedulableUntil', {
     time: formatDateTime(props.account.temp_unschedulable_until)
   })
@@ -317,7 +324,7 @@ const statusClass = computed(() => {
   if (hasError.value) {
     return 'badge-danger'
   }
-  if (isTempUnschedulable.value) {
+  if (showTempUnschedulable.value) {
     return 'badge-warning'
   }
   if (props.account.status !== 'active') {
@@ -337,7 +344,7 @@ const statusText = computed(() => {
   if (hasError.value) {
     return t('admin.accounts.status.error')
   }
-  if (isTempUnschedulable.value) {
+  if (showTempUnschedulable.value) {
     return t('admin.accounts.status.tempUnschedulable')
   }
   if (props.account.status !== 'active') {
@@ -353,7 +360,7 @@ const statusText = computed(() => {
 })
 
 const handleTempUnschedClick = () => {
-  if (!isTempUnschedulable.value) return
+  if (!showTempUnschedulable.value) return
   emit('show-temp-unsched', props.account)
 }
 </script>

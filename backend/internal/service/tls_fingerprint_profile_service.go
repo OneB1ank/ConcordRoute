@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math/rand/v2"
+	"reflect"
 	"sync"
 	"time"
 
@@ -60,13 +61,80 @@ func NewTLSFingerprintProfileService(
 
 	if cache != nil {
 		cache.SubscribeUpdates(ctx, func() {
+			before := svc.identityProfileState()
+			// 先刷新本地模板，再清除后台身份快照，避免快照被清理后
+			// 恢复流程在旧的本地 Profile 缓存上重新生成身份。
 			if err := svc.refreshLocalCache(context.Background()); err != nil {
 				logger.LegacyPrintf("service.tls_fp_profile", "[TLSFPProfileService] Failed to refresh cache on notification: %v", err)
+				// 缓存和数据库都不可读时保留现有快照，等待下一次通知或 TTL，
+				// 避免一次基础设施抖动造成所有账号重新生成设备身份。
+				return
+			}
+			// Pub/Sub 消息不携带 Profile ID。只清理实际发生变化或被删除
+			// 的 Profile，避免无关 Profile 更新导致所有账号的身份快照抖动。
+			for id := range changedTLSFingerprintProfileIDs(before, svc.identityProfileState()) {
+				invalidateOpenAIOutboundIdentitiesForTLSProfile(id)
 			}
 		})
 	}
 
 	return svc
+}
+
+// identityProfileState 返回影响 TLS ClientHello 的 Profile 字段快照。
+// 时间戳变化本身不会改变握手特征，因此比较时会忽略 CreatedAt/UpdatedAt。
+func (s *TLSFingerprintProfileService) identityProfileState() map[int64]*model.TLSFingerprintProfile {
+	state := make(map[int64]*model.TLSFingerprintProfile)
+	if s == nil {
+		return state
+	}
+	s.localMu.RLock()
+	defer s.localMu.RUnlock()
+	for id, profile := range s.localCache {
+		if profile == nil {
+			continue
+		}
+		copy := *profile
+		copy.CipherSuites = append([]uint16(nil), profile.CipherSuites...)
+		copy.Curves = append([]uint16(nil), profile.Curves...)
+		copy.PointFormats = append([]uint16(nil), profile.PointFormats...)
+		copy.SignatureAlgorithms = append([]uint16(nil), profile.SignatureAlgorithms...)
+		copy.ALPNProtocols = append([]string(nil), profile.ALPNProtocols...)
+		copy.SupportedVersions = append([]uint16(nil), profile.SupportedVersions...)
+		copy.KeyShareGroups = append([]uint16(nil), profile.KeyShareGroups...)
+		copy.PSKModes = append([]uint16(nil), profile.PSKModes...)
+		copy.Extensions = append([]uint16(nil), profile.Extensions...)
+		state[id] = &copy
+	}
+	return state
+}
+
+func changedTLSFingerprintProfileIDs(before, after map[int64]*model.TLSFingerprintProfile) map[int64]struct{} {
+	changed := make(map[int64]struct{})
+	for id, previous := range before {
+		current, ok := after[id]
+		if !ok || !sameTLSFingerprintProfileIdentity(previous, current) {
+			changed[id] = struct{}{}
+		}
+	}
+	for id := range after {
+		if _, ok := before[id]; !ok {
+			changed[id] = struct{}{}
+		}
+	}
+	return changed
+}
+
+func sameTLSFingerprintProfileIdentity(a, b *model.TLSFingerprintProfile) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	left, right := *a, *b
+	left.CreatedAt = time.Time{}
+	left.UpdatedAt = time.Time{}
+	right.CreatedAt = time.Time{}
+	right.UpdatedAt = time.Time{}
+	return reflect.DeepEqual(left, right)
 }
 
 // --- CRUD ---
@@ -95,6 +163,7 @@ func (s *TLSFingerprintProfileService) Create(ctx context.Context, profile *mode
 	refreshCtx, cancel := s.newCacheRefreshContext()
 	defer cancel()
 	s.invalidateAndNotify(refreshCtx)
+	invalidateOpenAIOutboundIdentitiesForTLSProfile(created.ID)
 
 	return created, nil
 }
@@ -113,6 +182,7 @@ func (s *TLSFingerprintProfileService) Update(ctx context.Context, profile *mode
 	refreshCtx, cancel := s.newCacheRefreshContext()
 	defer cancel()
 	s.invalidateAndNotify(refreshCtx)
+	invalidateOpenAIOutboundIdentitiesForTLSProfile(updated.ID)
 
 	return updated, nil
 }
@@ -126,6 +196,7 @@ func (s *TLSFingerprintProfileService) Delete(ctx context.Context, id int64) err
 	refreshCtx, cancel := s.newCacheRefreshContext()
 	defer cancel()
 	s.invalidateAndNotify(refreshCtx)
+	invalidateOpenAIOutboundIdentitiesForTLSProfile(id)
 
 	return nil
 }

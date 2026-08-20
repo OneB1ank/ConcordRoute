@@ -419,6 +419,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 		}
 
 		// Update existing
+		identityBefore := openAIOutboundAccountConfigOf(existing)
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformAnthropic
@@ -439,7 +440,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			result.Items = append(result.Items, item)
 			continue
 		}
-
+		if identityBefore != openAIOutboundAccountConfigOf(existing) {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, existing.ID)
+		}
 		// 🔄 Refresh OAuth token after update
 		if targetType == AccountTypeOAuth {
 			if refreshedCreds := s.refreshOAuthToken(ctx, existing); refreshedCreds != nil {
@@ -548,6 +551,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
+		identityBefore := openAIOutboundAccountConfigOf(existing)
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformAnthropic
@@ -568,7 +572,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			result.Items = append(result.Items, item)
 			continue
 		}
-
+		if identityBefore != openAIOutboundAccountConfigOf(existing) {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, existing.ID)
+		}
 		item.Action = "updated"
 		result.Updated++
 		result.Items = append(result.Items, item)
@@ -692,6 +698,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
+		identityBefore := openAIOutboundAccountConfigOf(existing)
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformOpenAI
@@ -711,6 +718,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			result.Failed++
 			result.Items = append(result.Items, item)
 			continue
+		}
+		if identityBefore != openAIOutboundAccountConfigOf(existing) {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, existing.ID)
 		}
 
 		// 🔄 Refresh OAuth token after update
@@ -843,6 +853,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
+		identityBefore := openAIOutboundAccountConfigOf(existing)
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformOpenAI
@@ -862,6 +873,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			result.Failed++
 			result.Items = append(result.Items, item)
 			continue
+		}
+		if identityBefore != openAIOutboundAccountConfigOf(existing) {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, existing.ID)
 		}
 
 		item.Action = "updated"
@@ -975,6 +989,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
+		identityBefore := openAIOutboundAccountConfigOf(existing)
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformGemini
@@ -994,6 +1009,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			result.Failed++
 			result.Items = append(result.Items, item)
 			continue
+		}
+		if identityBefore != openAIOutboundAccountConfigOf(existing) {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, existing.ID)
 		}
 
 		if refreshedCreds := s.refreshOAuthToken(ctx, existing); refreshedCreds != nil {
@@ -1102,6 +1120,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			continue
 		}
 
+		identityBefore := openAIOutboundAccountConfigOf(existing)
 		existing.Extra = extra
 		existing.Name = defaultName(src.Name, src.ID)
 		existing.Platform = PlatformGemini
@@ -1121,6 +1140,9 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			result.Failed++
 			result.Items = append(result.Items, item)
 			continue
+		}
+		if identityBefore != openAIOutboundAccountConfigOf(existing) {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, existing.ID)
 		}
 
 		item.Action = "updated"

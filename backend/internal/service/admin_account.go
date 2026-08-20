@@ -615,6 +615,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	identityBefore := openAIOutboundAccountConfigOf(account)
 	originalQoderSite, originalQoderSiteErr := qoderSiteForAccount(account)
 	originalQoderPAT := strings.TrimSpace(account.GetCredential("pat"))
 	normalizedExtra, shouldReplaceExtra := NormalizeDeprecatedAccountExtraUpdate(input.Extra)
@@ -854,6 +855,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if identityBefore != openAIOutboundAccountConfigOf(updated) {
+		invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, id)
+	}
 	return updated, nil
 }
 
@@ -866,6 +870,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
 	clearThresholdRuntimeBlock := false
+	identityExtraChanged := openAIOutboundIdentityExtraChanged(updates)
 	if _, provided := updates[CodexQuotaOverdraftEnabledExtraKey]; provided {
 		if resolveAccountExtraBool(updates, CodexQuotaOverdraftEnabledExtraKey) {
 			account, err := s.accountRepo.GetByID(ctx, id)
@@ -883,6 +888,9 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	}
 	if err := s.accountRepo.UpdateExtra(ctx, id, updates); err != nil {
 		return err
+	}
+	if identityExtraChanged {
+		invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, id)
 	}
 	if clearThresholdRuntimeBlock {
 		s.clearAccountSchedulingThresholdRuntimeBlock(id)
@@ -921,6 +929,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if len(input.AccountIDs) == 0 {
 		return result, nil
 	}
+	identityBulkChanged := len(input.Credentials) > 0 || input.ProxyID != nil || openAIOutboundIdentityExtraChanged(input.Extra)
 	if input.GroupIDs != nil {
 		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
 			return nil, err
@@ -1059,6 +1068,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
+	if identityBulkChanged {
+		for _, accountID := range input.AccountIDs {
+			invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, accountID)
+		}
+	}
 	if clearOverdraftThresholdRuntimeBlocks {
 		for _, account := range cachedTargets {
 			if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
@@ -1173,10 +1187,12 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 		if err := s.accountRepo.Delete(ctx, shadow.ID); err != nil {
 			return fmt.Errorf("cascade delete spark shadow %d: %w", shadow.ID, err)
 		}
+		invalidateOpenAIOutboundIdentity(shadow.ID)
 	}
 	if err := s.accountRepo.Delete(ctx, id); err != nil {
 		return err
 	}
+	invalidateOpenAIOutboundIdentity(id)
 	return nil
 }
 
@@ -1380,6 +1396,7 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 		if err := repo.Update(ctx, shadow); err != nil {
 			return fmt.Errorf("update spark shadow %d proxy: %w", shadow.ID, err)
 		}
+		invalidateOpenAIOutboundIdentity(shadow.ID)
 	}
 	return nil
 }

@@ -464,10 +464,53 @@ type OpenAIGatewayService struct {
 
 type openAIOutboundIdentitySnapshot struct {
 	RouterID            int64
+	TLSProfileID        int64
+	TLSEnabled          bool
+	ProxyID             int64
 	ConfiguredUserAgent string
 	Match               TLSFingerprintRouterMatchResult
 	UserAgent           string
 	UpdatedAt           time.Time
+}
+
+// openAIOutboundIdentityGateway 是配置变更路径与网关之间的窄连接。
+// Router/Profile/账号/代理服务通过它主动清理内存快照，避免等待 6 小时兜底 TTL。
+var openAIOutboundIdentityGateway atomic.Pointer[OpenAIGatewayService]
+
+func registerOpenAIOutboundIdentityGateway(gateway *OpenAIGatewayService) {
+	if gateway != nil {
+		openAIOutboundIdentityGateway.Store(gateway)
+	}
+}
+
+func invalidateOpenAIOutboundIdentity(accountID int64) {
+	if gateway := openAIOutboundIdentityGateway.Load(); gateway != nil {
+		gateway.invalidateOpenAIOutboundIdentity(accountID)
+	}
+}
+
+func invalidateOpenAIOutboundIdentitiesForTLSRouter(routerID int64) {
+	if gateway := openAIOutboundIdentityGateway.Load(); gateway != nil {
+		gateway.invalidateOpenAIOutboundIdentitiesForTLSRouter(routerID)
+	}
+}
+
+func invalidateOpenAIOutboundIdentitiesForTLSProfile(profileID int64) {
+	if gateway := openAIOutboundIdentityGateway.Load(); gateway != nil {
+		gateway.invalidateOpenAIOutboundIdentitiesForTLSProfile(profileID)
+	}
+}
+
+func invalidateOpenAIOutboundIdentitiesForProxy(proxyID int64) {
+	if gateway := openAIOutboundIdentityGateway.Load(); gateway != nil {
+		gateway.invalidateOpenAIOutboundIdentitiesForProxy(proxyID)
+	}
+}
+
+func invalidateAllOpenAIOutboundIdentities() {
+	if gateway := openAIOutboundIdentityGateway.Load(); gateway != nil {
+		gateway.invalidateAllOpenAIOutboundIdentities()
+	}
 }
 
 // SetCodexQuotaOverdraftCoordinator 注入账号级透支协调器，避免网关构造阶段形成循环依赖。
@@ -550,6 +593,7 @@ func NewOpenAIGatewayService(
 		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 		openaiModelTransient:  newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
 	}
+	registerOpenAIOutboundIdentityGateway(svc)
 	if rateLimitService != nil {
 		rateLimitService.SetAccountRuntimeBlocker(svc)
 	}
@@ -1453,12 +1497,75 @@ func (s *OpenAIGatewayService) rememberOpenAIOutboundIdentity(account *Account, 
 	}
 	storedMatch := match
 	storedMatch.identityAccount = nil
+	proxyID := int64(0)
+	if identityAccount.ProxyID != nil {
+		proxyID = *identityAccount.ProxyID
+	}
 	s.openaiOutboundIdentities.Store(account.ID, openAIOutboundIdentitySnapshot{
 		RouterID:            identityAccount.GetTLSFingerprintRouterID(),
+		TLSProfileID:        identityAccount.GetTLSFingerprintProfileID(),
+		TLSEnabled:          identityAccount.IsTLSFingerprintEnabled(),
+		ProxyID:             proxyID,
 		ConfiguredUserAgent: openAIBackgroundIdentityBaseUA(identityAccount),
 		Match:               storedMatch,
 		UserAgent:           userAgent,
 		UpdatedAt:           time.Now().UTC(),
+	})
+}
+
+func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentity(accountID int64) {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	s.openaiOutboundIdentities.Delete(accountID)
+}
+
+func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentitiesForTLSRouter(routerID int64) {
+	if s == nil || routerID <= 0 {
+		return
+	}
+	s.openaiOutboundIdentities.Range(func(key, value any) bool {
+		snapshot, ok := value.(openAIOutboundIdentitySnapshot)
+		if ok && snapshot.RouterID == routerID {
+			s.openaiOutboundIdentities.Delete(key)
+		}
+		return true
+	})
+}
+
+func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentitiesForTLSProfile(profileID int64) {
+	if s == nil || profileID <= 0 {
+		return
+	}
+	s.openaiOutboundIdentities.Range(func(key, value any) bool {
+		snapshot, ok := value.(openAIOutboundIdentitySnapshot)
+		if ok && snapshot.TLSProfileID == profileID {
+			s.openaiOutboundIdentities.Delete(key)
+		}
+		return true
+	})
+}
+
+func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentitiesForProxy(proxyID int64) {
+	if s == nil || proxyID <= 0 {
+		return
+	}
+	s.openaiOutboundIdentities.Range(func(key, value any) bool {
+		snapshot, ok := value.(openAIOutboundIdentitySnapshot)
+		if ok && snapshot.ProxyID == proxyID {
+			s.openaiOutboundIdentities.Delete(key)
+		}
+		return true
+	})
+}
+
+func (s *OpenAIGatewayService) invalidateAllOpenAIOutboundIdentities() {
+	if s == nil {
+		return
+	}
+	s.openaiOutboundIdentities.Range(func(key, _ any) bool {
+		s.openaiOutboundIdentities.Delete(key)
+		return true
 	})
 }
 
@@ -1483,10 +1590,23 @@ func (s *OpenAIGatewayService) resolveOpenAIBackgroundIdentity(account *Account)
 	identityAccount := s.resolveOpenAITransportIdentityAccount(context.Background(), account)
 	routerID := identityAccount.GetTLSFingerprintRouterID()
 	configuredUA := openAIBackgroundIdentityBaseUA(identityAccount)
+	currentMatch := TLSFingerprintRouterMatchResult{}
+	canValidateRouterMatch := s.tlsFPRouterService != nil && routerID > 0
+	if canValidateRouterMatch {
+		currentMatch = s.tlsFPRouterService.MatchUserAgent(routerID, configuredUA)
+	}
+	proxyID := int64(0)
+	if identityAccount.ProxyID != nil {
+		proxyID = *identityAccount.ProxyID
+	}
 	if raw, ok := s.openaiOutboundIdentities.Load(account.ID); ok {
 		if snapshot, valid := raw.(openAIOutboundIdentitySnapshot); valid &&
 			snapshot.RouterID == routerID &&
+			snapshot.TLSProfileID == identityAccount.GetTLSFingerprintProfileID() &&
+			snapshot.TLSEnabled == identityAccount.IsTLSFingerprintEnabled() &&
+			snapshot.ProxyID == proxyID &&
 			snapshot.ConfiguredUserAgent == configuredUA &&
+			(!canValidateRouterMatch || s.tlsFPRouterService.SnapshotMatchIsCurrent(snapshot.Match)) &&
 			!snapshot.UpdatedAt.After(time.Now().UTC()) &&
 			time.Since(snapshot.UpdatedAt) <= openAIOutboundIdentitySnapshotTTL &&
 			strings.TrimSpace(snapshot.UserAgent) != "" {
@@ -1499,10 +1619,7 @@ func (s *OpenAIGatewayService) resolveOpenAIBackgroundIdentity(account *Account)
 
 	// TLS Router 与真实出站看到的 UA 对齐：账号配置中的版本会先按全局
 	// Codex 版本收敛，再参与规则匹配，避免精确规则命中旧版本字符串。
-	match := TLSFingerprintRouterMatchResult{}
-	if s.tlsFPRouterService != nil && routerID > 0 {
-		match = s.tlsFPRouterService.MatchUserAgent(routerID, configuredUA)
-	}
+	match := currentMatch
 	match.identityAccount = identityAccount
 	identity := resolveCodexOutboundIdentity(s.codexIdentityOverrideUA(identityAccount, match))
 	return identity.userAgent, match

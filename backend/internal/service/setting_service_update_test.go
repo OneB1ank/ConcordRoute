@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/antigravity"
@@ -606,6 +607,45 @@ func TestSettingService_UpdateSettings_OpenAICodexUserAgent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "codex-tui/9.9.9 test-terminal", repo.updates[SettingKeyOpenAICodexUserAgent])
+}
+
+func TestSettingService_UpdateSettings_InvalidatesOpenAIIdentityWhenUAChanges(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{
+		SettingKeyOpenAICodexUserAgent: "codex-tui/9.9.9 old-terminal",
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+	svc.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{value: "codex-tui/9.9.9 old-terminal", expiresAt: time.Now().Add(time.Hour).UnixNano()})
+	gateway := &OpenAIGatewayService{}
+	gateway.openaiOutboundIdentities.Store(int64(101), openAIOutboundIdentitySnapshot{UserAgent: "old"})
+	openAIOutboundIdentityGateway.Store(gateway)
+	t.Cleanup(func() { openAIOutboundIdentityGateway.Store(nil) })
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAICodexUserAgent: "codex-tui/9.9.9 new-terminal",
+	})
+	require.NoError(t, err)
+	_, exists := gateway.openaiOutboundIdentities.Load(int64(101))
+	require.False(t, exists, "changing the global Codex UA must evict background identity snapshots")
+}
+
+func TestSettingService_UpdateSettings_KeepsOpenAIIdentityWhenUAIsUnchanged(t *testing.T) {
+	const ua = "codex-tui/9.9.9 stable-terminal"
+	repo := &settingUpdateRepoStub{values: map[string]string{
+		SettingKeyOpenAICodexUserAgent: ua,
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+	svc.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{value: ua, expiresAt: time.Now().Add(time.Hour).UnixNano()})
+	gateway := &OpenAIGatewayService{}
+	gateway.openaiOutboundIdentities.Store(int64(102), openAIOutboundIdentitySnapshot{UserAgent: "stable"})
+	openAIOutboundIdentityGateway.Store(gateway)
+	t.Cleanup(func() { openAIOutboundIdentityGateway.Store(nil) })
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAICodexUserAgent: ua,
+	})
+	require.NoError(t, err)
+	_, exists := gateway.openaiOutboundIdentities.Load(int64(102))
+	require.True(t, exists, "saving the same effective global Codex UA should preserve snapshots")
 }
 
 func TestSettingService_InitializeDefaultSettingsPersistsConfiguredForwardedClientIPHeaders(t *testing.T) {

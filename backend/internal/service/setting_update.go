@@ -41,11 +41,18 @@ func (s *SettingService) UpdateSettingsOmitting(ctx context.Context, settings *S
 		return err
 	}
 	omitted.dropFrom(updates)
+	openAICodexUserAgentChanged := s.openAICodexUserAgentChanged(updates)
 
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
+	if openAICodexUserAgentChanged {
+		// Codex 的全局 UA 同时参与正常请求、OAuth、额度探测以及 TLS
+		// Router 的版本收敛。写入成功后立即丢弃旧身份快照，避免在
+		// 长 TTL 内继续复用旧 UA/originator/version。
+		invalidateAllOpenAIOutboundIdentities()
+	}
 	return nil
 }
 
@@ -70,12 +77,42 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 		updates[key] = value
 	}
 	omitted.dropFrom(updates)
+	openAICodexUserAgentChanged := s.openAICodexUserAgentChanged(updates)
 
 	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
+	if openAICodexUserAgentChanged {
+		invalidateAllOpenAIOutboundIdentities()
+	}
 	return nil
+}
+
+// openAICodexUserAgentChanged compares the effective cached value before a
+// settings write. The setting cache is the same source used by the request
+// hot path; avoiding a second repository read also keeps partial-update and
+// migration repositories that only implement SetMultiple compatible.
+// If no cached value exists, invalidate conservatively after a successful write.
+func (s *SettingService) openAICodexUserAgentChanged(updates map[string]string) bool {
+	if s == nil || updates == nil {
+		return false
+	}
+	newRaw, present := updates[SettingKeyOpenAICodexUserAgent]
+	if !present {
+		return false
+	}
+	if cached, ok := s.openAICodexUACache.Load().(*cachedOpenAICodexUserAgent); ok && cached != nil {
+		return effectiveOpenAICodexUserAgent(cached.value) != effectiveOpenAICodexUserAgent(newRaw)
+	}
+	return true
+}
+
+func effectiveOpenAICodexUserAgent(raw string) string {
+	if ua := strings.TrimSpace(raw); ua != "" {
+		return ua
+	}
+	return DefaultOpenAICodexUserAgent
 }
 
 // refreshCachedSettingsAfterWrite 使进程内缓存与刚完成的写入保持一致。

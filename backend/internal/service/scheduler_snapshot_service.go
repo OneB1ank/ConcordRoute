@@ -1430,6 +1430,12 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 	if s.accountRepo == nil {
 		return nil, ErrSchedulerCacheNotReady
 	}
+	// OpenAI 快照同时保留“额度阈值暂停但已开启透支”的根账号。
+	// 普通请求路径会在 service 层按上下文再次过滤；透支请求路径则在
+	// normalizeCodexQuotaOverdraftAccountForScheduling 中恢复该账号。
+	// 若这里不带标记，后台/定时重建会把账号永久排除在共享快照之外，
+	// 即使请求上下文允许透支也没有候选账号可供选择。
+	ctx = schedulerSnapshotAccountQueryContext(ctx, bucket)
 	groupID := bucket.GroupID
 	if s.isRunModeSimple() {
 		groupID = 0
@@ -1466,6 +1472,16 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 		return s.accountRepo.ListSchedulableByPlatform(ctx, bucket.Platform)
 	}
 	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, bucket.Platform)
+}
+
+func schedulerSnapshotAccountQueryContext(ctx context.Context, bucket SchedulerBucket) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if bucket.Platform == PlatformOpenAI {
+		return WithCodexQuotaOverdraftScheduling(ctx)
+	}
+	return ctx
 }
 
 func (s *SchedulerSnapshotService) loadAccountsForRebuild(

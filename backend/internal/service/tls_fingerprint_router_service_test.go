@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/stretchr/testify/require"
@@ -228,6 +229,45 @@ func TestTLSFingerprintRouter_ValidateChatGPTOAuthTokenProfileID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChangedTLSFingerprintRouterIDsOnlyReportsTransportChanges(t *testing.T) {
+	base := &model.TLSFingerprintRouter{
+		ID:      7,
+		Name:    "macos",
+		Enabled: true,
+		Rules: []model.TLSFingerprintRouterRule{{
+			Name:                    "codex",
+			Enabled:                 true,
+			Pattern:                 "codex",
+			TLSFingerprintProfileID: 11,
+			UpstreamUserAgent:       "codex-tui/1.0",
+		}},
+	}
+	updatedTimestampOnly := *base
+	updatedTimestampOnly.UpdatedAt = updatedTimestampOnly.UpdatedAt.Add(time.Hour)
+
+	require.Empty(t, changedTLSFingerprintRouterIDs(
+		map[int64]*model.TLSFingerprintRouter{7: base},
+		map[int64]*model.TLSFingerprintRouter{7: &updatedTimestampOnly},
+	))
+
+	changedRule := updatedTimestampOnly
+	changedRule.Rules = append([]model.TLSFingerprintRouterRule(nil), base.Rules...)
+	changedRule.Rules[0].TLSFingerprintProfileID = 12
+	changed := changedTLSFingerprintRouterIDs(
+		map[int64]*model.TLSFingerprintRouter{7: base},
+		map[int64]*model.TLSFingerprintRouter{7: &changedRule},
+	)
+	_, ok := changed[7]
+	require.True(t, ok)
+
+	removed := changedTLSFingerprintRouterIDs(
+		map[int64]*model.TLSFingerprintRouter{7: base},
+		map[int64]*model.TLSFingerprintRouter{},
+	)
+	_, ok = removed[7]
+	require.True(t, ok)
 }
 
 func tlsRouterInt64Ptr(value int64) *int64 {

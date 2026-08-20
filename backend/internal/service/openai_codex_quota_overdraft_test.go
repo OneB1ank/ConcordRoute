@@ -92,7 +92,7 @@ func TestCodexQuotaOverdraftInjectionStartsAtThreshold(t *testing.T) {
 	}
 
 	below := base()
-	below.Extra["codex_5h_used_percent"] = 99.49
+	below.Extra["codex_5h_used_percent"] = 99.99
 	below.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 	require.False(t, codexQuotaOverdraftRequestActive(below, now))
 
@@ -101,13 +101,18 @@ func TestCodexQuotaOverdraftInjectionStartsAtThreshold(t *testing.T) {
 	atThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 	require.True(t, codexQuotaOverdraftRequestActive(atThreshold, now))
 
+	nearThreshold := base()
+	nearThreshold.Extra["codex_5h_used_percent"] = 99.5
+	nearThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
+	require.False(t, codexQuotaOverdraftRequestActive(nearThreshold, now))
+
 	exhausted := base()
 	exhausted.Extra["codex_5h_used_percent"] = 100.0
 	exhausted.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 	require.True(t, codexQuotaOverdraftRequestActive(exhausted, now))
 
 	expired := base()
-	expired.Extra["codex_5h_used_percent"] = codexQuotaOverdraftStartPercent
+	expired.Extra["codex_5h_used_percent"] = 100.0
 	expired.Extra["codex_5h_reset_at"] = past.Format(time.RFC3339)
 	require.False(t, codexQuotaOverdraftRequestActive(expired, now))
 

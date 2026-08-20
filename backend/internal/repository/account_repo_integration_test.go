@@ -510,7 +510,7 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			},
 		},
 		{
-			name: "filter_by_status_rate_limited_excludes_temp_unschedulable",
+			name: "filter_by_status_rate_limited_includes_temp_unschedulable_combination",
 			setup: func(client *dbent.Client) {
 				rateLimited := mustCreateAccount(s.T(), client, &service.Account{Name: "active-rate-limited", Status: service.StatusActive})
 				err := client.Account.UpdateOneID(rateLimited.ID).
@@ -525,9 +525,26 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 				s.Require().NoError(err)
 			},
 			status:    "rate_limited",
+			wantCount: 2,
+			validate: func(accounts []service.Account) {
+				names := []string{accounts[0].Name, accounts[1].Name}
+				s.Require().ElementsMatch([]string{"active-rate-limited", "active-temp-unsched"}, names)
+			},
+		},
+		{
+			name: "filter_by_status_temp_unschedulable_includes_rate_limited_combination",
+			setup: func(client *dbent.Client) {
+				account := mustCreateAccount(s.T(), client, &service.Account{Name: "active-temp-rate-combination", Status: service.StatusActive})
+				err := client.Account.UpdateOneID(account.ID).
+					SetRateLimitResetAt(time.Now().Add(20 * time.Minute)).
+					SetTempUnschedulableUntil(time.Now().Add(15 * time.Minute)).
+					Exec(context.Background())
+				s.Require().NoError(err)
+			},
+			status:    "temp_unschedulable",
 			wantCount: 1,
 			validate: func(accounts []service.Account) {
-				s.Require().Equal("active-rate-limited", accounts[0].Name)
+				s.Require().Equal("active-temp-rate-combination", accounts[0].Name)
 			},
 		},
 		{

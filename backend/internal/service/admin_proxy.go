@@ -143,6 +143,7 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
 		return nil, err
 	}
+	invalidateOpenAIOutboundIdentitiesForProxy(id)
 	return proxy, nil
 }
 
@@ -154,7 +155,11 @@ func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
 	if count > 0 {
 		return ErrProxyInUse
 	}
-	return s.proxyRepo.Delete(ctx, id)
+	if err := s.proxyRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+	invalidateOpenAIOutboundIdentitiesForProxy(id)
+	return nil
 }
 
 func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) (*ProxyBatchDeleteResult, error) {
@@ -186,6 +191,7 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 			})
 			continue
 		}
+		invalidateOpenAIOutboundIdentitiesForProxy(id)
 		result.DeletedIDs = append(result.DeletedIDs, id)
 	}
 

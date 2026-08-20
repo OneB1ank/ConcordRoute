@@ -2167,11 +2167,11 @@ const accountMatchesCurrentFilters = (account: Account) => {
     if (filters.status === 'active') {
       if (account.status !== 'active' || isRateLimited || isTempUnschedulable || !account.schedulable) return false
     } else if (filters.status === 'rate_limited') {
-      if (account.status !== 'active' || !isRateLimited || isTempUnschedulable) return false
+      if (account.status !== 'active' || !isRateLimited) return false
     } else if (filters.status === 'temp_unschedulable') {
-      if (account.status !== 'active' || !isTempUnschedulable || isRateLimited) return false
+      if (account.status !== 'active' || !isTempUnschedulable) return false
     } else if (filters.status === 'unschedulable') {
-      if (account.status !== 'active' || account.schedulable || isRateLimited || isTempUnschedulable) return false
+      if (account.status !== 'active' || account.schedulable) return false
     } else if (account.status !== filters.status) {
       return false
     }

@@ -17,7 +17,8 @@ func (s schedulerSnapshotContextCacheStub) GetSnapshot(ctx context.Context, buck
 
 type schedulerSnapshotFallbackRepoStub struct {
 	AccountRepository
-	calls int
+	calls            int
+	overdraftContext bool
 }
 
 func (r *schedulerSnapshotFallbackRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
@@ -27,7 +28,26 @@ func (r *schedulerSnapshotFallbackRepoStub) ListSchedulableByPlatform(ctx contex
 
 func (r *schedulerSnapshotFallbackRepoStub) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	r.calls++
+	r.overdraftContext = CodexQuotaOverdraftSchedulingEnabled(ctx)
 	return nil, nil
+}
+
+func TestSchedulerSnapshotService_OpenAIRebuildKeepsOverdraftCandidates(t *testing.T) {
+	repo := &schedulerSnapshotFallbackRepoStub{}
+	svc := &SchedulerSnapshotService{accountRepo: repo}
+
+	_, err := svc.loadAccountsFromDB(context.Background(), SchedulerBucket{Platform: PlatformOpenAI}, false)
+	require.NoError(t, err)
+	require.True(t, repo.overdraftContext)
+}
+
+func TestSchedulerSnapshotService_NonOpenAIRebuildKeepsContextUnmarked(t *testing.T) {
+	repo := &schedulerSnapshotFallbackRepoStub{}
+	svc := &SchedulerSnapshotService{accountRepo: repo}
+
+	_, err := svc.loadAccountsFromDB(context.Background(), SchedulerBucket{Platform: PlatformAnthropic}, false)
+	require.NoError(t, err)
+	require.False(t, repo.overdraftContext)
 }
 
 func TestSchedulerSnapshotService_ListSchedulableAccountsStopsWhenCacheContextCanceled(t *testing.T) {

@@ -69,3 +69,22 @@ func TestBothProxyUpdateServicesUseRepositoryUpdateBoundary(t *testing.T) {
 		require.Equal(t, "new.example", repo.proxy.Host)
 	})
 }
+
+func TestProxyServiceUpdateInvalidatesOpenAIOutboundIdentity(t *testing.T) {
+	repo := &updatingProxyRepoStub{
+		proxyRepoStub: &proxyRepoStub{},
+		proxy:         &Proxy{ID: 9, Protocol: "http", Host: "old.example", Port: 8080, Status: StatusActive},
+	}
+	gateway := &OpenAIGatewayService{}
+	gateway.openaiOutboundIdentities.Store(int64(77), openAIOutboundIdentitySnapshot{ProxyID: 9, UserAgent: "old"})
+	openAIOutboundIdentityGateway.Store(gateway)
+	t.Cleanup(func() { openAIOutboundIdentityGateway.Store(nil) })
+
+	svc := NewProxyService(repo)
+	host := "new.example"
+	_, err := svc.Update(context.Background(), 9, UpdateProxyRequest{Host: &host})
+
+	require.NoError(t, err)
+	_, exists := gateway.openaiOutboundIdentities.Load(int64(77))
+	require.False(t, exists)
+}

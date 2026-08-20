@@ -296,6 +296,7 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
 	}
+	identityBefore := openAIOutboundAccountConfigOf(account)
 
 	// 更新字段
 	if req.Name != nil {
@@ -353,6 +354,9 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	if err := s.accountRepo.Update(ctx, account); err != nil {
 		return nil, fmt.Errorf("update account: %w", err)
 	}
+	if identityBefore != openAIOutboundAccountConfigOf(account) {
+		invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, id)
+	}
 
 	// require_oauth_only 检查
 	if account.Type == AccountTypeAPIKey && req.GroupIDs != nil {
@@ -390,13 +394,13 @@ func (s *AccountService) Delete(ctx context.Context, id int64) error {
 	if !exists {
 		return ErrAccountNotFound
 	}
-
 	// 注意:此处不级联删除 spark 影子账号。当前唯一的后台删除入口走 AdminService.DeleteAccount
 	// (已 ListShadowsByParent 先删影子再删母)。本方法目前无删除调用方;若未来有调用方经此
 	// 删除母账号,需在此补级联,否则会留下孤儿影子(外审第6轮 P3:当前不可达,记为残留)。
 	if err := s.accountRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete account: %w", err)
 	}
+	invalidateOpenAIOutboundIdentityFamily(ctx, s.accountRepo, id)
 
 	return nil
 }

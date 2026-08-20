@@ -156,6 +156,9 @@ func (s *ProxyService) Update(ctx context.Context, id int64, req UpdateProxyRequ
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
 		return nil, fmt.Errorf("update proxy: %w", err)
 	}
+	// 代理地址、协议或认证信息变化会改变 OpenAI 的实际出站出口，
+	// 立即清理后台身份快照，避免继续复用旧代理。
+	invalidateOpenAIOutboundIdentitiesForProxy(id)
 
 	return proxy, nil
 }
@@ -171,6 +174,7 @@ func (s *ProxyService) Delete(ctx context.Context, id int64) error {
 	if err := s.proxyRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete proxy: %w", err)
 	}
+	invalidateOpenAIOutboundIdentitiesForProxy(id)
 
 	return nil
 }
