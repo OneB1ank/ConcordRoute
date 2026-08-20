@@ -82,6 +82,45 @@ func TestOpenAIRuntimeBlock_ConditionalClearRequiresMatchingReason(t *testing.T)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIRuntimeBlock_CodexProbationBypassesOnlyOverdraftReason(t *testing.T) {
+	now := time.Now().UTC()
+	reset := now.Add(time.Hour)
+	account := &Account{
+		ID:          452,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			CodexQuotaOverdraftEnabledExtraKey: true,
+			"codex_5h_used_percent":            100,
+			"codex_5h_reset_at":                reset.Format(time.RFC3339),
+		},
+	}
+	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, nil, now)
+	require.True(t, exhausted)
+	state := newCodexOverdraftPendingState(signal, now)
+	state.Status = codexQuotaOverdraftProbeFailed
+	state.ReasonCode = "quota_limited"
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = state
+	svc := &OpenAIGatewayService{}
+	svc.BlockAccountScheduling(account, reset, codexQuotaOverdraftPauseSource)
+
+	ordinaryCtx := context.Background()
+	probationCtx := WithCodexQuotaOverdraftScheduling(context.Background())
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(ordinaryCtx, account, "gpt-5.4"))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(probationCtx, account, "gpt-5.4"))
+
+	svc.BlockAccountScheduling(account, reset, "oauth_401")
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(probationCtx, account, "gpt-5.4"), "无关阻断仍必须生效")
+
+	svc.ClearAccountSchedulingBlock(account.ID)
+	state.ReasonCode = CodexQuotaOverdraftBusinessQuotaLimitedReason
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = state
+	svc.BlockAccountScheduling(account, reset, codexQuotaOverdraftPauseSource)
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(probationCtx, account, "gpt-5.4"), "真实业务失败不得绕过")
+}
+
 func TestOpenAIRuntimeBlock_ConditionalClearPreservesNewerDifferentReason(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 452, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
@@ -175,7 +214,7 @@ func TestOpenAIPoolModeTempRule_StopsSameAccountRetryAndIsolatesBlockToModel(t *
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "gpt-5.4", repo.modelRateLimitCalls[0].scope)
 	require.False(t, gateway.isOpenAIAccountRuntimeBlocked(account))
-	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
+	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(context.Background(), account, "gpt-5.5"))
 }
 
 func TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.T) {
@@ -204,7 +243,7 @@ func TestOpenAIPoolModeRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.
 		require.False(t, shouldDisable)
 	}
 
-	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
+	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(context.Background(), account, "gpt-5.4"))
 }
 
 func TestOpenAIPoolModeNonRetryable5xx_DoesNotCreateModelTransientBlock(t *testing.T) {
@@ -233,7 +272,7 @@ func TestOpenAIPoolModeNonRetryable5xx_DoesNotCreateModelTransientBlock(t *testi
 		require.False(t, shouldDisable)
 	}
 
-	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
+	require.False(t, gateway.isOpenAIAccountRequestRuntimeBlocked(context.Background(), account, "gpt-5.4"))
 }
 
 func TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock(t *testing.T) {
@@ -258,7 +297,7 @@ func TestOpenAINonPoolAPIKey5xx_StillCreatesModelTransientBlock(t *testing.T) {
 		require.False(t, shouldDisable)
 	}
 
-	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.4"))
+	require.True(t, gateway.isOpenAIAccountRequestRuntimeBlocked(context.Background(), account, "gpt-5.4"))
 }
 
 func TestOpenAIModelNotFound_DoesNotRuntimeBlockWholeAccount(t *testing.T) {

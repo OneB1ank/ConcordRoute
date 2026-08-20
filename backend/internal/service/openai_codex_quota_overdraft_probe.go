@@ -33,6 +33,8 @@ const (
 	codexQuotaOverdraftProbeRetryDelay      = time.Minute
 	codexQuotaOverdraftProbeBodyLimit       = 256 << 10
 	codexQuotaOverdraftPauseSource          = "codex_quota_overdraft"
+	// CodexQuotaOverdraftBusinessQuotaLimitedReason 标识真实业务请求已经确认额度耗尽。
+	CodexQuotaOverdraftBusinessQuotaLimitedReason = "business_quota_limited"
 
 	codexQuotaOverdraftFallbackModel      = "gpt-5.5"
 	codexQuotaOverdraftCompatibilityModel = "gpt-5.4-mini"
@@ -165,8 +167,13 @@ func (c *CodexQuotaOverdraftCoordinator) observeBusinessSuccess(account *Account
 	}
 	if current != nil && codexQuotaOverdraftStateCoversSignal(current, signal) {
 		switch current.Status {
-		case codexQuotaOverdraftProbePassed, codexQuotaOverdraftProbeFailed:
+		case codexQuotaOverdraftProbePassed:
 			return
+		case codexQuotaOverdraftProbeFailed:
+			// 只有真实业务 429 才是本周期终态；旧探针失败必须允许业务成功纠正。
+			if codexQuotaOverdraftTerminalBusinessFailure(current) {
+				return
+			}
 		}
 	}
 	state := &CodexQuotaOverdraftProbeState{
@@ -261,7 +268,8 @@ func (c *CodexQuotaOverdraftCoordinator) finishBusinessQuotaFailure(
 	}
 	now := c.currentTime()
 	current, hasCurrent := codexQuotaOverdraftStateFromAccount(account)
-	if hasCurrent && codexQuotaOverdraftStateCoversSignal(current, signal) && current.Status == codexQuotaOverdraftProbeFailed {
+	if hasCurrent && codexQuotaOverdraftStateCoversSignal(current, signal) &&
+		current.Status == codexQuotaOverdraftProbeFailed && codexQuotaOverdraftTerminalBusinessFailure(current) {
 		c.ensureFailedPause(account, current)
 		return true
 	}
@@ -288,7 +296,7 @@ func (c *CodexQuotaOverdraftCoordinator) finishBusinessQuotaFailure(
 		state.Attempts = 1
 	}
 	state.Model = strings.TrimSpace(preferredModel)
-	state.ReasonCode = "business_quota_limited"
+	state.ReasonCode = CodexQuotaOverdraftBusinessQuotaLimitedReason
 	state.TestedAt = codexQuotaOverdraftTimePtr(now)
 	state.RetryAt = nil
 	state.RecoverAt = codexQuotaOverdraftTimePtr(signal.RecoverAt)
@@ -659,7 +667,7 @@ func (c *CodexQuotaOverdraftCoordinator) persistState(accountID int64, state *Co
 }
 
 // persistNonFailedState 保证同一额度周期内已确认的业务限额失败保持终态，
-// 避免较慢的探测成功或不确定结果随后覆盖失败结论。
+// 同时允许真实业务成功纠正旧版仅由合成探针产生的失败状态。
 func (c *CodexQuotaOverdraftCoordinator) persistNonFailedState(accountID int64, state *CodexQuotaOverdraftProbeState) bool {
 	if state == nil || state.Status == codexQuotaOverdraftProbeFailed {
 		return false
@@ -946,7 +954,26 @@ func codexQuotaOverdraftSchedulingAllowed(account *Account, now time.Time) bool 
 	if !exhausted || state == nil || !codexQuotaOverdraftStateCoversSignal(state, signal) {
 		return true
 	}
-	return state.Status != codexQuotaOverdraftProbeFailed
+	return state.Status != codexQuotaOverdraftProbeFailed || codexQuotaOverdraftProbationEligible(account, now)
+}
+
+// codexQuotaOverdraftTerminalBusinessFailure 仅把真实业务请求返回的额度 429 视为终态。
+func codexQuotaOverdraftTerminalBusinessFailure(state *CodexQuotaOverdraftProbeState) bool {
+	return state != nil && state.Status == codexQuotaOverdraftProbeFailed &&
+		strings.EqualFold(strings.TrimSpace(state.ReasonCode), CodexQuotaOverdraftBusinessQuotaLimitedReason)
+}
+
+// codexQuotaOverdraftProbationEligible 允许旧版探针失败状态在同一额度周期获得一次真实业务复验。
+func codexQuotaOverdraftProbationEligible(account *Account, now time.Time) bool {
+	if !isCodexQuotaOverdraftAccount(account) {
+		return false
+	}
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	if !ok || state.Status != codexQuotaOverdraftProbeFailed || codexQuotaOverdraftTerminalBusinessFailure(state) {
+		return false
+	}
+	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, state, now)
+	return exhausted && codexQuotaOverdraftStateCoversSignal(state, signal)
 }
 
 func codexQuotaOverdraftSnapshotPrearmReached(updates map[string]any) bool {

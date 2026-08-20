@@ -174,6 +174,21 @@ func TestCodexQuotaOverdraftSchedulingOnlyBypassesQuotaThresholds(t *testing.T) 
 	require.Nil(t, normalized.TempUnschedulableUntil)
 	require.Empty(t, normalized.TempUnschedulableReason)
 	require.NotNil(t, account.TempUnschedulableUntil, "不能修改缓存或数据库账号原对象")
+
+	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, nil, now)
+	require.True(t, exhausted)
+	legacyFailure := newCodexOverdraftPendingState(signal, now)
+	legacyFailure.Status = codexQuotaOverdraftProbeFailed
+	legacyFailure.ReasonCode = "quota_limited"
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = legacyFailure
+	account.TempUnschedulableReason = BuildTempUnschedReasonPayload(codexQuotaOverdraftPauseSource, "legacy probe failure")
+	normalized = normalizeCodexQuotaOverdraftAccountForScheduling(quotaCtx, account)
+	require.NotSame(t, account, normalized, "旧探针暂停必须允许真实业务复验")
+	require.Nil(t, normalized.TempUnschedulableUntil)
+
+	legacyFailure.ReasonCode = CodexQuotaOverdraftBusinessQuotaLimitedReason
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = legacyFailure
+	require.Same(t, account, normalizeCodexQuotaOverdraftAccountForScheduling(quotaCtx, account), "真实业务额度失败保持暂停")
 }
 
 func TestRateLimitServiceCodexQuotaOverdraftDoesNotCreateRuntimeThresholdBlock(t *testing.T) {

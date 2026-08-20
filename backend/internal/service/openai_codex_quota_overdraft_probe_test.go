@@ -272,7 +272,13 @@ func TestCodexQuotaOverdraftProbeRequiresFiveExplicitQuotaFailures(t *testing.T)
 	require.Len(t, models, codexQuotaOverdraftProbeAttemptLimit)
 	require.Equal(t, 1, repo.tempPauseCalls)
 	require.True(t, codexQuotaOverdraftPauseReason(account.TempUnschedulableReason))
-	require.False(t, codexQuotaOverdraftSchedulingAllowed(account, now), "同周期确认失败后不得继续绕过限额")
+	require.True(t, codexQuotaOverdraftSchedulingAllowed(account, now), "旧探针失败必须进入真实业务复验")
+	require.True(t, codexQuotaOverdraftInjectionEligible(account, now))
+
+	state.ReasonCode = CodexQuotaOverdraftBusinessQuotaLimitedReason
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = state
+	require.False(t, codexQuotaOverdraftSchedulingAllowed(account, now), "真实业务额度 429 才是同周期终态")
+	require.False(t, codexQuotaOverdraftInjectionEligible(account, now))
 }
 
 func TestCodexQuotaOverdraftBusinessSuccessPassesAndClearsPause(t *testing.T) {
@@ -290,6 +296,32 @@ func TestCodexQuotaOverdraftBusinessSuccessPassesAndClearsPause(t *testing.T) {
 	require.Equal(t, codexQuotaOverdraftProbePassed, state.Status)
 	require.Equal(t, "business_request_ok", state.ReasonCode)
 	require.NotNil(t, state.FiveHourStartedAt)
+	require.Equal(t, 1, repo.clearTempCalls)
+	require.Nil(t, account.TempUnschedulableUntil)
+}
+
+func TestCodexQuotaOverdraftBusinessSuccessOverridesLegacyProbeFailure(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, nil, now)
+	require.True(t, exhausted)
+	legacyFailure := newCodexOverdraftPendingState(signal, now)
+	legacyFailure.Status = codexQuotaOverdraftProbeFailed
+	legacyFailure.Attempts = codexQuotaOverdraftProbeAttemptLimit
+	legacyFailure.ReasonCode = "quota_limited"
+	legacyFailure.TestedAt = codexQuotaOverdraftTimePtr(now.Add(-time.Minute))
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = legacyFailure
+	account.TempUnschedulableUntil = codexQuotaOverdraftTimePtr(signal.RecoverAt)
+	account.TempUnschedulableReason = BuildTempUnschedReasonPayload(codexQuotaOverdraftPauseSource, "legacy probe failure")
+	repo := &codexOverdraftProbeRepoStub{account: account}
+	coordinator := &CodexQuotaOverdraftCoordinator{accountRepo: repo, now: func() time.Time { return now }}
+
+	coordinator.observeBusinessSuccess(account, "gpt-5.4")
+
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	require.True(t, ok)
+	require.Equal(t, codexQuotaOverdraftProbePassed, state.Status)
+	require.Equal(t, "business_request_ok", state.ReasonCode)
 	require.Equal(t, 1, repo.clearTempCalls)
 	require.Nil(t, account.TempUnschedulableUntil)
 }
@@ -314,6 +346,35 @@ func TestCodexQuotaOverdraftInjectedBusiness429FailsImmediately(t *testing.T) {
 	require.Equal(t, codexQuotaOverdraftProbeFailed, state.Status)
 	require.Equal(t, "business_quota_limited", state.ReasonCode)
 	require.Equal(t, 1, state.Attempts)
+	require.Equal(t, 1, repo.tempPauseCalls)
+}
+
+func TestCodexQuotaOverdraftInjectedBusiness429UpgradesLegacyProbeFailure(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, nil, now)
+	require.True(t, exhausted)
+	legacyFailure := newCodexOverdraftPendingState(signal, now)
+	legacyFailure.Status = codexQuotaOverdraftProbeFailed
+	legacyFailure.Attempts = codexQuotaOverdraftProbeAttemptLimit
+	legacyFailure.ReasonCode = "quota_limited"
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = legacyFailure
+	repo := &codexOverdraftProbeRepoStub{account: account}
+	coordinator := &CodexQuotaOverdraftCoordinator{
+		accountRepo:  repo,
+		httpUpstream: &accountUsageHTTPUpstreamStub{},
+		now:          func() time.Time { return now },
+	}
+	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+	markCodexQuotaOverdraftInjected(ctx, account.ID)
+
+	handled := coordinator.HandleQuota429(ctx, account, nil, []byte(`{"error":{"type":"usage_limit_reached"}}`), "gpt-5.4")
+
+	require.True(t, handled)
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	require.True(t, ok)
+	require.Equal(t, codexQuotaOverdraftProbeFailed, state.Status)
+	require.Equal(t, CodexQuotaOverdraftBusinessQuotaLimitedReason, state.ReasonCode)
 	require.Equal(t, 1, repo.tempPauseCalls)
 }
 

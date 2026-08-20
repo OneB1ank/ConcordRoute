@@ -364,6 +364,12 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlockIfReason(accountID int
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
+	return s.isOpenAIAccountRuntimeBlockedExceptReason(account, "")
+}
+
+// isOpenAIAccountRuntimeBlockedExceptReason 为单次业务复验忽略指定阻断原因，
+// 不修改共享运行时状态，且任意其他活跃原因仍然优先生效。
+func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlockedExceptReason(account *Account, ignoredReason string) bool {
 	if s == nil || !isOpenAIAccount(account) {
 		return false
 	}
@@ -390,7 +396,13 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 		cooldownUntil := latestOpenAIAccountRuntimeBlockUntil(reasons)
 		s.openaiAccountRuntimeBlockReasons.Store(account.ID, reasons)
 		s.openaiAccountRuntimeBlockUntil.Store(account.ID, cooldownUntil)
-		return now.Before(cooldownUntil)
+		ignoredReason = strings.TrimSpace(ignoredReason)
+		for reason, until := range reasons {
+			if reason != ignoredReason && now.Before(until) {
+				return true
+			}
+		}
+		return false
 	}
 	cooldownUntil, ok := value.(time.Time)
 	if !ok || cooldownUntil.IsZero() {
@@ -486,8 +498,16 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 	return state.isBlocked(account.ID, openAIAccountModelTransientModel(canonicalModel), time.Now())
 }
 
-func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
-	return s != nil && (s.isOpenAIAccountRuntimeBlocked(account) || s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(ctx context.Context, account *Account, requestedModel string) bool {
+	if s == nil {
+		return false
+	}
+	ignoredReason := ""
+	if codexQuotaOverdraftSchedulingEnabled(ctx) && codexQuotaOverdraftProbationEligible(account, time.Now().UTC()) {
+		ignoredReason = codexQuotaOverdraftPauseSource
+	}
+	return s.isOpenAIAccountRuntimeBlockedExceptReason(account, ignoredReason) ||
+		s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel)
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {

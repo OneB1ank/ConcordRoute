@@ -110,6 +110,9 @@ func TestSchedulableAccountQueryScopesCodexQuotaOverdraftToMarkedContext(t *test
 	require.Contains(t, overdraftSQL, `"parent_account_id" IS NULL`)
 	require.Contains(t, overdraftSQL, `"extra"`)
 	require.Contains(t, overdraftSQL, `"extra" ->> $4`)
+	require.Contains(t, overdraftSQL, `codex_quota_overdraft_probe,status`)
+	require.Contains(t, overdraftSQL, `codex_quota_overdraft_probe,reason_code`)
+	require.Contains(t, overdraftSQL, `codex_quota_overdraft`)
 	require.NotContains(t, overdraftSQL, `?`, "PostgreSQL query must not retain Ent's generic placeholder")
 	require.NotContains(t, overdraftSQL, `::boolean`, "畸形历史值不得让可调度查询因布尔强转失败")
 }
@@ -219,5 +222,6 @@ func TestPersistCodexQuotaOverdraftProbeUnlessFailedKeepsFailedTerminal(t *testi
 	normalized := normalizeSQLWhitespace(capturedSQL)
 	require.Contains(t, normalized, "cycle_key}', '') <> $5")
 	require.Contains(t, normalized, "status}', '') <> 'failed'")
+	require.Contains(t, normalized, "reason_code}', '') <> $6")
 	require.NotContains(t, normalized, "?", "PostgreSQL 条件更新不能残留通用占位符")
 }

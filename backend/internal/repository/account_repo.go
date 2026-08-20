@@ -2394,8 +2394,8 @@ func (r *accountRepository) UpdateCodexQuotaOverdraftProbeState(
 	return true, nil
 }
 
-// PersistCodexQuotaOverdraftProbeUnlessFailed 写入非失败状态时保留同周期已确认的失败终态。
-// 真实业务 429 与后台探测可能并发结束，此条件更新防止较慢的成功结果重新放行账号。
+// PersistCodexQuotaOverdraftProbeUnlessFailed 写入非失败状态时只保留同周期真实业务确认的失败终态。
+// 旧版合成探针失败允许被真实业务成功纠正，同时防止并发探针覆盖业务 429 结论。
 func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
 	ctx context.Context,
 	id int64,
@@ -2418,8 +2418,9 @@ func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
 			AND (
 				COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $5
 				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,status}', '') <> 'failed'
+				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,reason_code}', '') <> $6
 			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey)
+	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftBusinessQuotaLimitedReason)
 	if err != nil {
 		return false, err
 	}
@@ -3062,12 +3063,27 @@ func tempUnschedulablePredicate(ctx context.Context) dbpredicate.Account {
 				b.Arg(service.CodexQuotaOverdraftEnabledExtraKey)
 				b.WriteString(", ''))) IN ('1', 't', 'true')")
 			})
+			probationaryFailedExpr := entsql.P(func(b *entsql.Builder) {
+				// 旧版探针失败账号需要重新进入候选池，由真实业务请求给出最终结论。
+				b.WriteString("COALESCE(")
+				b.WriteString(extraCol)
+				b.WriteString(" #>> '{codex_quota_overdraft_probe,status}', '') = 'failed' AND COALESCE(")
+				b.WriteString(extraCol)
+				b.WriteString(" #>> '{codex_quota_overdraft_probe,reason_code}', '') <> ")
+				b.Arg(service.CodexQuotaOverdraftBusinessQuotaLimitedReason)
+			})
 			predicates = append(predicates, entsql.And(
 				entsql.EQ(s.C("platform"), service.PlatformOpenAI),
 				entsql.EQ(s.C("type"), service.AccountTypeOAuth),
 				entsql.IsNull(s.C("parent_account_id")),
 				enabledExpr,
-				entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
+				entsql.Or(
+					entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
+					entsql.And(
+						entsql.Contains(reasonCol, `"source":"codex_quota_overdraft"`),
+						probationaryFailedExpr,
+					),
+				),
 			))
 		}
 		s.Where(entsql.Or(predicates...))

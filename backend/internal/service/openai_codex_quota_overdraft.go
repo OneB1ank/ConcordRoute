@@ -20,9 +20,9 @@ const (
 	// codexQuotaOverdraftPrearmPercent 提前为接近限额的真实请求附加透支上下文，
 	// 让跨过 100% 的第一条业务请求本身成为最可靠的可用性证据。
 	codexQuotaOverdraftPrearmPercent = 95.0
-	codexQuotaOverdraftCallIDPrefix = "call_sub2api_overdraft_"
-	codexQuotaOverdraftExecInput    = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
-	codexQuotaOverdraftMaxBodyBytes = 32 << 20
+	codexQuotaOverdraftCallIDPrefix  = "call_sub2api_overdraft_"
+	codexQuotaOverdraftExecInput     = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
+	codexQuotaOverdraftMaxBodyBytes  = 32 << 20
 )
 
 func isCodexQuotaOverdraftAccount(account *Account) bool {
@@ -109,7 +109,9 @@ func codexQuotaOverdraftInjectionEligible(account *Account, now time.Time) bool 
 		switch state.Status {
 		case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbePassed, codexQuotaOverdraftProbeInconclusive:
 			return true
-		case codexQuotaOverdraftProbeFailed, codexQuotaOverdraftProbeRecovered:
+		case codexQuotaOverdraftProbeFailed:
+			return codexQuotaOverdraftProbationEligible(account, now)
+		case codexQuotaOverdraftProbeRecovered:
 			return false
 		}
 	}
@@ -238,10 +240,12 @@ func injectCodexQuotaOverdraft(body []byte) ([]byte, bool, error) {
 }
 
 func normalizeCodexQuotaOverdraftAccountForScheduling(ctx context.Context, account *Account) *Account {
+	now := time.Now().UTC()
 	if !codexQuotaOverdraftSchedulingEnabled(ctx) || !isCodexQuotaOverdraftAccount(account) ||
-		!codexQuotaOverdraftSchedulingAllowed(account, time.Now().UTC()) ||
+		!codexQuotaOverdraftSchedulingAllowed(account, now) ||
 		account.TempUnschedulableUntil == nil || !time.Now().Before(*account.TempUnschedulableUntil) ||
-		!IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) {
+		!(IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) ||
+			(codexQuotaOverdraftPauseReason(account.TempUnschedulableReason) && codexQuotaOverdraftProbationEligible(account, now))) {
 		return account
 	}
 	clone := *account
