@@ -84,6 +84,9 @@ var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibil
 	"123_fix_legacy_auth_source_grant_on_signup_defaults.sql": newMigrationChecksumCompatibilityRule("2ce43c2cd89e9f9e1febd34a407ed9e84d177386c5544b6f02c1f58a21129f57", "6cd33422f215dcd1f486ab6f35c0ea5805d9ca69bb25906d94bc649156657145"),
 	"180_batch_image_foundation.sql":                          newMigrationChecksumCompatibilityRule("d902b70982025ec519749faf058aab7631e82c3f48167b9a4ae4db718eb72cce", "82da85b5d98e67a0507647b873a40373e84538e4adafdeed6767c0ac8b6570b2"),
 	"183_batch_image_pricing_snapshot.sql":                    newMigrationChecksumCompatibilityRule("4012af3e43636cb6af22e0176d59d1fcc70615c0f310194329461ae462c4fbd6", "96d915c9b7a6941ae99039e0ff3f1a61481eb9bddd933d11c6fadb2274554e87"),
+	// 迁移 253 的早期版本不包含已有表字段对齐逻辑。仅接受该已知历史 checksum，
+	// 其余内容变化继续执行严格校验。
+	"253_add_channel_monitor_aggregation.sql": newMigrationChecksumCompatibilityRule("3e34d0097ca4753fb04eea5c70bdd026f2773a90adca9f49486130da23e7499e", "a631f4adc0fe0b9f4665805fe3d708942cf18e30e74a3061073cc86febfd3f69"),
 }
 
 // ApplyMigrations 将嵌入的 SQL 迁移文件应用到指定的数据库。
@@ -183,8 +186,7 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 
 		// 计算文件内容的 SHA256 校验和，用于检测文件是否被修改。
 		// 这是一种防篡改机制：如果有人修改了已应用的迁移文件，系统会拒绝启动。
-		sum := sha256.Sum256([]byte(content))
-		checksum := hex.EncodeToString(sum[:])
+		checksum := migrationFileChecksum(content)
 
 		// 检查该迁移是否已经应用
 		var existing string
@@ -447,8 +449,7 @@ func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
 		return "", "", "", err
 	}
 	content := strings.TrimSpace(string(contentBytes))
-	sum := sha256.Sum256([]byte(content))
-	hash := hex.EncodeToString(sum[:])
+	hash := migrationFileChecksum(content)
 	version := strings.TrimSuffix(name, ".sql")
 	return version, version, hash, nil
 }
@@ -467,6 +468,15 @@ func newMigrationChecksumCompatibilityRule(fileChecksum string, acceptedDBChecks
 		acceptedDBChecksum: checksumSet(acceptedDBChecksums...),
 		acceptedChecksums:  checksumSet(append([]string{fileChecksum}, acceptedDBChecksums...)...),
 	}
+}
+
+// migrationFileChecksum 消除宿主机检出换行策略对迁移 checksum 的影响。
+// Git 可能在 Linux 上使用 LF、Windows 上使用 CRLF；同一份受版本控制的 SQL
+// 不应因交叉编译环境不同而在启动时被判定为迁移内容变化。
+func migrationFileChecksum(content string) string {
+	canonical := strings.ReplaceAll(strings.TrimSpace(content), "\r\n", "\n")
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 func isMigrationChecksumCompatible(name, dbChecksum, fileChecksum string) bool {

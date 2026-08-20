@@ -3,10 +3,23 @@ package repository
 import (
 	"testing"
 
+	"github.com/TokenFlux/TokenRouter/migrations"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIsMigrationChecksumCompatible(t *testing.T) {
+	t.Run("channel monitor historical checksum is explicitly compatible", func(t *testing.T) {
+		require.True(t, isMigrationChecksumCompatible(
+			"253_add_channel_monitor_aggregation.sql",
+			"a631f4adc0fe0b9f4665805fe3d708942cf18e30e74a3061073cc86febfd3f69",
+			"3e34d0097ca4753fb04eea5c70bdd026f2773a90adca9f49486130da23e7499e",
+		))
+		require.False(t, isMigrationChecksumCompatible(
+			"253_add_channel_monitor_aggregation.sql",
+			"unexpected-db-checksum",
+			"3e34d0097ca4753fb04eea5c70bdd026f2773a90adca9f49486130da23e7499e",
+		))
+	})
 	t.Run("054历史checksum可兼容", func(t *testing.T) {
 		ok := isMigrationChecksumCompatible(
 			"054_drop_legacy_cache_columns.sql",
@@ -161,4 +174,20 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		)
 		require.False(t, ok)
 	})
+}
+
+func TestMigrationFileChecksumNormalizesLineEndings(t *testing.T) {
+	lf := "CREATE TABLE example (\n  id BIGINT PRIMARY KEY\n);\n"
+	crlf := "CREATE TABLE example (\r\n  id BIGINT PRIMARY KEY\r\n);\r\n"
+
+	require.Equal(t, migrationFileChecksum(lf), migrationFileChecksum(crlf))
+}
+
+func TestChannelMonitorAggregationCompatibilityChecksumMatchesEmbeddedMigration(t *testing.T) {
+	content, err := migrations.FS.ReadFile("253_add_channel_monitor_aggregation.sql")
+	require.NoError(t, err)
+
+	rule, ok := migrationChecksumCompatibilityRules["253_add_channel_monitor_aggregation.sql"]
+	require.True(t, ok)
+	require.Equal(t, rule.fileChecksum, migrationFileChecksum(string(content)))
 }

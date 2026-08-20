@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS channel_monitor_daily_rollups (
     deleted_at            TIMESTAMPTZ
 );
 
+-- 旧版被动监控迁移可能已经提前创建了该表。CREATE TABLE IF NOT EXISTS
+-- 只会跳过已有表，不会补齐缺失字段，因此必须在建立 deleted_at 索引前显式补列。
+ALTER TABLE channel_monitor_daily_rollups
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_monitor_daily_rollups_unique
     ON channel_monitor_daily_rollups (monitor_id, model, bucket_date);
 CREATE INDEX IF NOT EXISTS idx_channel_monitor_daily_rollups_bucket
