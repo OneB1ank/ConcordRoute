@@ -130,7 +130,7 @@ func (c *CodexQuotaOverdraftCoordinator) enabled() bool {
 	return c != nil && c.accountRepo != nil && c.httpUpstream != nil
 }
 
-// ObserveAccount 在 5h/7d 快照达到 100% 时启动探测，并在额度恢复后关闭旧周期。
+// ObserveAccount 在 5h/7d 快照达到透支启动阈值时启动探测，并在额度恢复后关闭旧周期。
 func (c *CodexQuotaOverdraftCoordinator) ObserveAccount(account *Account, preferredModel string) {
 	if !c.enabled() || !isCodexQuotaOverdraftAccount(account) || account.ID <= 0 {
 		return
@@ -682,8 +682,8 @@ func codexQuotaOverdraftProbeModels(preferred string) []string {
 func codexQuotaOverdraftResponseIsQuotaLimited(headers http.Header, body []byte) bool {
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
 		if normalized := snapshot.Normalize(); normalized != nil &&
-			(normalized.Used5hPercent != nil && *normalized.Used5hPercent >= 100 ||
-				normalized.Used7dPercent != nil && *normalized.Used7dPercent >= 100) {
+			(normalized.Used5hPercent != nil && *normalized.Used5hPercent >= codexQuotaOverdraftStartPercent ||
+				normalized.Used7dPercent != nil && *normalized.Used7dPercent >= codexQuotaOverdraftStartPercent) {
 			return true
 		}
 	}
@@ -708,8 +708,8 @@ func codexQuotaOverdraftSignalFromAccount(account *Account, state *CodexQuotaOve
 		fiveReset = stabilizeCodexQuotaOverdraftReset(fiveReset, state.FiveHourRecoverAt, now)
 		sevenReset = stabilizeCodexQuotaOverdraftReset(sevenReset, state.SevenDayRecoverAt, now)
 	}
-	fiveExhausted := fiveUsed >= 100 && (fiveReset == nil || fiveReset.After(now))
-	sevenExhausted := sevenUsed >= 100 && (sevenReset == nil || sevenReset.After(now))
+	fiveExhausted := fiveUsed >= codexQuotaOverdraftStartPercent && (fiveReset == nil || fiveReset.After(now))
+	sevenExhausted := sevenUsed >= codexQuotaOverdraftStartPercent && (sevenReset == nil || sevenReset.After(now))
 	if !fiveExhausted && !sevenExhausted {
 		return codexQuotaOverdraftSignal{}, false
 	}
@@ -755,12 +755,12 @@ func clearRecoveredCodexQuotaOverdraftWindows(state *CodexQuotaOverdraftProbeSta
 	changed := false
 	fiveUsed := parseExtraFloat64(account.Extra["codex_5h_used_percent"])
 	sevenUsed := parseExtraFloat64(account.Extra["codex_7d_used_percent"])
-	if state.FiveHourStartedAt != nil && (fiveUsed < 100 || state.FiveHourRecoverAt == nil || !state.FiveHourRecoverAt.After(now)) {
+	if state.FiveHourStartedAt != nil && (fiveUsed < codexQuotaOverdraftStartPercent || state.FiveHourRecoverAt == nil || !state.FiveHourRecoverAt.After(now)) {
 		state.FiveHourStartedAt = nil
 		state.FiveHourRecoverAt = nil
 		changed = true
 	}
-	if state.SevenDayStartedAt != nil && (sevenUsed < 100 || state.SevenDayRecoverAt == nil || !state.SevenDayRecoverAt.After(now)) {
+	if state.SevenDayStartedAt != nil && (sevenUsed < codexQuotaOverdraftStartPercent || state.SevenDayRecoverAt == nil || !state.SevenDayRecoverAt.After(now)) {
 		state.SevenDayStartedAt = nil
 		state.SevenDayRecoverAt = nil
 		changed = true
@@ -835,7 +835,7 @@ func applyCodexQuotaOverdraftUsage(
 		return
 	}
 	apply := func(progress *UsageProgress, startedAt, recoverAt *time.Time) {
-		if progress == nil || progress.Utilization < 100 || startedAt == nil || recoverAt == nil || !recoverAt.After(now) {
+		if progress == nil || progress.Utilization < codexQuotaOverdraftStartPercent || startedAt == nil || recoverAt == nil || !recoverAt.After(now) {
 			return
 		}
 		stats, err := repo.GetAccountWindowStats(ctx, account.ID, *startedAt)

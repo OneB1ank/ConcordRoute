@@ -81,7 +81,7 @@ func TestCodexQuotaOverdraftInjectionGuards(t *testing.T) {
 	require.Equal(t, oversized, svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, oversized))
 }
 
-func TestCodexQuotaOverdraftInjectionStartsOnlyAtExhaustion(t *testing.T) {
+func TestCodexQuotaOverdraftInjectionStartsAtThreshold(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)
 	past := now.Add(-time.Minute)
@@ -92,9 +92,14 @@ func TestCodexQuotaOverdraftInjectionStartsOnlyAtExhaustion(t *testing.T) {
 	}
 
 	below := base()
-	below.Extra["codex_5h_used_percent"] = 99.999
+	below.Extra["codex_5h_used_percent"] = 99.49
 	below.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 	require.False(t, codexQuotaOverdraftRequestActive(below, now))
+
+	atThreshold := base()
+	atThreshold.Extra["codex_5h_used_percent"] = codexQuotaOverdraftStartPercent
+	atThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
+	require.True(t, codexQuotaOverdraftRequestActive(atThreshold, now))
 
 	exhausted := base()
 	exhausted.Extra["codex_5h_used_percent"] = 100.0
@@ -102,7 +107,7 @@ func TestCodexQuotaOverdraftInjectionStartsOnlyAtExhaustion(t *testing.T) {
 	require.True(t, codexQuotaOverdraftRequestActive(exhausted, now))
 
 	expired := base()
-	expired.Extra["codex_5h_used_percent"] = 100.0
+	expired.Extra["codex_5h_used_percent"] = codexQuotaOverdraftStartPercent
 	expired.Extra["codex_5h_reset_at"] = past.Format(time.RFC3339)
 	require.False(t, codexQuotaOverdraftRequestActive(expired, now))
 
@@ -128,7 +133,7 @@ func TestCodexQuotaOverdraftInjectionStartsOnlyAtExhaustion(t *testing.T) {
 		CycleKey:  "5h:" + fmt.Sprint(future.Unix()),
 		RecoverAt: codexQuotaOverdraftTimePtr(future),
 	}
-	require.False(t, codexQuotaOverdraftRequestActive(recovered, now), "已恢复状态不能因残留的 100% 快照重新注入")
+	require.False(t, codexQuotaOverdraftRequestActive(recovered, now), "已恢复状态不能因残留的阈值快照重新注入")
 }
 
 func TestCodexQuotaOverdraftSchedulingOnlyBypassesQuotaThresholds(t *testing.T) {

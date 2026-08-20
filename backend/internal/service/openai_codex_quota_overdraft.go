@@ -14,9 +14,12 @@ import (
 const (
 	// CodexQuotaOverdraftEnabledExtraKey 保存账号级透支开关，默认关闭。
 	CodexQuotaOverdraftEnabledExtraKey = "codex_quota_overdraft_enabled"
-	codexQuotaOverdraftCallIDPrefix    = "call_sub2api_overdraft_"
-	codexQuotaOverdraftExecInput       = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
-	codexQuotaOverdraftMaxBodyBytes    = 32 << 20
+	// codexQuotaOverdraftStartPercent 在精确额度接近耗尽时提前进入有限真实探测，
+	// 为最后一小段额度留出状态确认时间。
+	codexQuotaOverdraftStartPercent = 99.5
+	codexQuotaOverdraftCallIDPrefix = "call_sub2api_overdraft_"
+	codexQuotaOverdraftExecInput    = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`
+	codexQuotaOverdraftMaxBodyBytes = 32 << 20
 )
 
 func isCodexQuotaOverdraftAccount(account *Account) bool {
@@ -56,7 +59,7 @@ func (s *OpenAIGatewayService) shouldInjectCodexQuotaOverdraft(ctx context.Conte
 }
 
 // codexQuotaOverdraftRequestActive 将请求体修改严格限制在真实透支周期内。
-// 账号开关只表示允许透支；低于 100% 时普通请求必须保持原始结构。
+// 账号开关只表示允许透支；低于启动阈值时普通请求必须保持原始结构。
 // 若上游没有返回百分比，但已经通过明确的额度耗尽 429 建立了 fallback
 // 周期，则在该周期恢复时间前继续沿用状态机结论。
 func codexQuotaOverdraftRequestActive(account *Account, now time.Time) bool {
