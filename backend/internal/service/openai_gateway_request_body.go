@@ -775,6 +775,16 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 			normalized = next
 			changed = true
 		}
+		// 透传路径也必须遵循旧 /responses/compact 的字段白名单；否则客户端携带的
+		// client_metadata、prompt_cache_key 等普通 Responses 字段会原样到达 compact 上游。
+		compactBody, compactChanged, err := normalizeOpenAICompactRequestBody(normalized)
+		if err != nil {
+			return body, false, err
+		}
+		if compactChanged {
+			normalized = compactBody
+			changed = true
+		}
 	} else {
 		if store := gjson.GetBytes(normalized, "store"); !store.Exists() || store.Type != gjson.False {
 			next, err := sjson.SetBytes(normalized, "store", false)

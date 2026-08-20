@@ -415,6 +415,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
+		fingerprintAccount, resolveErr := resolveCredentialAccount(ctx, s.accountRepo, account)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolve Codex fingerprint account: %w", resolveErr)
+		}
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		if isCompactRequest {
+			// 旧 /responses/compact 不接受 client_metadata，但其 Header 仍属于同一
+			// Codex 会话。必须在 compact 归一化删除请求级字段前派生 ID，随后只改写 Header。
+			fingerprintIDs = bindCodexFingerprintIDsToAccount(
+				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
+				account,
+			)
+		}
 		codexResult := codexTransformResult{}
 		if compatMessagesBridge {
 			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{IsCodexCLI: isCodexCLI, IsCompact: isCompactRequest, SkipDefaultInstructions: true, PreserveToolCallIDs: true})
@@ -429,17 +445,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// 指纹收敛 ID 只在本次 Forward 内共享，避免跨账号 failover 复用 Gin context 中的旧值。
 		if !isCompactRequest {
-			fingerprintAccount, resolveErr := resolveCredentialAccount(ctx, s.accountRepo, account)
-			if resolveErr != nil {
-				return nil, fmt.Errorf("resolve Codex fingerprint account: %w", resolveErr)
-			}
 			// Spark 影子账号沿用父账号的 device ID 与指纹模式，和共享 OAuth 凭据保持同源。
 			if applyCodexClientMetadata(decoded, fingerprintAccount) {
 				markDecodedModified()
-			}
-			var clientHeaders http.Header
-			if c != nil && c.Request != nil {
-				clientHeaders = c.Request.Header
 			}
 			fingerprintIDs = bindCodexFingerprintIDsToAccount(
 				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
@@ -453,8 +461,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if applyCodexFingerprintClientMetadata(decoded, fingerprintIDs) {
 				markDecodedModified()
 			}
-			stageCodexFingerprintIDs(c, fingerprintIDs)
 		}
+		// compact 只改 Header，普通 Responses 同时改 Header/Body；两者都要绑定本次账号尝试。
+		stageCodexFingerprintIDs(c, fingerprintIDs)
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
@@ -557,6 +566,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				return nil, fmt.Errorf("serialize request body: %w", marshalErr)
 			}
 			requestView = newOpenAIRequestView(body)
+		}
+	}
+	if account.Type == AccountTypeOAuth && isCompactRequest {
+		// 指纹 ID 已在上方从原始 Body/Header 派生；发送前再按旧 /responses/compact
+		// 白名单收口请求体，避免 client_metadata、prompt_cache_key 等普通
+		// Responses 字段泄漏到不支持这些字段的 compact schema。
+		compactBody, compactChanged, compactErr := normalizeOpenAICompactRequestBody(body)
+		if compactErr != nil {
+			return nil, compactErr
+		}
+		if compactChanged {
+			body = compactBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
 		}
 	}
 	imageBillingModel := ""

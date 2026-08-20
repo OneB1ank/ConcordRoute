@@ -75,7 +75,26 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			body = nextBody
 		}
 
-		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, isOpenAIResponsesCompactPath(c))
+		fingerprintAccount, resolveErr := resolveCredentialAccount(ctx, s.accountRepo, account)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolve Codex fingerprint account: %w", resolveErr)
+		}
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		compactRequest := isOpenAIResponsesCompactPath(c)
+		var fingerprintIDs *codexFingerprintIDs
+		if compactRequest {
+			// compact 归一化会删除 client_metadata/prompt_cache_key，先从原始请求
+			// 派生账号级 ID，发送时仅收敛 Header，不向不支持的 body schema 注入字段。
+			fingerprintIDs = bindCodexFingerprintIDsToAccount(
+				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body),
+				account,
+			)
+		}
+
+		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, compactRequest)
 		if err != nil {
 			return nil, err
 		}
@@ -86,16 +105,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 		// 透传与普通转换路径共享指纹收敛语义。只局部改写 client_metadata，
 		// 避免为大请求体做整包反序列化。
-		if !isOpenAIResponsesCompactPath(c) {
-			fingerprintAccount, resolveErr := resolveCredentialAccount(ctx, s.accountRepo, account)
-			if resolveErr != nil {
-				return nil, fmt.Errorf("resolve Codex fingerprint account: %w", resolveErr)
-			}
-			var clientHeaders http.Header
-			if c != nil && c.Request != nil {
-				clientHeaders = c.Request.Header
-			}
-			fingerprintIDs := bindCodexFingerprintIDsToAccount(
+		if !compactRequest {
+			fingerprintIDs = bindCodexFingerprintIDsToAccount(
 				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body),
 				account,
 			)
@@ -108,9 +119,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					body = updatedBody
 				}
 			}
-			// nil 也必须覆盖，避免 failover 复用前一个账号的收敛 ID。
-			stageCodexFingerprintIDs(c, fingerprintIDs)
 		}
+		// nil 也必须覆盖，避免 failover 复用前一个账号的收敛 ID。
+		stageCodexFingerprintIDs(c, fingerprintIDs)
 	}
 
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
