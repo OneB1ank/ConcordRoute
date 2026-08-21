@@ -854,6 +854,12 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 	if err != nil {
 		return nil
 	}
+	if account == nil {
+		// getSchedulableAccount 可能因临时暂停或额度阈值返回 nil,nil；
+		// 此时旧粘性键已经失效，必须删除而不是让会话持续卡在旧账号上。
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		return nil
+	}
 
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared

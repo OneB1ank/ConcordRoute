@@ -342,6 +342,7 @@ export default {
     userBilled: 'User billed',
     accountBilled: 'Account billed',
     overdraftActive: 'Overdraft active',
+    overdraftTerminated: 'Overdraft ended by upstream 429',
     overdraftRecoverAt: 'Expected recovery',
     overdraftRetryAt: 'Next retry',
     overdraftTestedAt: 'Probed at',

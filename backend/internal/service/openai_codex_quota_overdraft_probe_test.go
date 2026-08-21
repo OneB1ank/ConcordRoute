@@ -13,6 +13,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/usagestats"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +38,10 @@ type codexOverdraftCASRepoStub struct {
 
 type codexOverdraftUsageRepoStub struct {
 	UsageLogRepository
+}
+
+func (r *codexOverdraftUsageRepoStub) GetAccountWindowStats(context.Context, int64, time.Time) (*usagestats.AccountStats, error) {
+	return &usagestats.AccountStats{Requests: 7, Tokens: 1234, Cost: 2.5, StandardCost: 2.0, UserCost: 3.0}, nil
 }
 
 func (b *codexOverdraftRuntimeBlockerStub) BlockAccountScheduling(*Account, time.Time, string) {}
@@ -375,10 +380,12 @@ func TestCodexQuotaOverdraftInjectedBusiness429UpgradesLegacyProbeFailure(t *tes
 	require.True(t, ok)
 	require.Equal(t, codexQuotaOverdraftProbeFailed, state.Status)
 	require.Equal(t, CodexQuotaOverdraftBusinessQuotaLimitedReason, state.ReasonCode)
+	require.Equal(t, 1, state.Attempts, "真实业务 429 不得继承旧探针次数")
+	require.NotNil(t, state.OverdraftStartedAt)
 	require.Equal(t, 1, repo.tempPauseCalls)
 }
 
-func TestCodexQuotaOverdraftFailedStateDoesNotShowActiveOverdraft(t *testing.T) {
+func TestCodexQuotaOverdraftBusinessFailureShowsTerminatedOverdraftStats(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
 	account := newCodexOverdraftProbeTestAccount(now)
 	started := now.Add(-time.Hour)
@@ -390,14 +397,29 @@ func TestCodexQuotaOverdraftFailedStateDoesNotShowActiveOverdraft(t *testing.T) 
 		FiveHourRecoverAt:  codexQuotaOverdraftTimePtr(recoverAt),
 		OverdraftStartedAt: codexQuotaOverdraftTimePtr(started),
 		FiveHourStartedAt:  codexQuotaOverdraftTimePtr(started),
+		ReasonCode:         CodexQuotaOverdraftBusinessQuotaLimitedReason,
 	}
 	usage := &UsageInfo{FiveHour: &UsageProgress{Utilization: 100}}
 
 	applyCodexQuotaOverdraftUsage(context.Background(), &codexOverdraftUsageRepoStub{}, account, usage, now)
 
 	require.False(t, usage.FiveHour.OverdraftActive)
-	require.Nil(t, usage.FiveHour.OverdraftStats)
-	require.Nil(t, usage.FiveHour.OverdraftStarted)
+	require.True(t, usage.FiveHour.OverdraftTerminated)
+	require.Equal(t, int64(7), usage.FiveHour.OverdraftStats.Requests)
+	require.Equal(t, int64(1234), usage.FiveHour.OverdraftStats.Tokens)
+	require.Equal(t, 2.5, usage.FiveHour.OverdraftStats.Cost)
+	require.NotNil(t, usage.FiveHour.OverdraftStarted)
+}
+
+func TestCodexQuotaOverdraftTerminalBusinessFailureClearsStickyPredicate(t *testing.T) {
+	now := time.Date(2026, time.August, 20, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = &CodexQuotaOverdraftProbeState{
+		Status:     codexQuotaOverdraftProbeFailed,
+		ReasonCode: CodexQuotaOverdraftBusinessQuotaLimitedReason,
+		CycleKey:   "7d:terminal",
+	}
+	require.True(t, shouldClearStickySession(account, "gpt-5.4"))
 }
 
 func TestCodexQuotaOverdraftProbeInconclusiveNeverPauses(t *testing.T) {

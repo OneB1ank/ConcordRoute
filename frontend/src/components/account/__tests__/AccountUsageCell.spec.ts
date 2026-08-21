@@ -143,6 +143,46 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('2/5 · 5h')
   })
 
+  it('显示真实业务429终止的透支及其统计', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 100,
+        resets_at: '2026-03-17T02:30:00Z',
+        overdraft_terminated: true,
+        overdraft_stats: { requests: 3, tokens: 1200, cost: 1.25, standard_cost: 1, user_cost: 1.5 }
+      },
+      codex_quota_overdraft: {
+        status: 'failed',
+        reason_code: 'business_quota_limited',
+        quota_window: '7d',
+        cycle_key: '7d:1773714600',
+        attempts: 1,
+        limit: 5,
+        started_at: '2026-03-17T00:00:00Z'
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 9003, platform: 'openai', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['overdraftTerminated', 'overdraftStats'],
+            template: '<div>{{ overdraftTerminated ? "usage.overdraftTerminated" : "" }} {{ overdraftStats?.requests }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.text()).toContain('usage.overdraftTerminated')
+    expect(wrapper.text()).toContain('1/5 · 7d')
+    expect(wrapper.text()).toContain('3')
+  })
+
   it('does not request or display simulated usage for third-party Gemini API Key accounts', async () => {
     const requestBatchedUsage = vi.fn()
     const wrapper = mount(AccountUsageCell, {

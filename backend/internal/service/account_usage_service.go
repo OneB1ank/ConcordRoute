@@ -158,16 +158,17 @@ type WindowStats struct {
 
 // UsageProgress 使用量进度
 type UsageProgress struct {
-	Utilization      float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
-	ResetsAt         *time.Time   `json:"resets_at"`              // 重置时间
-	RemainingSeconds int          `json:"remaining_seconds"`      // 距重置剩余秒数
-	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
-	UsedRequests     int64        `json:"used_requests,omitempty"`
-	LimitRequests    int64        `json:"limit_requests,omitempty"`
-	OverdraftActive  bool         `json:"overdraft_active,omitempty"`
-	OverdraftStats   *WindowStats `json:"overdraft_stats,omitempty"`
-	OverdraftStarted *time.Time   `json:"overdraft_started_at,omitempty"`
-	OverdraftRecover *time.Time   `json:"overdraft_recover_at,omitempty"`
+	Utilization         float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
+	ResetsAt            *time.Time   `json:"resets_at"`              // 重置时间
+	RemainingSeconds    int          `json:"remaining_seconds"`      // 距重置剩余秒数
+	WindowStats         *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
+	UsedRequests        int64        `json:"used_requests,omitempty"`
+	LimitRequests       int64        `json:"limit_requests,omitempty"`
+	OverdraftActive     bool         `json:"overdraft_active,omitempty"`
+	OverdraftTerminated bool         `json:"overdraft_terminated,omitempty"`
+	OverdraftStats      *WindowStats `json:"overdraft_stats,omitempty"`
+	OverdraftStarted    *time.Time   `json:"overdraft_started_at,omitempty"`
+	OverdraftRecover    *time.Time   `json:"overdraft_recover_at,omitempty"`
 }
 
 // AntigravityModelQuota Antigravity 单个模型的配额信息

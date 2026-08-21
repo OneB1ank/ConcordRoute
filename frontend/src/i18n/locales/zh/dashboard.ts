@@ -347,6 +347,7 @@ export default {
     userBilled: '用户扣费',
     accountBilled: '账号计费',
     overdraftActive: '透支中',
+    overdraftTerminated: '透支后被上游429终止',
     overdraftRecoverAt: '预计恢复',
     overdraftRetryAt: '下次重试',
     overdraftTestedAt: '探测时间',

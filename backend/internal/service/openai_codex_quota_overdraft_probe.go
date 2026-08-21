@@ -292,9 +292,9 @@ func (c *CodexQuotaOverdraftCoordinator) finishBusinessQuotaFailure(
 	}
 	state := *current
 	state.Status = codexQuotaOverdraftProbeFailed
-	if state.Attempts < 1 {
-		state.Attempts = 1
-	}
+	// 真实业务 429 只代表一次业务确认，不得继承旧版合成探针的次数。
+	state.Attempts = 1
+	state.Limit = codexQuotaOverdraftProbeAttemptLimit
 	state.Model = strings.TrimSpace(preferredModel)
 	state.ReasonCode = CodexQuotaOverdraftBusinessQuotaLimitedReason
 	state.TestedAt = codexQuotaOverdraftTimePtr(now)
@@ -302,6 +302,10 @@ func (c *CodexQuotaOverdraftCoordinator) finishBusinessQuotaFailure(
 	state.RecoverAt = codexQuotaOverdraftTimePtr(signal.RecoverAt)
 	state.FiveHourRecoverAt = cloneTimePtr(signal.FiveHourRecoverAt)
 	state.SevenDayRecoverAt = cloneTimePtr(signal.SevenDayRecoverAt)
+	// 首次真实业务请求就收到额度 429 时也要建立统计起点，
+	// 让管理端能看到这次业务确认之前的透支用量。
+	carryCodexQuotaOverdraftWindowStarts(&state, current, signal, now)
+	startCodexQuotaOverdraftWindows(&state, signal, now)
 	if !c.persistState(account.ID, &state) {
 		return false
 	}
@@ -689,7 +693,11 @@ func (c *CodexQuotaOverdraftCoordinator) ensureFailedPause(account *Account, sta
 	if account == nil || state == nil || state.RecoverAt == nil || !state.RecoverAt.After(c.currentTime()) {
 		return
 	}
-	reason := BuildTempUnschedReasonPayload(codexQuotaOverdraftPauseSource, "five real overdraft probes confirmed quota exhaustion")
+	reasonText := "five real overdraft probes confirmed quota exhaustion"
+	if codexQuotaOverdraftTerminalBusinessFailure(state) {
+		reasonText = "business request received upstream quota 429"
+	}
+	reason := BuildTempUnschedReasonPayload(codexQuotaOverdraftPauseSource, reasonText)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	fresh, err := c.accountRepo.GetByID(ctx, account.ID)
@@ -710,7 +718,7 @@ func (c *CodexQuotaOverdraftCoordinator) ensureFailedPause(account *Account, sta
 			UntilUnix:       state.RecoverAt.Unix(),
 			TriggeredAtUnix: c.currentTime().Unix(),
 			StatusCode:      http.StatusTooManyRequests,
-			ErrorMessage:    "five real overdraft probes confirmed quota exhaustion",
+			ErrorMessage:    reasonText,
 		})
 	}
 	if c.runtimeBlocker != nil {
@@ -995,9 +1003,11 @@ func applyCodexQuotaOverdraftUsage(
 		return
 	}
 	state, ok := codexQuotaOverdraftStateFromAccount(account)
-	if !ok || state.Status == codexQuotaOverdraftProbeRecovered || state.Status == codexQuotaOverdraftProbeFailed {
+	if !ok || state.Status == codexQuotaOverdraftProbeRecovered ||
+		(state.Status == codexQuotaOverdraftProbeFailed && !codexQuotaOverdraftTerminalBusinessFailure(state)) {
 		return
 	}
+	terminated := codexQuotaOverdraftTerminalBusinessFailure(state)
 	apply := func(progress *UsageProgress, startedAt, recoverAt *time.Time) {
 		if progress == nil || progress.Utilization < codexQuotaOverdraftStartPercent || startedAt == nil || recoverAt == nil || !recoverAt.After(now) {
 			return
@@ -1006,7 +1016,8 @@ func applyCodexQuotaOverdraftUsage(
 		if err != nil {
 			return
 		}
-		progress.OverdraftActive = true
+		progress.OverdraftActive = !terminated
+		progress.OverdraftTerminated = terminated
 		progress.OverdraftStats = windowStatsFromAccountStats(stats)
 		progress.OverdraftStarted = cloneTimePtr(startedAt)
 		progress.OverdraftRecover = cloneTimePtr(recoverAt)

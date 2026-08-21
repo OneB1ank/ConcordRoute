@@ -133,6 +133,7 @@
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
           :overdraft-active="usageInfo.five_hour.overdraft_active"
+          :overdraft-terminated="usageInfo.five_hour.overdraft_terminated"
           :overdraft-stats="usageInfo.five_hour.overdraft_stats"
           :overdraft-started-at="usageInfo.five_hour.overdraft_started_at"
           :overdraft-recover-at="usageInfo.five_hour.overdraft_recover_at"
@@ -146,6 +147,7 @@
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
           :overdraft-active="usageInfo.seven_day.overdraft_active"
+          :overdraft-terminated="usageInfo.seven_day.overdraft_terminated"
           :overdraft-stats="usageInfo.seven_day.overdraft_stats"
           :overdraft-started-at="usageInfo.seven_day.overdraft_started_at"
           :overdraft-recover-at="usageInfo.seven_day.overdraft_recover_at"
@@ -838,6 +840,9 @@ const codexOverdraftStatus = computed(() => {
     case 'passed':
       return { ...common, label: t('usage.overdraftActive'), textClass: 'text-red-600 dark:text-red-400', badgeClass: 'bg-red-50 dark:bg-red-950/40' }
     case 'failed':
+      if (probe.reason_code === 'business_quota_limited') {
+        return { ...common, label: t('usage.overdraftTerminated'), textClass: 'text-red-600 dark:text-red-400', badgeClass: 'bg-red-50 dark:bg-red-950/40' }
+      }
       return { ...common, label: t('usage.overdraftProbeFailed'), textClass: 'text-red-600 dark:text-red-400', badgeClass: 'bg-red-50 dark:bg-red-950/40' }
     case 'inconclusive':
       return { ...common, label: t('usage.overdraftProbeInconclusive'), textClass: 'text-amber-600 dark:text-amber-400', badgeClass: 'bg-amber-50 dark:bg-amber-950/40' }

@@ -26,12 +26,12 @@
     </div>
 
     <div
-      v-if="overdraftActive"
+      v-if="overdraftActive || overdraftTerminated"
       class="mb-0.5 flex items-center gap-1.5 text-[9px] text-red-600 dark:text-red-400"
       :title="overdraftTitle"
     >
       <span class="rounded bg-red-50 px-1.5 py-0.5 font-medium dark:bg-red-950/40">
-        {{ t('usage.overdraftActive') }}
+        {{ t(overdraftTerminated ? 'usage.overdraftTerminated' : 'usage.overdraftActive') }}
       </span>
       <span v-if="overdraftStats" class="text-gray-500 dark:text-gray-400">
         {{ formatOverdraftRequests }} req · {{ formatOverdraftTokens }} · {{ formatOverdraftCost }}
@@ -90,6 +90,7 @@ const props = defineProps<{
   remainingCapacity?: boolean
   wideLabel?: boolean
   overdraftActive?: boolean
+  overdraftTerminated?: boolean
   overdraftStats?: WindowStats | null
   overdraftStartedAt?: string | null
   overdraftRecoverAt?: string | null
@@ -260,8 +261,9 @@ const formatOverdraftCost = computed(() => {
 })
 
 const overdraftTitle = computed(() => {
-  if (!props.overdraftRecoverAt) return t('usage.overdraftActive')
-  return `${t('usage.overdraftActive')} · ${t('usage.overdraftRecoverAt')}: ${new Date(props.overdraftRecoverAt).toLocaleString()}`
+  const label = props.overdraftTerminated ? t('usage.overdraftTerminated') : t('usage.overdraftActive')
+  if (!props.overdraftRecoverAt) return label
+  return `${label} · ${t('usage.overdraftRecoverAt')}: ${new Date(props.overdraftRecoverAt).toLocaleString()}`
 })
 
 </script>

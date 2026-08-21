@@ -1382,6 +1382,7 @@ export interface UsageProgress {
   used_requests?: number
   limit_requests?: number
   overdraft_active?: boolean
+  overdraft_terminated?: boolean
   overdraft_stats?: WindowStats | null
   overdraft_started_at?: string | null
   overdraft_recover_at?: string | null
