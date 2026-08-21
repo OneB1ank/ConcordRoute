@@ -110,3 +110,18 @@ type CreateBindingInput struct {
 	AccountID int64 `json:"account_id"`
 	ProfileID int64 `json:"profile_id"`
 }
+
+// BulkBindOpenAIOAuthFailure 记录单个账号批量绑定失败，避免部分失败掩盖已完成结果。
+type BulkBindOpenAIOAuthFailure struct {
+	AccountID int64  `json:"account_id"`
+	Reason    string `json:"reason"`
+}
+
+// BulkBindOpenAIOAuthResult 返回本次批量绑定的可核对统计。
+type BulkBindOpenAIOAuthResult struct {
+	ProfileID int64                        `json:"profile_id"`
+	Eligible  int                          `json:"eligible"`
+	Bound     int                          `json:"bound"`
+	Failed    int                          `json:"failed"`
+	Failures  []BulkBindOpenAIOAuthFailure `json:"failures,omitempty"`
+}

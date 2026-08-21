@@ -206,7 +206,8 @@
                 <h3 class="font-semibold text-gray-900 dark:text-white">{{ profile.name }}</h3>
                 <div class="mt-1 text-sm text-gray-500 dark:text-dark-400">
                   #{{ profile.id }} · {{ profile.strategy }} · {{ runtimeOf(profile.id).status }} ·
-                  {{ profile.auto_start ? t('admin.clashProxy.autoStartEnabled') : t('admin.clashProxy.autoStartDisabled') }}
+                  {{ profile.auto_start ? t('admin.clashProxy.autoStartEnabled') : t('admin.clashProxy.autoStartDisabled') }} ·
+                  {{ t('admin.clashProxy.boundAccounts', { count: profileBindingCount(profile.id) }) }}
                 </div>
                 <div v-if="runtimeOf(profile.id).proxy_url" class="mt-1 font-mono text-xs text-gray-500">
                   {{ runtimeOf(profile.id).proxy_url }}
@@ -244,7 +245,20 @@
                 >
                   {{ t('admin.clashProxy.test') }}
                 </button>
+                <button
+                  class="btn btn-primary px-3 py-1.5"
+                  :disabled="busyProfileID === profile.id || runtimeOf(profile.id).status !== 'running'"
+                  @click="bindUnboundOpenAIOAuthAccounts(profile.id)"
+                >
+                  {{ t('admin.clashProxy.bindUnboundOpenAI') }}
+                </button>
               </div>
+            </div>
+            <div
+              v-if="runtimeOf(profile.id).status === 'running' && profileBindingCount(profile.id) === 0"
+              class="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+              {{ t('admin.clashProxy.noEffectiveBindingsWarning') }}
             </div>
             <div
               v-if="profileResults[profile.id]"
@@ -420,6 +434,10 @@ const profileOptions = computed(() => profiles.value.map((profile) => ({
   disabled: runtimeOf(profile.id).status !== 'running'
 })))
 
+function profileBindingCount(profileID: number): number {
+  return bindings.value.filter((binding) => binding.profile_id === profileID && binding.enabled).length
+}
+
 function messageOf(err: unknown): string {
   const value = err as { message?: string; response?: { data?: { message?: string } } }
   return value.message || value.response?.data?.message || t('admin.clashProxy.operationFailed')
@@ -550,6 +568,26 @@ async function runProfileAction(profileID: number, action: 'start' | 'stop' | 'r
           : await clashProxyAPI.restartProfile(profileID)
       profileResults[profileID] = `${runtime.status}${runtime.proxy_url ? ` · ${runtime.proxy_url}` : ''}`
     }
+    await loadAll()
+  } catch (err) {
+    error.value = messageOf(err)
+    appStore.showError(error.value)
+  } finally {
+    busyProfileID.value = null
+  }
+}
+
+async function bindUnboundOpenAIOAuthAccounts(profileID: number) {
+  if (!window.confirm(t('admin.clashProxy.bulkBindConfirm'))) return
+  busyProfileID.value = profileID
+  error.value = ''
+  try {
+    const result = await clashProxyAPI.bindUnboundOpenAIOAuthAccounts(profileID)
+    appStore.showSuccess(t('admin.clashProxy.bulkBindCompleted', {
+      bound: result.bound,
+      eligible: result.eligible,
+      failed: result.failed
+    }))
     await loadAll()
   } catch (err) {
     error.value = messageOf(err)

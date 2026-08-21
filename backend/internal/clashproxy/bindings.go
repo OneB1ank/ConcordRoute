@@ -7,6 +7,11 @@ import (
 	"fmt"
 )
 
+const (
+	bulkBindingOpenAIPlatform = "openai"
+	bulkBindingOAuthType      = "oauth"
+)
+
 func (s *Service) ListBindings(ctx context.Context) ([]BindingView, error) {
 	if err := s.requireConfigured(); err != nil {
 		return nil, err
@@ -66,7 +71,10 @@ func (s *Service) CreateBinding(ctx context.Context, input CreateBindingInput) (
 	if managedProxyID == nil || *managedProxyID <= 0 {
 		return nil, errors.New("proxy profile has no managed local proxy")
 	}
+	return s.createBindingWithManagedProxy(ctx, input, *managedProxyID)
+}
 
+func (s *Service) createBindingWithManagedProxy(ctx context.Context, input CreateBindingInput, managedProxyID int64) (*BindingView, error) {
 	currentProxyID, err := s.getAccountProxyID(ctx, input.AccountID)
 	if err != nil {
 		return nil, err
@@ -101,11 +109,88 @@ RETURNING id
 `, input.AccountID, input.ProfileID, previousProxyID).Scan(&bindingID); err != nil {
 		return nil, err
 	}
-	if err := s.accountUpdater.SetAccountProxy(ctx, input.AccountID, managedProxyID); err != nil {
+	if err := s.accountUpdater.SetAccountProxy(ctx, input.AccountID, &managedProxyID); err != nil {
 		_ = s.rollbackBinding(ctx, input.AccountID, oldBinding)
 		return nil, err
 	}
 	return s.getBinding(ctx, bindingID)
+}
+
+// @project-doc docs/operations/upstream_transport_security.md#clash_account_binding
+// BindUnboundOpenAIOAuthAccounts 把尚未配置出口的 OpenAI OAuth 主账号批量绑定到运行中策略。
+// 已有账号代理保持不变；影子账号由既有账号更新链路跟随主账号同步。
+func (s *Service) BindUnboundOpenAIOAuthAccounts(ctx context.Context, profileID int64) (*BulkBindOpenAIOAuthResult, error) {
+	if err := s.requireConfigured(); err != nil {
+		return nil, err
+	}
+	if profileID <= 0 {
+		return nil, errors.New("profile id is required")
+	}
+	if s.accountUpdater == nil {
+		return nil, errors.New("account proxy updater is not configured")
+	}
+	runtime, err := s.runtimeStore.GetRuntime(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	if runtime == nil || runtime.Status != "running" {
+		return nil, errors.New("start the proxy profile before binding accounts")
+	}
+	managedProxyID, err := s.getManagedProxyID(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	if managedProxyID == nil || *managedProxyID <= 0 {
+		return nil, errors.New("proxy profile has no managed local proxy")
+	}
+
+	accountIDs, err := s.listUnboundOpenAIOAuthAccountIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := &BulkBindOpenAIOAuthResult{
+		ProfileID: profileID,
+		Eligible:  len(accountIDs),
+		Failures:  make([]BulkBindOpenAIOAuthFailure, 0),
+	}
+	for _, accountID := range accountIDs {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if _, err := s.createBindingWithManagedProxy(ctx, CreateBindingInput{AccountID: accountID, ProfileID: profileID}, *managedProxyID); err != nil {
+			result.Failed++
+			result.Failures = append(result.Failures, BulkBindOpenAIOAuthFailure{AccountID: accountID, Reason: err.Error()})
+			continue
+		}
+		result.Bound++
+	}
+	return result, nil
+}
+
+func (s *Service) listUnboundOpenAIOAuthAccountIDs(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id
+FROM accounts
+WHERE deleted_at IS NULL
+  AND parent_account_id IS NULL
+  AND LOWER(platform) = $1
+  AND LOWER(type) = $2
+  AND proxy_id IS NULL
+ORDER BY id
+`, bulkBindingOpenAIPlatform, bulkBindingOAuthType)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	accountIDs := make([]int64, 0)
+	for rows.Next() {
+		var accountID int64
+		if err := rows.Scan(&accountID); err != nil {
+			return nil, err
+		}
+		accountIDs = append(accountIDs, accountID)
+	}
+	return accountIDs, rows.Err()
 }
 
 func (s *Service) DeleteBinding(ctx context.Context, id int64) error {

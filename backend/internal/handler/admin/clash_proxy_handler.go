@@ -178,6 +178,20 @@ func (h *ClashProxyHandler) CreateBinding(c *gin.Context) {
 	response.Created(c, item)
 }
 
+// BindUnboundOpenAIOAuthAccounts 为运行中策略批量补齐尚未配置出口的 OpenAI OAuth 账号。
+func (h *ClashProxyHandler) BindUnboundOpenAIOAuthAccounts(c *gin.Context) {
+	id, ok := clashProxyID(c, "profile")
+	if !ok {
+		return
+	}
+	result, err := h.service.BindUnboundOpenAIOAuthAccounts(c.Request.Context(), id)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *ClashProxyHandler) DeleteBinding(c *gin.Context) {
 	id, ok := clashProxyID(c, "binding")
 	if !ok {

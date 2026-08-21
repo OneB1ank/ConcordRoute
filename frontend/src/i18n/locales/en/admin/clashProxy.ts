@@ -43,7 +43,7 @@ export default {
     test: 'Test',
     healthy: 'Healthy',
     bindAccount: 'Bind Account',
-    bindingHint: 'A profile must be running before binding. Stopping it restores the previous proxy.',
+    bindingHint: 'A profile must be running before binding. Unbinding restores the previous proxy; stopping a bound profile fails closed.',
     selectAccount: 'Select account',
     selectProfile: 'Select a running profile',
     account: 'Account',
@@ -55,6 +55,11 @@ export default {
     noBindings: 'No account bindings',
     accountBound: 'Account bound',
     accountUnbound: 'Previous proxy restored',
+    boundAccounts: '{count} accounts bound',
+    bindUnboundOpenAI: 'Bind unconfigured OpenAI accounts',
+    bulkBindConfirm: 'Bind every OpenAI OAuth primary account without a proxy to this profile? Existing custom proxies stay unchanged.',
+    noEffectiveBindingsWarning: 'This profile is running but has no account bindings. Traffic still uses each account\'s existing egress or the server direct route.',
+    bulkBindCompleted: 'Bulk binding completed: {bound}/{eligible}, {failed} failed',
     operationFailed: 'Operation failed'
   }
 }

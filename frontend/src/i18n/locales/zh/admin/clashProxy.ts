@@ -43,7 +43,7 @@ export default {
     test: '测试',
     healthy: '健康',
     bindAccount: '绑定账号',
-    bindingHint: '策略运行后才能绑定；停止时会恢复账号原来的代理。',
+    bindingHint: '策略运行后才能绑定；解除绑定会恢复账号原来的代理，策略停止时已绑定账号保持故障关闭。',
     selectAccount: '选择账号',
     selectProfile: '选择运行中的策略',
     account: '账号',
@@ -55,6 +55,11 @@ export default {
     noBindings: '暂无账号绑定',
     accountBound: '账号已绑定',
     accountUnbound: '账号已恢复原代理',
+    boundAccounts: '已绑定 {count} 个账号',
+    bindUnboundOpenAI: '绑定未设置出口的 OpenAI 账号',
+    bulkBindConfirm: '确认把所有尚未设置代理的 OpenAI OAuth 主账号绑定到该策略？已有自定义代理保持不变。',
+    noEffectiveBindingsWarning: '该策略正在运行，但尚无账号绑定；业务请求仍会使用账号原出口或服务器直连。',
+    bulkBindCompleted: '批量绑定完成：{bound}/{eligible}，失败 {failed}',
     operationFailed: '操作失败'
   }
 }

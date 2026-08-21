@@ -558,6 +558,7 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 			clash.GET("/runtime/status", h.Admin.ClashProxy.GetRuntimeStatus)
 			clash.GET("/bindings", h.Admin.ClashProxy.ListBindings)
 			clash.POST("/bindings", h.Admin.ClashProxy.CreateBinding)
+			clash.POST("/profiles/:id/bind-openai-oauth", h.Admin.ClashProxy.BindUnboundOpenAIOAuthAccounts)
 			clash.DELETE("/bindings/:id", h.Admin.ClashProxy.DeleteBinding)
 		}
 		proxies.GET("", h.Admin.Proxy.List)

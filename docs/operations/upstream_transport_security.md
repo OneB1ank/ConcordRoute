@@ -24,6 +24,9 @@
 
 fallback 链循环、全部过期或目标缺失时保留可诊断失败，不能无限递归。代理替换或解绑后必须失效受影响账号的调度快照和 HTTP client 缓存；`direct` 是明确配置的降级，不是任意代理错误后的自动绕过。
 
+<a id="clash_account_binding"></a>
+Clash/mihomo 策略的运行状态与账号出口绑定是两个独立条件：策略 `running` 只证明本地 managed proxy 可用，只有 `clash_proxy_account_bindings` 中的 enabled binding 才会把账号 `proxy_id` 指向该出口。管理端可以对运行中策略批量绑定当前 `proxy_id IS NULL` 的 OpenAI OAuth 主账号；既有自定义代理不被覆盖，影子账号继续从主账号同步。批量操作允许单项失败并返回逐账号错误，已完成项保持有效；解除绑定恢复此前代理，策略停止时已绑定账号保持 fail-closed，不回退到服务器直连。
+
 ## 连接池隔离
 
 HTTP client 池可按 `proxy`、`account` 或 `account_proxy` 隔离，并有最大条目、空闲过期和逐出策略。隔离键还包含 TLS profile 等传输身份，防止不同账号或指纹错误复用连接。池配置变化要关闭/逐出旧 transport，不能只修改后续 key。

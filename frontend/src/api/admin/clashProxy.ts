@@ -63,6 +63,14 @@ export interface ClashProxyProfileTest {
   proxy_url?: string
 }
 
+export interface ClashProxyBulkBindingResult {
+  profile_id: number
+  eligible: number
+  bound: number
+  failed: number
+  failures?: Array<{ account_id: number; reason: string }>
+}
+
 export interface ClashProxyProfileInput {
   name: string
   strategy: string
@@ -146,6 +154,13 @@ async function createBinding(input: { account_id: number; profile_id: number }):
   return data
 }
 
+async function bindUnboundOpenAIOAuthAccounts(profileID: number): Promise<ClashProxyBulkBindingResult> {
+  const { data } = await apiClient.post<ClashProxyBulkBindingResult>(
+    `${baseURL}/profiles/${profileID}/bind-openai-oauth`
+  )
+  return data
+}
+
 async function deleteBinding(id: number): Promise<void> {
   await apiClient.delete(`${baseURL}/bindings/${id}`)
 }
@@ -166,5 +181,6 @@ export default {
   getRuntimeStatus,
   listBindings,
   createBinding,
+  bindUnboundOpenAIOAuthAccounts,
   deleteBinding
 }
