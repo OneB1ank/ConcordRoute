@@ -156,11 +156,11 @@ func TestCodexQuotaOverdraftPassedRecheckRequiresExplicit429AndCooldown(t *testi
 	require.False(t, codexQuotaOverdraftPassedRecheckDue(state, now, true), "冷却内的并发 429 不能形成探测风暴")
 }
 
-func TestCodexQuotaOverdraftSignalStartsAt100Percent(t *testing.T) {
+func TestCodexQuotaOverdraftSignalStartsAt98Percent(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	reset := now.Add(5 * time.Hour)
 	account := newCodexOverdraftProbeTestAccount(now)
-	account.Extra["codex_5h_used_percent"] = 99.99
+	account.Extra["codex_5h_used_percent"] = codexQuotaOverdraftStartPercent - 0.01
 
 	_, active := codexQuotaOverdraftSignalFromAccount(account, nil, now)
 	require.False(t, active)
@@ -172,12 +172,12 @@ func TestCodexQuotaOverdraftSignalStartsAt100Percent(t *testing.T) {
 	require.WithinDuration(t, reset, signal.RecoverAt, time.Second)
 }
 
-func TestCodexQuotaOverdraftQuotaLimitedHeadersUse100PercentThreshold(t *testing.T) {
+func TestCodexQuotaOverdraftQuotaLimitedHeadersUse98PercentThreshold(t *testing.T) {
 	headers := make(http.Header)
-	headers.Set("x-codex-primary-used-percent", "99.99")
+	headers.Set("x-codex-primary-used-percent", "97.99")
 	require.False(t, codexQuotaOverdraftResponseIsQuotaLimited(headers, nil))
 
-	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-used-percent", "98")
 	require.True(t, codexQuotaOverdraftResponseIsQuotaLimited(headers, nil))
 	require.True(t, codexQuotaOverdraftResponseIsQuotaLimited(nil, []byte(`{"error":{"type":"usage_limit_reached"}}`)))
 }

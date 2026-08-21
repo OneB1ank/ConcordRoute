@@ -15,10 +15,11 @@ import (
 const (
 	// CodexQuotaOverdraftEnabledExtraKey 保存账号级透支开关，默认关闭。
 	CodexQuotaOverdraftEnabledExtraKey = "codex_quota_overdraft_enabled"
-	// codexQuotaOverdraftStartPercent 仍用于确认额度周期已经耗尽。
-	codexQuotaOverdraftStartPercent = 100.0
+	// codexQuotaOverdraftStartPercent 在 98% 时提前进入透支判定，
+	// 为窗口末端保留少量余量，避免第一条超限请求直接卡在上游限额。
+	codexQuotaOverdraftStartPercent = 98.0
 	// codexQuotaOverdraftPrearmPercent 提前为接近限额的真实请求附加透支上下文，
-	// 让跨过 100% 的第一条业务请求本身成为最可靠的可用性证据。
+	// 让跨过 98% 的第一条业务请求本身成为最可靠的可用性证据。
 	codexQuotaOverdraftPrearmPercent = 95.0
 	codexQuotaOverdraftCallIDPrefix  = "call_sub2api_overdraft_"
 	codexQuotaOverdraftExecInput     = `const r = await tools.exec_command({"cmd":"true","yield_time_ms":1000,"max_output_tokens":1000}); text(r.output);`

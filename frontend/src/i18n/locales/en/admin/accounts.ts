@@ -700,7 +700,7 @@ export default {
         codexFingerprintCockpit: 'Cockpit (session + cache key)',
         codexFingerprintFull: 'Full convergence',
         codexQuotaOverdraft: 'Codex quota overdraft (experimental)',
-        codexQuotaOverdraftDesc: 'Off by default. The OAuth account ignores reserve thresholds. Normal requests remain unchanged below an exact upstream value of 100%; bounded real probes start at 100% and reuse the same UA, TLS profile, and account proxy egress. An explicit quota-exhaustion 429 also starts the probe immediately.',
+        codexQuotaOverdraftDesc: 'Off by default. The OAuth account ignores reserve thresholds. Overdraft context is prearmed at 95%; bounded real probes start at 98% and reuse the same UA, TLS profile, and account proxy egress. An explicit quota-exhaustion 429 also starts the probe immediately.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

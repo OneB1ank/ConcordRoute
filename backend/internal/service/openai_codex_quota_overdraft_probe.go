@@ -136,7 +136,7 @@ func (c *CodexQuotaOverdraftCoordinator) enabled() bool {
 	return c != nil && c.accountRepo != nil && c.httpUpstream != nil
 }
 
-// ObserveAccount 在 5h/7d 快照达到 100% 启动阈值时启动探测，并在额度恢复后关闭旧周期。
+// ObserveAccount 在 5h/7d 快照达到 98% 启动阈值时启动探测，并在额度恢复后关闭旧周期。
 func (c *CodexQuotaOverdraftCoordinator) ObserveAccount(account *Account, preferredModel string) {
 	if !c.enabled() || !isCodexQuotaOverdraftAccount(account) || account.ID <= 0 {
 		return
