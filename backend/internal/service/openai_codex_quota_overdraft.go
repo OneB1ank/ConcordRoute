@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -147,14 +148,81 @@ func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Contex
 	return body
 }
 
+// prepareCodexQuotaOverdraftWebSocketFrame 统一处理 Responses WS 的 response.create 帧。
+// session.update、response.cancel 等控制帧保持原样，避免把透支历史注入非业务 turn。
+func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftWebSocketFrame(ctx context.Context, account *Account, body []byte) []byte {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if len(body) == 0 || json.Unmarshal(body, &envelope) != nil || strings.TrimSpace(envelope.Type) != "response.create" {
+		return body
+	}
+	return s.prepareCodexQuotaOverdraftBody(ctx, account, false, body)
+}
+
 type codexQuotaOverdraftDocument struct {
 	Input []json.RawMessage `json:"input"`
 }
 
+// UnmarshalJSON 兼容 Responses API 的 input 字符串和 input 数组两种形态。
+// 字符串输入在注入前归一化为等价的用户 message，避免常见请求绕过透支载荷。
+func (d *codexQuotaOverdraftDocument) UnmarshalJSON(data []byte) error {
+	type envelope struct {
+		Input json.RawMessage `json:"input"`
+	}
+	var value envelope
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	d.Input = nil
+	raw := bytes.TrimSpace(value.Input)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+	if raw[0] == '[' {
+		return json.Unmarshal(raw, &d.Input)
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		// 保持原有的“未知 input 结构不注入”行为。
+		return nil
+	}
+	item, err := json.Marshal(map[string]any{
+		"type": "message",
+		"role": "user",
+		"content": []map[string]string{{
+			"type": "input_text",
+			"text": text,
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	d.Input = []json.RawMessage{item}
+	return nil
+}
+
 type codexQuotaOverdraftInputItem struct {
-	Type   string `json:"type"`
-	Role   string `json:"role"`
-	CallID string `json:"call_id"`
+	Type    string          `json:"type"`
+	Role    string          `json:"role"`
+	CallID  string          `json:"call_id"`
+	Content json.RawMessage `json:"content"`
+}
+
+// codexQuotaOverdraftInputIsUser 判断 Responses HTTP/WS 常见的三种用户输入形态。
+func codexQuotaOverdraftInputIsUser(item codexQuotaOverdraftInputItem) bool {
+	typ := strings.ToLower(strings.TrimSpace(item.Type))
+	role := strings.ToLower(strings.TrimSpace(item.Role))
+	switch typ {
+	case "message":
+		return role == "user"
+	case "input_text":
+		// WS v2 常直接把 input_text 放在 input 数组中，省略 role。
+		return role == "" || role == "user"
+	default:
+		// 兼容 {role:"user",content:[...]} 的 Responses 请求项。
+		return role == "user" && len(item.Content) > 0
+	}
 }
 
 func codexQuotaOverdraftBodyHasInjection(body []byte) bool {
@@ -196,7 +264,7 @@ func injectCodexQuotaOverdraft(body []byte) ([]byte, bool, error) {
 	}
 
 	var last codexQuotaOverdraftInputItem
-	if err := json.Unmarshal(document.Input[len(document.Input)-1], &last); err != nil || last.Type != "message" || last.Role != "user" {
+	if err := json.Unmarshal(document.Input[len(document.Input)-1], &last); err != nil || !codexQuotaOverdraftInputIsUser(last) {
 		return body, false, nil
 	}
 

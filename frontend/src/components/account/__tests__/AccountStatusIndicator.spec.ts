@@ -103,7 +103,7 @@ describe('AccountStatusIndicator', () => {
 		expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
 	})
 
-	it('429 与真实临时不可调度同时存在时分别显示两个恢复边界', () => {
+	it('Codex 额度 429 与派生暂停合并为一个限流状态', () => {
 		const wrapper = mount(AccountStatusIndicator, {
 			props: {
 				account: makeAccount({
@@ -111,6 +111,27 @@ describe('AccountStatusIndicator', () => {
 					rate_limit_reset_at: '2099-07-11T13:00:00Z',
 					temp_unschedulable_until: '2099-07-11T13:30:00Z',
 					temp_unschedulable_reason: '{"source":"codex_quota_overdraft"}'
+				})
+			},
+			global: {
+				stubs: { Icon: true }
+			}
+		})
+
+		expect(wrapper.text()).toContain('admin.accounts.status.rateLimited')
+		expect(wrapper.text()).toContain('admin.accounts.status.rateLimitedAutoResume')
+		expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
+		expect(wrapper.text()).not.toContain('429')
+	})
+
+	it('429 与独立临时不可调度原因同时存在时保留两个恢复边界', () => {
+		const wrapper = mount(AccountStatusIndicator, {
+			props: {
+				account: makeAccount({
+					platform: 'openai',
+					rate_limit_reset_at: '2099-07-11T13:00:00Z',
+					temp_unschedulable_until: '2099-07-11T13:30:00Z',
+					temp_unschedulable_reason: '{"source":"oauth_401"}'
 				})
 			},
 			global: {

@@ -225,3 +225,31 @@ func TestPersistCodexQuotaOverdraftProbeUnlessFailedKeepsFailedTerminal(t *testi
 	require.Contains(t, normalized, "reason_code}', '') <> $6")
 	require.NotContains(t, normalized, "?", "PostgreSQL 条件更新不能残留通用占位符")
 }
+
+func TestFinalizeCodexQuotaOverdraftProbeFailedProtectsBusinessTerminal(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	mock.ExpectExec("finalize failed overdraft state").WillReturnResult(sqlmock.NewResult(0, 0))
+	finalized, err := repo.FinalizeCodexQuotaOverdraftProbeFailed(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
+		Status:     "failed",
+		CycleKey:   "5h:1787166000",
+		ReasonCode: "quota_limited",
+	})
+	require.NoError(t, err)
+	require.False(t, finalized)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	normalized := normalizeSQLWhitespace(capturedSQL)
+	require.Contains(t, normalized, "status}' = 'failed'")
+	require.Contains(t, normalized, "reason_code}' = $6")
+	require.Contains(t, normalized, "NOT (")
+	require.NotContains(t, normalized, "?", "PostgreSQL 终态保护条件不能残留通用占位符")
+}

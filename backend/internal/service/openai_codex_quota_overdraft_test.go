@@ -82,6 +82,36 @@ func TestCodexQuotaOverdraftInjectionGuards(t *testing.T) {
 	require.Equal(t, oversized, svc.prepareCodexQuotaOverdraftBody(ctx, oauth, false, oversized))
 }
 
+func TestCodexQuotaOverdraftWebSocketFrameInjection(t *testing.T) {
+	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+	svc := &OpenAIGatewayService{}
+	reset := time.Now().UTC().Add(time.Hour)
+	account := &Account{ID: 43, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+		CodexQuotaOverdraftEnabledExtraKey: true,
+		"codex_5h_used_percent":            100,
+		"codex_5h_reset_at":                reset.Format(time.RFC3339),
+	}}
+	responseCreate := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"type":"message","role":"user"}]}`)
+	updated := svc.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, responseCreate)
+	require.NotEqual(t, string(responseCreate), string(updated))
+	require.True(t, codexQuotaOverdraftWasInjected(ctx, account.ID))
+
+	inputText := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"type":"input_text","text":"hello"}]}`)
+	inputTextUpdated := svc.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, inputText)
+	require.NotEqual(t, string(inputText), string(inputTextUpdated), "WS input_text 用户项也要注入")
+
+	roleUser := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}]}`)
+	roleUserUpdated := svc.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, roleUser)
+	require.NotEqual(t, string(roleUser), string(roleUserUpdated), "Responses role/user 用户项也要注入")
+
+	stringInput := []byte(`{"type":"response.create","model":"gpt-5.4","input":"hello"}`)
+	stringInputUpdated := svc.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, stringInput)
+	require.NotEqual(t, string(stringInput), string(stringInputUpdated), "WS 字符串 input 也要注入")
+
+	sessionUpdate := []byte(`{"type":"session.update","session":{"model":"gpt-5.4"}}`)
+	require.Equal(t, string(sessionUpdate), string(svc.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, sessionUpdate)))
+}
+
 func TestCodexQuotaOverdraftInjectionStartsAtPrearmThreshold(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)

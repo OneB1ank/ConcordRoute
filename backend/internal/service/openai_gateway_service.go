@@ -520,6 +520,14 @@ func (s *OpenAIGatewayService) SetCodexQuotaOverdraftCoordinator(coordinator *Co
 	}
 }
 
+// ObserveCodexQuotaOverdraftBusinessSuccess 统一接收 HTTP/WS 出站成功证据。
+func (s *OpenAIGatewayService) ObserveCodexQuotaOverdraftBusinessSuccess(ctx context.Context, account *Account, model string) {
+	if s == nil || s.codexQuotaOverdraft == nil || account == nil || !codexQuotaOverdraftWasInjected(ctx, account.ID) {
+		return
+	}
+	s.codexQuotaOverdraft.ObserveBusinessSuccess(account, model)
+}
+
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
 func NewOpenAIGatewayService(
 	accountRepo AccountRepository,

@@ -90,6 +90,10 @@ type codexQuotaOverdraftNonFailedPersister interface {
 	PersistCodexQuotaOverdraftProbeUnlessFailed(context.Context, int64, *CodexQuotaOverdraftProbeState) (bool, error)
 }
 
+type codexQuotaOverdraftFailedFinalizer interface {
+	FinalizeCodexQuotaOverdraftProbeFailed(context.Context, int64, *CodexQuotaOverdraftProbeState) (bool, error)
+}
+
 type codexQuotaOverdraftRateLimitClearer interface {
 	ClearCodexQuotaOverdraftRateLimit(context.Context, int64, *time.Time) (bool, error)
 }
@@ -306,7 +310,7 @@ func (c *CodexQuotaOverdraftCoordinator) finishBusinessQuotaFailure(
 	// 让管理端能看到这次业务确认之前的透支用量。
 	carryCodexQuotaOverdraftWindowStarts(&state, current, signal, now)
 	startCodexQuotaOverdraftWindows(&state, signal, now)
-	if !c.persistState(account.ID, &state) {
+	if !c.persistFailedState(account.ID, &state) {
 		return false
 	}
 	mergeAccountExtra(account, map[string]any{CodexQuotaOverdraftProbeExtraKey: &state})
@@ -467,7 +471,7 @@ func (c *CodexQuotaOverdraftCoordinator) runProbePlan(
 	state.Status = codexQuotaOverdraftProbeFailed
 	state.ReasonCode = lastReason
 	state.RetryAt = nil
-	if !c.persistState(accountID, state) {
+	if !c.persistFailedState(accountID, state) {
 		return
 	}
 	c.ensureFailedPause(account, state)
@@ -689,6 +693,24 @@ func (c *CodexQuotaOverdraftCoordinator) persistNonFailedState(accountID int64, 
 	return c.persistState(accountID, state)
 }
 
+// persistFailedState 只允许当前周期写入失败终态，避免旧探针覆盖真实业务额度 429。
+func (c *CodexQuotaOverdraftCoordinator) persistFailedState(accountID int64, state *CodexQuotaOverdraftProbeState) bool {
+	if c == nil || c.accountRepo == nil || state == nil || state.Status != codexQuotaOverdraftProbeFailed {
+		return false
+	}
+	if finalizer, ok := c.accountRepo.(codexQuotaOverdraftFailedFinalizer); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		persisted, err := finalizer.FinalizeCodexQuotaOverdraftProbeFailed(ctx, accountID, state)
+		if err != nil {
+			slog.Warn("codex_quota_overdraft_failed_state_persist_failed", "account_id", accountID, "cycle_key", state.CycleKey, "error", err)
+			return false
+		}
+		return persisted
+	}
+	return c.persistState(accountID, state)
+}
+
 func (c *CodexQuotaOverdraftCoordinator) ensureFailedPause(account *Account, state *CodexQuotaOverdraftProbeState) {
 	if account == nil || state == nil || state.RecoverAt == nil || !state.RecoverAt.After(c.currentTime()) {
 		return
@@ -790,7 +812,7 @@ func (c *CodexQuotaOverdraftCoordinator) recoverCycle(account *Account, state *C
 	state.SevenDayStartedAt = nil
 	testedAt := now.UTC()
 	state.TestedAt = &testedAt
-	if !c.persistState(account.ID, state) {
+	if !c.persistNonFailedState(account.ID, state) {
 		return
 	}
 	c.clearQuotaPause(account.ID, state)

@@ -1,12 +1,16 @@
 <template>
   <div class="flex items-center gap-2">
-    <!-- Rate Limit Display (429) - independent from temporary unschedulable state -->
-    <div v-if="isRateLimited" class="flex flex-col items-center gap-1">
+    <!-- 账号级 429 已包含状态和恢复时间，不再重复显示单独的 429 徽标。 -->
+    <div
+      v-if="isRateLimited"
+      class="flex flex-col items-center gap-1"
+      :title="t('admin.accounts.status.rateLimitedUntil', { time: formatDateTime(account.rate_limit_reset_at) })"
+    >
       <span class="badge text-xs badge-warning">{{ t('admin.accounts.status.rateLimited') }}</span>
       <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ rateLimitResumeText }}</span>
     </div>
 
-    <!-- Temporary unschedulable state is shown alongside 429 when both are active. -->
+    <!-- 仅展示独立的临时不可调度原因；同一次 429 派生暂停合并到限流状态。 -->
     <div v-if="showTempUnschedulable" class="flex flex-col items-center gap-1">
         <button
           type="button"
@@ -57,25 +61,6 @@
         <!-- 上方小三角 -->
         <div
           class="absolute bottom-full left-3 border-[6px] border-transparent border-b-gray-800 dark:border-b-gray-900"
-        ></div>
-      </div>
-    </div>
-
-    <!-- Rate Limit Indicator (429) -->
-    <div v-if="isRateLimited" class="group relative">
-      <span
-        class="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-      >
-        <Icon name="exclamationTriangle" size="xs" :stroke-width="2" />
-        429
-      </span>
-      <!-- Tooltip -->
-      <div
-        class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-56 -translate-x-1/2 whitespace-normal rounded bg-gray-900 px-3 py-2 text-center text-xs leading-relaxed text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
-      >
-        {{ t('admin.accounts.status.rateLimitedUntil', { time: formatDateTime(account.rate_limit_reset_at) }) }}
-        <div
-          class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"
         ></div>
       </div>
     </div>
@@ -275,11 +260,36 @@ const isTempUnschedulable = computed(() => {
   return new Date(props.account.temp_unschedulable_until) > new Date()
 })
 
-// Older Grok records used a temporary field as a presentation-only alias for 429.
-// Keep that legacy duplicate hidden while exposing real combinations for all accounts.
+type TempUnschedReason = {
+  source?: unknown
+  status_code?: unknown
+}
+
+// 解析存储原因只用于状态去重；异常或旧格式继续按独立暂停展示。
+const tempUnschedReason = computed<TempUnschedReason | null>(() => {
+  const raw = props.account.temp_unschedulable_reason?.trim()
+  if (!raw?.startsWith('{')) return null
+  try {
+    return JSON.parse(raw) as TempUnschedReason
+  } catch {
+    return null
+  }
+})
+
+// 额度透支终态会同时写入账号级 429 和临时暂停，它们属于同一调度事实。
+const isRateLimitDerivedTempUnsched = computed(() => {
+  if (!isRateLimited.value) return false
+  if (props.account.platform === 'grok' && props.account.temp_unschedulable_reason === 'legacy grok rate limited') {
+    return true
+  }
+  const reason = tempUnschedReason.value
+  return reason?.source === 'codex_quota_overdraft' || reason?.status_code === 429
+})
+
+// 独立原因仍与账号级 429 并列，只有同一次 429 的派生暂停被合并。
 const showTempUnschedulable = computed(() => {
   if (!isTempUnschedulable.value) return false
-  return !(props.account.platform === 'grok' && props.account.temp_unschedulable_reason === 'legacy grok rate limited')
+  return !isRateLimitDerivedTempUnsched.value
 })
 
 // Computed: has error status

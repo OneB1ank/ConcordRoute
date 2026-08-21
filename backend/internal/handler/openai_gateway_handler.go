@@ -1743,6 +1743,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if imageIntent {
 		// 首轮账号选择也要遵守显式生图请求的模型级限流。
 		initialSchedulingCtx = service.WithOpenAIImageGenerationIntent(initialSchedulingCtx)
+	} else {
+		// WS v2 与 HTTP Responses 共用透支调度上下文，确保首帧和后续 turn 都能注入。
+		initialSchedulingCtx = service.WithCodexQuotaOverdraftScheduling(initialSchedulingCtx)
+		ctx = initialSchedulingCtx
+		c.Request = c.Request.WithContext(ctx)
 	}
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
@@ -2187,6 +2192,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if result == nil {
 					return
+				}
+				if turnErr == nil && openAIForwardSucceededForScheduling(result) {
+					h.gatewayService.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, result.Model)
 				}
 				// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
 				if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
