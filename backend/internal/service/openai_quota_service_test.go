@@ -158,12 +158,15 @@ func TestOpenAIQuotaServiceCacheResetCreditsSnapshot(t *testing.T) {
 	})
 }
 
-func TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings(t *testing.T) {
+func TestOpenAIQuotaServiceQueryAndResetUseSameAccountEgressAndTLSRouterSettings(t *testing.T) {
 	quotaProfileID := int64(20)
+	proxyID := int64(77)
 	account := &Account{
-		ID:       44,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
+		ID:          44,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		ProxyID:     &proxyID,
+		Concurrency: 6,
 		Credentials: map[string]any{
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
@@ -176,7 +179,10 @@ func TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings(t *testing.T) {
 	}
 	upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
 		codexInviteResetJSONResponse(`{"rate_limit_reset_credits":{"available_count":0}}`),
+		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
+		codexInviteResetJSONResponse(`{"code":"reset","windows_reset":1}`),
 	}}
+	proxy := &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example.test", Port: 3128}
 	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
 		9: {
 			ID:                                      9,
@@ -191,17 +197,23 @@ func TestOpenAIQuotaServiceUsesTLSRouterInviteResetSettings(t *testing.T) {
 			20: {ID: 20, Name: "router-token"},
 		},
 	}
-	svc := NewOpenAIQuotaService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
+	svc := NewOpenAIQuotaService(codexInviteResetAdminServiceStub{account: account, proxy: proxy}, upstream, nil, profileService, routerReader)
 
 	_, err := svc.QueryUsage(context.Background(), account.ID)
 	require.NoError(t, err)
-	require.Len(t, upstream.requests, 2)
-	require.Len(t, upstream.profiles, 2)
+	_, err = svc.ResetCredit(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 3)
+	require.Len(t, upstream.profiles, 3)
 	for i := range upstream.requests {
 		require.Equal(t, "Codex Desktop/0.135.0-alpha.1 (Windows 10.0.26200; x86_64)", upstream.requests[i].Header.Get("User-Agent"))
+		require.Equal(t, "http://proxy.example.test:3128", upstream.proxyURLs[i])
+		require.Equal(t, account.ID, upstream.accountIDs[i])
+		require.Equal(t, account.Concurrency, upstream.concurrencies[i])
 		require.NotNil(t, upstream.profiles[i])
 		require.Equal(t, "router-token", upstream.profiles[i].Name)
 	}
+	require.Equal(t, "/backend-api/wham/rate-limit-reset-credits/consume", upstream.requests[2].URL.Path)
 }
 
 func TestOpenAIQuotaServiceRejectsUnsupportedAccount(t *testing.T) {

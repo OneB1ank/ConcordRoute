@@ -545,6 +545,7 @@ export default {
       },
       openaiQuotaReset: {
         count: '次数',
+        reset: '重置',
         countTooltipLoad: '点击查询剩余重置次数',
         countTooltipRefresh: '点击刷新剩余重置次数',
         expiresAt: '到期 {time}',
@@ -558,7 +559,10 @@ export default {
         resetTooltipNoCredits: '没有可用的重置次数',
         resetTooltipShadow: 'Spark 影子账号不能重置次数;请在母账号上重置',
         noCreditsAvailable: '没有可用的重置次数',
-        resetSuccess: '已重置 {windows} 个窗口',
+        resetSuccess: '已重置 {windows} 个窗口，次数和账号状态已更新',
+        resetCacheRefreshFailed: '窗口已重置、账号状态已恢复，但重置次数未能回读，请重新查询次数。',
+        resetAccountRecoveryFailed: '窗口已重置，但账号状态恢复失败，请手动恢复账号状态。',
+        resetAccountRefreshFailed: '窗口、账号状态和重置次数缓存已更新，但无法加载最新账号显示。',
         confirmTitle: '确认重置周限',
         confirmMessage: '将消耗 1 次重置次数立即恢复当前窗口，剩余 {count} 次。此操作不可撤销，确定继续吗？'
       },

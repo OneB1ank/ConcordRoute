@@ -539,7 +539,7 @@ describe('AccountUsageCell', () => {
     expect(getUsage).toHaveBeenCalledWith(2011, 'active', true)
   })
 
-  it('OpenAI OAuth 用量列不再显示容易误触的上游重置按钮', async () => {
+  it('OpenAI OAuth 用量列显示带确认流程的手动重置入口', async () => {
     getUsage.mockResolvedValue({
       five_hour: {
         utilization: 26,
@@ -591,7 +591,45 @@ describe('AccountUsageCell', () => {
 
     expect(wrapper.text()).toContain('admin.accounts.usageWindow.activeQuery')
     expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.count')
-    expect(wrapper.text()).not.toContain('admin.accounts.openaiQuotaReset.reset')
+    expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.reset')
+  })
+
+  it('手动重置恢复账号后把更新事件统一转发给账号列表', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: { utilization: 100, resets_at: '2099-03-07T12:00:00Z' },
+      seven_day: { utilization: 100, resets_at: '2099-03-13T12:00:00Z' }
+    })
+    const recoveredAccount = makeAccount({
+      id: 2015,
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      rate_limit_reset_at: null,
+      temp_unschedulable_until: null
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 2015, platform: 'openai', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: {
+            emits: ['account-updated'],
+            template: '<button data-test="quota-reset" @click="$emit(\'account-updated\', recovered)">reset</button>',
+            setup() {
+              return { recovered: recoveredAccount }
+            }
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="quota-reset"]').trigger('click')
+
+    expect(wrapper.emitted('account-updated')).toEqual([[recoveredAccount]])
   })
 
   it('OpenAI OAuth 自动暂停时会在查询按钮右侧显示暂停调度状态', async () => {

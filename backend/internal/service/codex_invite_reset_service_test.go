@@ -29,10 +29,13 @@ func (s codexInviteResetAdminServiceStub) GetProxy(ctx context.Context, id int64
 }
 
 type codexInviteResetHTTPUpstreamStub struct {
-	responses []*http.Response
-	requests  []*http.Request
-	bodies    []string
-	profiles  []*tlsfingerprint.Profile
+	responses     []*http.Response
+	requests      []*http.Request
+	bodies        []string
+	proxyURLs     []string
+	accountIDs    []int64
+	concurrencies []int
+	profiles      []*tlsfingerprint.Profile
 }
 
 func (s *codexInviteResetHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -48,6 +51,9 @@ func (s *codexInviteResetHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL
 	}
 	s.requests = append(s.requests, req)
 	s.bodies = append(s.bodies, body)
+	s.proxyURLs = append(s.proxyURLs, proxyURL)
+	s.accountIDs = append(s.accountIDs, accountID)
+	s.concurrencies = append(s.concurrencies, accountConcurrency)
 	s.profiles = append(s.profiles, profile)
 	if len(s.responses) == 0 {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil

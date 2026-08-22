@@ -154,7 +154,10 @@
           :show-now-when-idle="true"
           color="emerald"
         />
-        <OpenAIQuotaResetCell :account="account">
+        <OpenAIQuotaResetCell
+          :account="account"
+          @account-updated="handleQuotaResetAccountUpdated"
+        >
           <template #pre-actions>
             <button
               type="button"
@@ -193,7 +196,11 @@
       </div>
       <div v-else>
         <div class="text-xs text-gray-400">-</div>
-        <OpenAIQuotaResetCell :account="account" class="mt-1" />
+        <OpenAIQuotaResetCell
+          :account="account"
+          class="mt-1"
+          @account-updated="handleQuotaResetAccountUpdated"
+        />
       </div>
     </template>
 
@@ -737,6 +744,10 @@ const props = withDefaults(
     requestBatchedUsage: null
   }
 )
+
+const emit = defineEmits<{
+  'account-updated': [account: Account]
+}>()
 
 const { t } = useI18n()
 const { formatBalanceAmount, formatUsdAmount } = useBalanceDisplay()
@@ -1574,6 +1585,10 @@ const loadActiveUsage = async () => {
   } finally {
     activeQueryLoading.value = false
   }
+}
+
+const handleQuotaResetAccountUpdated = (account: Account) => {
+  emit('account-updated', account)
 }
 
 // 探测会持久化上游额度状态，因此刷新当前单元格，使紧凑进度条与权益状态反映最新快照。
