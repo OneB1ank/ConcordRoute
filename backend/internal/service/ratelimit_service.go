@@ -74,6 +74,7 @@ const (
 	openAI403CooldownMinutesDefault      = 10
 	openAI403DisableThresholdDefault     = 3
 	openAI403CounterWindowMinutesDefault = 180
+	openAIProxy401Cooldown               = time.Minute
 	defaultRateLimit429CooldownSeconds   = 5
 	maxRateLimit429CooldownSeconds       = 7200
 )
@@ -483,6 +484,22 @@ func (s *RateLimitService) handleDefaultUpstreamError(ctx context.Context, accou
 				msg = "Token revoked (401): " + upstreamMsg
 			}
 			s.handleAuthError(ctx, authAccount, msg)
+			shouldDisable = true
+			break
+		}
+		// 代理节点返回的通用 Unauthorized 只证明当前出站链路异常。
+		// 这类响应不失效 Token，也不写长期错误；冷却一分钟后由调度器自动重试。
+		proxyUnauthorized := authAccount.Platform == PlatformOpenAI &&
+			authAccount.Type == AccountTypeOAuth &&
+			(authAccount.ProxyID != nil || authAccount.Proxy != nil) &&
+			strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responseBody, "detail").String()), "unauthorized")
+		if proxyUnauthorized {
+			msg := "Proxy returned 401 Unauthorized; temporary egress cooldown"
+			until := time.Now().Add(openAIProxy401Cooldown)
+			s.notifyAccountSchedulingBlocked(authAccount, until, "proxy_401")
+			if err := s.accountRepo.SetTempUnschedulable(ctx, authAccount.ID, until, msg); err != nil {
+				slog.Warn("proxy_401_set_temp_unschedulable_failed", "account_id", authAccount.ID, "error", err)
+			}
 			shouldDisable = true
 			break
 		}

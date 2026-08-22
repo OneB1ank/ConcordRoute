@@ -265,13 +265,48 @@ func TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredential
 	require.Nil(t, repo.lastCredentials, "no credentials should have been persisted")
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIOAuthDetailUnauthorizedUsesTemporaryRecovery(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIProxy401UsesShortCooldownWithoutTokenInvalidation(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	proxyID := int64(17)
+	account := &Account{
+		ID:       1041,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		ProxyID:  &proxyID,
+		Credentials: map[string]any{
+			"access_token":  "at-current",
+			"refresh_token": "rt-current",
+		},
+	}
+
+	before := time.Now()
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusUnauthorized,
+		http.Header{},
+		[]byte("{\"detail\":\"Unauthorized\"}"),
+	)
+
+	require.True(t, shouldDisable)
+	require.Zero(t, repo.setErrorCalls, "代理节点通用 401 不得永久禁用 OAuth 账号")
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, account.ID, repo.lastTempID)
+	require.WithinDuration(t, before.Add(time.Minute), repo.lastTempUntil, 2*time.Second)
+	require.Contains(t, repo.lastTempReason, "Proxy returned 401")
+	require.Empty(t, invalidator.accounts, "代理链路 401 不得清理有效 Token 缓存")
+}
+
+func TestRateLimitService_HandleUpstreamError_DirectOpenAIOAuth401StillRefreshesToken(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	invalidator := &tokenCacheInvalidatorRecorder{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	service.SetTokenCacheInvalidator(invalidator)
 	account := &Account{
-		ID:       1041,
+		ID:       1043,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
@@ -285,14 +320,13 @@ func TestRateLimitService_HandleUpstreamError_OpenAIOAuthDetailUnauthorizedUsesT
 		account,
 		http.StatusUnauthorized,
 		http.Header{},
-		[]byte(`{"detail":"Unauthorized"}`),
+		[]byte("{\"detail\":\"Unauthorized\"}"),
 	)
 
 	require.True(t, shouldDisable)
-	require.Zero(t, repo.setErrorCalls, "代理节点产生的通用 401 不得永久禁用可刷新的 OAuth 账号")
+	require.Zero(t, repo.setErrorCalls)
 	require.Equal(t, 1, repo.tempCalls)
-	require.Equal(t, account.ID, repo.lastTempID)
-	require.Len(t, invalidator.accounts, 1)
+	require.Len(t, invalidator.accounts, 1, "直连 OAuth 401 仍应触发凭据刷新")
 }
 
 func TestRateLimitService_HandleUpstreamError_OpenAIOAuthRevokedTokenRemainsPermanent(t *testing.T) {
