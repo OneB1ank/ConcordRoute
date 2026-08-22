@@ -2419,8 +2419,9 @@ func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
 				COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $5
 				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,status}', '') <> 'failed'
 				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,reason_code}', '') <> $6
+				OR $7 = 'recovered'
 			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftBusinessQuotaLimitedReason)
+	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftBusinessQuotaLimitedReason, state.Status)
 	if err != nil {
 		return false, err
 	}

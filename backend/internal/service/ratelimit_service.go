@@ -486,8 +486,11 @@ func (s *RateLimitService) handleDefaultUpstreamError(ctx context.Context, accou
 			shouldDisable = true
 			break
 		}
-		// OpenAI: {"detail":"Unauthorized"} 表示 token 完全无效（非标准 OpenAI 错误格式），直接标记 error
-		if authAccount.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail").String() == "Unauthorized" {
+		// 非 OAuth OpenAI 凭据返回 {"detail":"Unauthorized"} 时视为永久认证失败。
+		// OAuth 请求可能由不稳定代理节点生成同形响应；只要仍有 refresh_token，
+		// 就交给下方缓存失效与临时停调流程，避免一次链路抖动把账号永久置错。
+		if authAccount.Platform == PlatformOpenAI && authAccount.Type != AccountTypeOAuth &&
+			gjson.GetBytes(responseBody, "detail").String() == "Unauthorized" {
 			msg := "Unauthorized (401): account authentication failed permanently"
 			if upstreamMsg != "" {
 				msg = "Unauthorized (401): " + upstreamMsg

@@ -36,6 +36,11 @@ type codexOverdraftCASRepoStub struct {
 	updateCalls  int
 }
 
+type codexOverdraftNonFailedRepoStub struct {
+	*codexOverdraftProbeRepoStub
+	nonFailedCalls int
+}
+
 type codexOverdraftUsageRepoStub struct {
 	UsageLogRepository
 }
@@ -83,6 +88,18 @@ func (r *codexOverdraftProbeRepoStub) UpdateExtra(_ context.Context, _ int64, up
 		r.states = append(r.states, &clone)
 	}
 	return nil
+}
+
+func (r *codexOverdraftNonFailedRepoStub) PersistCodexQuotaOverdraftProbeUnlessFailed(
+	ctx context.Context,
+	accountID int64,
+	state *CodexQuotaOverdraftProbeState,
+) (bool, error) {
+	r.nonFailedCalls++
+	if state == nil || state.Status == codexQuotaOverdraftProbeFailed {
+		return false, nil
+	}
+	return true, r.UpdateExtra(ctx, accountID, map[string]any{CodexQuotaOverdraftProbeExtraKey: state})
 }
 
 func (r *codexOverdraftProbeRepoStub) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, reason string) error {
@@ -525,6 +542,39 @@ func TestCodexQuotaOverdraftRecoveryClearsWindowState(t *testing.T) {
 	require.Nil(t, recovered.FiveHourStartedAt)
 	require.Nil(t, recovered.FiveHourRecoverAt)
 	require.Zero(t, repo.tempPauseCalls)
+}
+
+func TestCodexQuotaOverdraftBusinessFailureRecoversAfterQuotaWindowClears(t *testing.T) {
+	now := time.Date(2026, time.August, 22, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.Extra["codex_5h_used_percent"] = 0
+	account.Extra["codex_7d_used_percent"] = 0
+	state := &CodexQuotaOverdraftProbeState{
+		Status:             codexQuotaOverdraftProbeFailed,
+		QuotaWindow:        "7d",
+		CycleKey:           "7d:1790000000",
+		Attempts:           1,
+		Limit:              codexQuotaOverdraftProbeAttemptLimit,
+		ReasonCode:         CodexQuotaOverdraftBusinessQuotaLimitedReason,
+		RecoverAt:          codexQuotaOverdraftTimePtr(now.Add(5 * 24 * time.Hour)),
+		SevenDayRecoverAt:  codexQuotaOverdraftTimePtr(now.Add(5 * 24 * time.Hour)),
+		OverdraftStartedAt: codexQuotaOverdraftTimePtr(now.Add(-time.Hour)),
+		SevenDayStartedAt:  codexQuotaOverdraftTimePtr(now.Add(-time.Hour)),
+	}
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = state
+	baseRepo := &codexOverdraftProbeRepoStub{account: account}
+	repo := &codexOverdraftNonFailedRepoStub{codexOverdraftProbeRepoStub: baseRepo}
+	coordinator := &CodexQuotaOverdraftCoordinator{accountRepo: repo, now: func() time.Time { return now }}
+
+	coordinator.observeAccount(account, "gpt-5.4")
+
+	recovered, ok := codexQuotaOverdraftStateFromAccount(account)
+	require.True(t, ok)
+	require.Equal(t, codexQuotaOverdraftProbeRecovered, recovered.Status)
+	require.Equal(t, "quota_recovered", recovered.ReasonCode)
+	require.Equal(t, 1, repo.nonFailedCalls, "额度恢复必须走受保护的非失败状态落库路径")
+	require.Nil(t, recovered.OverdraftStartedAt)
+	require.Nil(t, recovered.SevenDayStartedAt)
 }
 
 func TestCodexQuotaOverdraftAvailableStateClearsOnlyObservedRateLimitGeneration(t *testing.T) {
