@@ -79,7 +79,7 @@ func TestAccountTestService_AutomaticOpenAIProbeUsesMatchedRoute(t *testing.T) {
 			MatchType:               model.TLSRouterMatchExact,
 			Pattern:                 "probe-client/1.0",
 			TLSFingerprintProfileID: 20,
-			UpstreamUserAgent:       "codex_vscode/0.144.1 probe-terminal",
+			UpstreamUserAgent:       "codex_vscode/0.145.0 probe-terminal",
 			UpstreamOriginator:      "codex_vscode",
 		}},
 	}
@@ -101,7 +101,7 @@ func TestAccountTestService_AutomaticOpenAIProbeUsesMatchedRoute(t *testing.T) {
 	require.Equal(t, "success", result.Status)
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "routed", upstream.lastTLSProfile.Name)
-	require.Equal(t, "codex_vscode/0.144.1 probe-terminal", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_vscode/0.145.0 probe-terminal", upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex_vscode", upstream.lastReq.Header.Get("Originator"))
 }
 
@@ -239,7 +239,7 @@ func TestAccountTestService_AutomaticOpenAIProbeEmptyUserAgentParticipatesInRout
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
 			"access_token": "parent-token",
-			"user_agent":   "codex_vscode/0.144.1 parent-terminal",
+			"user_agent":   "codex_vscode/0.145.0 parent-terminal",
 		},
 	}
 	shadow := Account{
@@ -281,9 +281,9 @@ func TestAccountTestService_AutomaticOpenAIProbeEmptyUserAgentParticipatesInRout
 			name:            "凭据账号自定义 UA",
 			accounts:        []Account{parent, shadow},
 			accountID:       shadow.ID,
-			pattern:         "codex_vscode/0.144.1 parent-terminal",
+			pattern:         "codex_vscode/0.145.0 parent-terminal",
 			routeProfileID:  20,
-			expectedUA:      "codex_vscode/0.144.1 parent-terminal",
+			expectedUA:      "codex_vscode/0.145.0 parent-terminal",
 			expectedProfile: "routed",
 		},
 		{
@@ -433,7 +433,7 @@ func TestAccountTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages(t
 				MatchType:               model.TLSRouterMatchExact,
 				Pattern:                 "image-client/1.0",
 				TLSFingerprintProfileID: 20,
-				UpstreamUserAgent:       "codex-tui/0.144.1 image-terminal",
+				UpstreamUserAgent:       "codex-tui/0.145.0 image-terminal",
 				UpstreamOriginator:      "codex-tui",
 			}},
 		}
@@ -459,7 +459,7 @@ func TestAccountTestService_AutomaticOpenAIProbeRoutesChatCompletionsAndImages(t
 		require.NoError(t, err)
 		require.Equal(t, "success", result.Status)
 		require.Equal(t, "image-route", upstream.lastTLSProfile.Name)
-		require.Equal(t, "codex-tui/0.144.1 image-terminal", upstream.lastReq.Header.Get("User-Agent"))
+		require.Equal(t, "codex-tui/0.145.0 image-terminal", upstream.lastReq.Header.Get("User-Agent"))
 		require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
 	})
 }
@@ -504,7 +504,7 @@ func TestAccountTestService_ManualOpenAITestReusesStableRouterIdentity(t *testin
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"access_token": "test-token",
-			"user_agent":   "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+			"user_agent":   "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app",
 		},
 		Extra: map[string]any{
 			"enable_tls_fingerprint":     true,
@@ -519,9 +519,9 @@ func TestAccountTestService_ManualOpenAITestReusesStableRouterIdentity(t *testin
 		Rules: []model.TLSFingerprintRouterRule{{
 			Enabled:                 true,
 			MatchType:               model.TLSRouterMatchExact,
-			Pattern:                 "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+			Pattern:                 "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app",
 			TLSFingerprintProfileID: 20,
-			UpstreamUserAgent:       "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+			UpstreamUserAgent:       "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app",
 			UpstreamOriginator:      "codex-tui",
 		}},
 	}
@@ -544,6 +544,6 @@ func TestAccountTestService_ManualOpenAITestReusesStableRouterIdentity(t *testin
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "routed", upstream.lastTLSProfile.Name)
-	require.Equal(t, "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app", upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
 }

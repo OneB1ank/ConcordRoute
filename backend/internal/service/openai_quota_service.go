@@ -350,12 +350,12 @@ func (s *OpenAIQuotaService) resolveRuntimeRouter(account *Account) *model.TLSFi
 
 func (s *OpenAIQuotaService) resolveUserAgent(router *model.TLSFingerprintRouter) string {
 	if router != nil {
-		// 限流重置走 Codex Desktop 后台接口，复用邀请重置专用 UA 配置。
+		// 配额查询与重置专用配置优先于全局规范 UA。
 		if userAgent := strings.TrimSpace(router.CodexInviteResetUserAgent); userAgent != "" {
 			return userAgent
 		}
 	}
-	return codexInviteResetDefaultUserAgent
+	return CodexCanonicalUserAgent()
 }
 
 func (s *OpenAIQuotaService) resolveTLSProfile(account *Account, router *model.TLSFingerprintRouter) *tlsfingerprint.Profile {

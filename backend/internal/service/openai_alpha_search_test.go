@@ -63,7 +63,7 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("User-Agent", codexCLIUserAgent)
 	c.Request.Header.Set("Originator", "codex_cli_rs")
-	c.Request.Header.Set("Version", "0.144.1")
+	c.Request.Header.Set("Version", "0.145.0")
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
@@ -88,7 +88,7 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	}
 
 	const routedUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
-	const normalizedRoutedUA = "codex-tui/0.144.1 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.144.1)"
+	const normalizedRoutedUA = "codex-tui/0.145.0 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.145.0)"
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body, TLSFingerprintRouterMatchResult{
 		Matched:                 true,
 		UpstreamUserAgent:       routedUA,
@@ -107,7 +107,7 @@ func TestForwardAlphaSearchOAuthPreservesWire(t *testing.T) {
 	require.Equal(t, "Bearer oauth-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "chatgpt-account", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
-	require.Equal(t, "0.144.1", upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, "0.145.0", upstream.lastReq.Header.Get("Version"))
 	require.Equal(t, normalizedRoutedUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
@@ -131,7 +131,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Request.Header.Set("User-Agent", codexCLIUserAgent)
 	c.Request.Header.Set("Originator", "codex_cli_rs")
-	c.Request.Header.Set("Version", "0.144.1")
+	c.Request.Header.Set("Version", "0.145.0")
 	c.Request.Header.Set("OpenAI-Beta", "responses=experimental")
 	c.Request.Header.Set("Accept-Language", "zh-CN")
 	c.Request.Header.Set("Authorization", "Bearer client-token")
@@ -167,7 +167,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	}
 
 	const routedUA = "codex-tui/9.9.9 (Mac OS X 14.0; arm64) iTerm (codex-tui; 9.9.9)"
-	const normalizedRoutedUA = "codex-tui/0.144.1 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.144.1)"
+	const normalizedRoutedUA = "codex-tui/0.145.0 (Mac OS X 14.0; arm64) iTerm (codex-tui; 0.145.0)"
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body, TLSFingerprintRouterMatchResult{
 		Matched:                 true,
 		UpstreamUserAgent:       routedUA,
@@ -188,7 +188,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Content-Type"))
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
-	require.Equal(t, "0.144.1", upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, "0.145.0", upstream.lastReq.Header.Get("Version"))
 	require.Equal(t, `{"turn_id":"turn-1"}`, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
 	require.Equal(t, normalizedRoutedUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("Originator"))

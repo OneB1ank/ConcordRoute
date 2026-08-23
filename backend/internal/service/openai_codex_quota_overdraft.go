@@ -128,11 +128,6 @@ func codexQuotaOverdraftInjectionEligible(account *Account, now time.Time) bool 
 		windowEligible("codex_7d_used_percent", "codex_7d_reset_at")
 }
 
-// codexQuotaOverdraftRequestActive 保留旧调用名，统一复用新的预热判定。
-func codexQuotaOverdraftRequestActive(account *Account, now time.Time) bool {
-	return codexQuotaOverdraftInjectionEligible(account, now)
-}
-
 func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Context, account *Account, compact bool, body []byte) []byte {
 	if !s.shouldInjectCodexQuotaOverdraft(ctx, account, compact) {
 		return body
@@ -310,11 +305,12 @@ func injectCodexQuotaOverdraft(body []byte) ([]byte, bool, error) {
 
 func normalizeCodexQuotaOverdraftAccountForScheduling(ctx context.Context, account *Account) *Account {
 	now := time.Now().UTC()
+	pauseEligible := IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) ||
+		(codexQuotaOverdraftPauseReason(account.TempUnschedulableReason) && codexQuotaOverdraftProbationEligible(account, now))
 	if !codexQuotaOverdraftSchedulingEnabled(ctx) || !isCodexQuotaOverdraftAccount(account) ||
 		!codexQuotaOverdraftSchedulingAllowed(account, now) ||
 		account.TempUnschedulableUntil == nil || !time.Now().Before(*account.TempUnschedulableUntil) ||
-		!(IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) ||
-			(codexQuotaOverdraftPauseReason(account.TempUnschedulableReason) && codexQuotaOverdraftProbationEligible(account, now))) {
+		!pauseEligible {
 		return account
 	}
 	clone := *account

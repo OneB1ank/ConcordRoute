@@ -1105,10 +1105,10 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 			userAgent:      "third-party-client/1.0.0",
 			originator:     "opencode",
 			wantUserAgent:  canonicalMacUA,
-			wantOriginator: openai.CodexDefaultOriginator,
+			wantOriginator: "codex-tui",
 		},
 		{
-			name:             "账号macOS身份优先于全局身份",
+			name:             "账号显式身份优先于全局身份",
 			userAgent:        "third-party-client/1.0.0",
 			originator:       "opencode",
 			accountUserAgent: "codex_vscode/9.9.9 (Mac OS X 15.6; arm64) vscode (codex_vscode; 9.9.9)",
@@ -1505,7 +1505,7 @@ func requireOpenAIMessagesCodexIdentity(t *testing.T, req *http.Request, wantUse
 	require.NotNil(t, req)
 	require.Equal(t, wantUserAgent, req.Header.Get("User-Agent"))
 	require.Equal(t, wantOriginator, req.Header.Get("originator"))
-	require.Equal(t, codexCLIVersion, req.Header.Get("version"))
+	require.Equal(t, openai.CodexUserAgentVersion(wantUserAgent), req.Header.Get("version"))
 	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 }
 

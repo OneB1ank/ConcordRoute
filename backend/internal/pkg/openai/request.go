@@ -234,8 +234,8 @@ func canonicalizeCodexOriginator(name string) string {
 // CodexCLIOriginator 是 codex-rs 客户端的历史 originator，保留用于兼容识别。
 const CodexCLIOriginator = "codex_cli_rs"
 
-// CodexDefaultOriginator 是网关默认使用的 Codex TUI originator。
-const CodexDefaultOriginator = "codex-tui"
+// CodexDefaultOriginator 是网关默认使用的 Codex Desktop originator。
+const CodexDefaultOriginator = "Codex Desktop"
 
 // CodexUserAgentVersion 提取 Codex UA 的完整版本段，即
 // `{client}/{version} (...` 中的 version。取不到时返回空串。
@@ -252,8 +252,9 @@ func CodexUserAgentVersion(userAgent string) string {
 	return strings.TrimSpace(rest)
 }
 
-// SetCodexUserAgentVersion 仅重建 Codex UA 的版本声明，保留客户端名、
-// OS/架构、终端及其他指纹；尾部官方客户端标识中的版本也同步更新。
+// SetCodexUserAgentVersion 仅重建 Codex UA 首段的引擎版本，保留客户端名、
+// OS/架构、终端及其他指纹。codex-rs 客户端的尾部版本同步更新；Codex Desktop
+// 尾部记录独立的 Desktop runtime 版本，因此保持原值。
 func SetCodexUserAgentVersion(userAgent, version string) string {
 	ua := strings.TrimSpace(userAgent)
 	version = strings.TrimSpace(version)
@@ -294,6 +295,11 @@ func rewriteCodexUATrailerVersion(ua, version string) string {
 	}
 	name := strings.TrimSpace(inner[:semi])
 	if name == "" || !IsCodexOfficialClientOriginator(name) {
+		return ua
+	}
+	// `Codex Desktop/0.145.0 ... (Codex Desktop; 26.818.41509)` 中前者是
+	// codex-rs 引擎版本，后者是 Desktop runtime 版本，二者不可互相覆盖。
+	if strings.HasPrefix(strings.ToLower(name), codexOfficialClientFamilyPrefix) {
 		return ua
 	}
 	return ua[:open+1] + name + "; " + version + ua[open+1+closeIdx:]

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/model"
-	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
@@ -79,7 +78,7 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessToken(t *testing.T) {
 	info, err := svc.ValidateCodexPersonalAccessToken(context.Background(), " at-test-token ", "")
 	require.NoError(t, err)
 	require.Equal(t, "Bearer at-test-token", gotAuthorization)
-	require.Equal(t, openai.CodexDefaultOriginator, gotOriginator)
+	require.Equal(t, "codex-tui", gotOriginator)
 	require.Equal(t, macUA, gotUserAgent)
 	require.Empty(t, gotVersion)
 	require.Equal(t, OpenAIAuthModePersonalAccessToken, info.AuthMode)
@@ -133,7 +132,7 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessTokenUsesTokenRouterIdent
 	require.Equal(t, account.ID, upstream.accountID)
 	require.Equal(t, account.Concurrency, upstream.accountConcurrency)
 	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
-	require.Equal(t, openai.CodexDefaultOriginator, upstream.req.Header.Get("Originator"))
+	require.Equal(t, "codex-tui", upstream.req.Header.Get("Originator"))
 	require.Empty(t, upstream.req.Header.Get("Version"))
 }
 

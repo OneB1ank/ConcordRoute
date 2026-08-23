@@ -22,7 +22,7 @@ func TestOpenAIShadowTransportIdentityUsesParentUAAndTLS(t *testing.T) {
 	})
 	parent.Credentials = map[string]any{
 		"access_token": "parent-token",
-		"user_agent":   "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+		"user_agent":   "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app",
 	}
 	shadow := newTestOAuthAccount(1902, map[string]any{
 		CodexFingerprintSeedExtraKey: parent.GetExtraString(CodexFingerprintSeedExtraKey),
@@ -40,7 +40,7 @@ func TestOpenAIShadowTransportIdentityUsesParentUAAndTLS(t *testing.T) {
 			MatchType:               model.TLSRouterMatchExact,
 			Pattern:                 "client-codex/1.0",
 			TLSFingerprintProfileID: 20,
-			UpstreamUserAgent:       "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app",
+			UpstreamUserAgent:       "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app",
 		}},
 	}
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
@@ -69,7 +69,7 @@ func TestOpenAIShadowTransportIdentityUsesParentUAAndTLS(t *testing.T) {
 	req.Header.Set("Originator", "codex-tui")
 	gateway.applyOpenAIUpstreamUserAgent(req.Context(), c, shadow, req, false, match)
 	enforceCodexIdentityHeadersWithUA(req.Header, gateway.codexIdentityOverrideUA(shadow, match))
-	require.Equal(t, "codex-tui/0.144.1 (Mac OS X 15.6; arm64) Terminal.app", req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.145.0 (Mac OS X 15.6; arm64) Terminal.app", req.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", req.Header.Get("Originator"))
 
 	profile := gateway.resolveOpenAITLSProfile(shadow, match)

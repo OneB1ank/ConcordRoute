@@ -25,8 +25,8 @@ const (
 	codexInviteResetUnavailable        = "CODEX_INVITE_RESET_REFERRAL_UNAVAILABLE"
 	codexInviteResetUnavailableMessage = "当前 Codex 推荐邀请入口暂不可用，但已有重置次数仍可使用"
 	codexInviteResetSupportsRewardless = "true"
-	// Codex Desktop 的邀请重置请求默认使用 Desktop UA；账号绑定 TLS 路由器时可配置专用 UA 覆盖。
-	codexInviteResetDefaultUserAgent = "Codex Desktop/0.0.0 (Linux; x86_64)"
+	// 邀请重置与配额探测复用全局 Windows Desktop 默认 UA；账号绑定 TLS 路由器时可配置专用 UA 覆盖。
+	codexInviteResetDefaultUserAgent = DefaultOpenAICodexUserAgent
 )
 
 var codexInviteResetEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
@@ -375,12 +375,12 @@ func (s *CodexInviteResetService) resolveRuntimeRouter(account *Account) *model.
 
 func (s *CodexInviteResetService) resolveUserAgent(router *model.TLSFingerprintRouter) string {
 	if router != nil {
-		// 邀请重置走 Codex Desktop 后台请求，使用独立 UA，避免和 exchange/refresh token 指纹配置互相影响。
+		// 邀请重置专用配置优先于全局规范 UA，且不复用 token 身份字段。
 		if userAgent := strings.TrimSpace(router.CodexInviteResetUserAgent); userAgent != "" {
 			return userAgent
 		}
 	}
-	return codexInviteResetDefaultUserAgent
+	return CodexCanonicalUserAgent()
 }
 
 func (s *CodexInviteResetService) resolveTLSProfile(account *Account, router *model.TLSFingerprintRouter) *tlsfingerprint.Profile {

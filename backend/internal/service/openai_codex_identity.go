@@ -59,7 +59,7 @@ type codexOutboundIdentity struct {
 }
 
 // resolveCodexOutboundIdentity 生成同源的 UA、originator 和 version。
-// 管理页面配置的 macOS/架构/终端后缀会保留；版本统一取规范 UA，账号或
+// 管理员显式配置的 OS/架构/终端后缀会保留；版本统一取全局规范 UA，账号或
 // TLS Router 的显式 UA 只覆盖客户端类型和设备指纹，避免各出站路径版本漂移。
 func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 	canonicalUA := strings.TrimSpace(codexCanonicalUserAgent())
@@ -161,8 +161,8 @@ func enforceCodexIdentityHeaders(h http.Header) {
 }
 
 // enforceCodexIdentityHeadersWithUA 是推理面的最终收口点。
-// 入站客户端自报身份不作为默认来源；只有管理员配置的账号/TLS Router UA
-// 作为显式候选，从而让 HTTP、旁路探针、OAuth 与 WS 使用相同身份规则。
+// 入站客户端自报身份不作为默认来源；管理员配置的账号/TLS Router UA
+// 作为显式候选，从而让 HTTP、旁路探针、OAuth 与 WS 使用相同优先级规则。
 func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	if h == nil || strings.TrimSpace(h.Get("originator")) == "" {
 		return

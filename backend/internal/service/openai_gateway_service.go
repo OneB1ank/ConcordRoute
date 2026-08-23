@@ -39,10 +39,9 @@ const (
 	// 后台额度请求复用最近一次真实请求的 UA 路由结果，避免同一账号的
 	// 正常推理与探测在 TLS Router 上落入不同设备模板。
 	openAIOutboundIdentitySnapshotTTL = 6 * time.Hour
-	// 与真实 Codex TUI 的 User-Agent 结构对齐：
-	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
-	// 缺少 OS/架构/终端后缀的形态易被上游指纹识别为非官方客户端。
-	codexCLIUserAgent = openai.CodexDefaultOriginator + "/" + codexCLIVersion + " (Ubuntu 22.4.0; x86_64) xterm-256color"
+	// 所有未配置出口统一回退到全局 Windows Codex Desktop 身份；TLS Router 仍可按
+	// 客户端类型选择不同 TLS Profile，但不会因此引入另一套默认 UA。
+	codexCLIUserAgent = DefaultOpenAICodexUserAgent
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -57,7 +56,7 @@ const (
 	openAIWSRetryJitterRatioDefault    = 0.2
 	openAICompactSessionSeedKey        = "openai_compact_session_seed"
 	openAIUpstreamEndpointContextKey   = "openai_actual_upstream_endpoint"
-	codexCLIVersion                    = "0.144.1"
+	codexCLIVersion                    = "0.145.0"
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
 	// 配额自动暂停时，超过该时长仍未刷新的 used% 快照视为陈旧，不再据此暂停账号。
@@ -1429,7 +1428,7 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgent(
 	wasBrowserUA := identityAccount != nil && identityAccount.Type == AccountTypeOAuth && openai.IsBrowserUserAgent(req.Header.Get("user-agent"))
 	s.overrideBrowserUserAgent(ctx, identityAccount, req)
 	if passthrough && identityAccount != nil && identityAccount.Type == AccountTypeOAuth && !wasBrowserUA && !openai.IsCodexOfficialClientRequest(req.Header.Get("user-agent")) {
-		// OAuth 安全透传：非浏览器、非官方 Codex UA 使用标准 Codex TUI 兜底。
+		// OAuth 安全透传：非浏览器、非官方 Codex UA 使用全局 Codex 身份兜底。
 		req.Header.Set("user-agent", CodexCanonicalUserAgent())
 	}
 }

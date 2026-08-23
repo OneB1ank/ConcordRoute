@@ -380,7 +380,7 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_WithTLSProfileUsesHTTPUpstrea
 	s.svc = &openaiOAuthService{tokenURL: "https://auth.openai.com/oauth/token", httpUpstream: upstream}
 
 	resp, err := s.svc.ExchangeCode(s.ctx, "code", "verifier", "", "http://proxy.local:8080", "client-id", service.OpenAIOAuthTokenRequestOptions{
-		UserAgent:          "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)",
+		UserAgent:          "codex-tui/0.145.0 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.145.0)",
 		TLSProfile:         profile,
 		AccountID:          123,
 		AccountConcurrency: 2,
@@ -397,7 +397,7 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(upstream.req.Context()))
 	require.Equal(s.T(), "application/x-www-form-urlencoded", upstream.req.Header.Get("Content-Type"))
 	require.Equal(s.T(), "application/json", upstream.req.Header.Get("Accept"))
-	require.Equal(s.T(), "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)", upstream.req.Header.Get("User-Agent"))
+	require.Equal(s.T(), "codex-tui/0.145.0 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.145.0)", upstream.req.Header.Get("User-Agent"))
 	require.Equal(s.T(), "codex-tui", upstream.req.Header.Get("originator"))
 	require.Empty(s.T(), upstream.req.Header.Get("version"))
 	require.Equal(s.T(), "authorization_code", upstream.form.Get("grant_type"))
@@ -413,7 +413,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 	s.svc = &openaiOAuthService{tokenURL: "https://auth.openai.com/oauth/token", httpUpstream: upstream}
 
 	resp, err := s.svc.RefreshTokenWithClientID(s.ctx, "refresh-token", "", "client-id", service.OpenAIOAuthTokenRequestOptions{
-		UserAgent:  "codex_cli_rs/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex_cli_rs; 0.144.1)",
+		UserAgent:  "codex_cli_rs/0.145.0 (Mac OS X 14.7; arm64) Terminal.app (codex_cli_rs; 0.145.0)",
 		TLSProfile: profile,
 	})
 
@@ -421,7 +421,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 	require.Equal(s.T(), "tls-at", resp.AccessToken)
 	require.True(s.T(), upstream.calledDoWithTLS)
 	require.Same(s.T(), profile, upstream.profile)
-	require.Equal(s.T(), "codex_cli_rs/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex_cli_rs; 0.144.1)", upstream.req.Header.Get("User-Agent"))
+	require.Equal(s.T(), "codex_cli_rs/0.145.0 (Mac OS X 14.7; arm64) Terminal.app (codex_cli_rs; 0.145.0)", upstream.req.Header.Get("User-Agent"))
 	require.Equal(s.T(), "codex_cli_rs", upstream.req.Header.Get("originator"))
 	require.Empty(s.T(), upstream.req.Header.Get("version"))
 	require.Equal(s.T(), service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(upstream.req.Context()))
@@ -432,7 +432,7 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithTLSProfileUsesHTTPUpstrea
 }
 
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_WithOnlyUserAgentUsesCanonicalAuthIdentity() {
-	const tokenUA = "codex-tui/0.144.1 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.144.1)"
+	const tokenUA = "codex-tui/0.145.0 (Mac OS X 14.7; arm64) Terminal.app (codex-tui; 0.145.0)"
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("User-Agent"); got != tokenUA {

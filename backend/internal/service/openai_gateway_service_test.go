@@ -3071,6 +3071,9 @@ func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 	}
 }
 
+// ptrIntOpenAIGateway 返回测试用 int 指针，供非 unit 构建的集成测试使用。
+func ptrIntOpenAIGateway(v int) *int { return &v }
+
 func TestOpenAIUpdateCodexUsageSnapshotStartsProbeAfterHeadersCrossThreshold(t *testing.T) {
 	now := time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC)
 	repo := &snapshotThresholdBridgeRepo{
@@ -3095,11 +3098,11 @@ func TestOpenAIUpdateCodexUsageSnapshotStartsProbeAfterHeadersCrossThreshold(t *
 	svc := &OpenAIGatewayService{accountRepo: repo, codexQuotaOverdraft: coordinator}
 	snapshot := &OpenAICodexUsageSnapshot{
 		PrimaryUsedPercent:         ptrFloat64(20),
-		PrimaryResetAfterSeconds:   ptrInt(1200),
-		PrimaryWindowMinutes:       ptrInt(300),
+		PrimaryResetAfterSeconds:   ptrIntOpenAIGateway(1200),
+		PrimaryWindowMinutes:       ptrIntOpenAIGateway(300),
 		SecondaryUsedPercent:       ptrFloat64(100),
-		SecondaryResetAfterSeconds: ptrInt(6 * 24 * 60 * 60),
-		SecondaryWindowMinutes:     ptrInt(10080),
+		SecondaryResetAfterSeconds: ptrIntOpenAIGateway(6 * 24 * 60 * 60),
+		SecondaryWindowMinutes:     ptrIntOpenAIGateway(10080),
 	}
 
 	svc.updateCodexUsageSnapshot(context.Background(), 124, snapshot)
@@ -3343,8 +3346,8 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 			wantOriginator: "codex-tui",
 			wantUA:         canonicalUA,
 		},
-		{name: "official originator without ua converges to canonical identity", originator: "codex_vscode", wantOriginator: openai.CodexDefaultOriginator, wantUA: canonicalUA},
-		{name: "third-party ua converges to canonical identity", userAgent: "luna/1.2.0", wantOriginator: openai.CodexDefaultOriginator, wantUA: canonicalUA},
+		{name: "official originator without ua converges to canonical identity", originator: "codex_vscode", wantOriginator: "codex-tui", wantUA: canonicalUA},
+		{name: "third-party ua converges to canonical identity", userAgent: "luna/1.2.0", wantOriginator: "codex-tui", wantUA: canonicalUA},
 	}
 
 	for _, tt := range tests {

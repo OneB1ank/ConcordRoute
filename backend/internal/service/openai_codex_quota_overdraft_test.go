@@ -125,27 +125,27 @@ func TestCodexQuotaOverdraftInjectionStartsAtPrearmThreshold(t *testing.T) {
 	below := base()
 	below.Extra["codex_5h_used_percent"] = codexQuotaOverdraftPrearmPercent - 0.01
 	below.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
-	require.False(t, codexQuotaOverdraftRequestActive(below, now))
+	require.False(t, codexQuotaOverdraftInjectionEligible(below, now))
 
 	atThreshold := base()
 	atThreshold.Extra["codex_5h_used_percent"] = codexQuotaOverdraftPrearmPercent
 	atThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
-	require.True(t, codexQuotaOverdraftRequestActive(atThreshold, now))
+	require.True(t, codexQuotaOverdraftInjectionEligible(atThreshold, now))
 
 	nearThreshold := base()
 	nearThreshold.Extra["codex_5h_used_percent"] = 99.5
 	nearThreshold.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
-	require.True(t, codexQuotaOverdraftRequestActive(nearThreshold, now))
+	require.True(t, codexQuotaOverdraftInjectionEligible(nearThreshold, now))
 
 	exhausted := base()
 	exhausted.Extra["codex_5h_used_percent"] = 100.0
 	exhausted.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
-	require.True(t, codexQuotaOverdraftRequestActive(exhausted, now))
+	require.True(t, codexQuotaOverdraftInjectionEligible(exhausted, now))
 
 	expired := base()
 	expired.Extra["codex_5h_used_percent"] = 100.0
 	expired.Extra["codex_5h_reset_at"] = past.Format(time.RFC3339)
-	require.False(t, codexQuotaOverdraftRequestActive(expired, now))
+	require.False(t, codexQuotaOverdraftInjectionEligible(expired, now))
 
 	fallbackPassed := base()
 	fallbackPassed.Extra[CodexQuotaOverdraftProbeExtraKey] = CodexQuotaOverdraftProbeState{
@@ -154,14 +154,14 @@ func TestCodexQuotaOverdraftInjectionStartsAtPrearmThreshold(t *testing.T) {
 		CycleKey:    "multiple:" + fmt.Sprint(future.Unix()),
 		RecoverAt:   codexQuotaOverdraftTimePtr(future),
 	}
-	require.True(t, codexQuotaOverdraftRequestActive(fallbackPassed, now), "明确额度 429 建立的 fallback 周期仍应生效")
+	require.True(t, codexQuotaOverdraftInjectionEligible(fallbackPassed, now), "明确额度 429 建立的 fallback 周期仍应生效")
 
 	fallbackFailed := cloneCodexQuotaOverdraftAccount(fallbackPassed)
 	failed, ok := codexQuotaOverdraftStateFromAccount(fallbackFailed)
 	require.True(t, ok)
 	failed.Status = codexQuotaOverdraftProbeFailed
 	fallbackFailed.Extra[CodexQuotaOverdraftProbeExtraKey] = failed
-	require.False(t, codexQuotaOverdraftRequestActive(fallbackFailed, now))
+	require.False(t, codexQuotaOverdraftInjectionEligible(fallbackFailed, now))
 
 	recovered := cloneCodexQuotaOverdraftAccount(exhausted)
 	recovered.Extra[CodexQuotaOverdraftProbeExtraKey] = CodexQuotaOverdraftProbeState{
@@ -169,7 +169,7 @@ func TestCodexQuotaOverdraftInjectionStartsAtPrearmThreshold(t *testing.T) {
 		CycleKey:  "5h:" + fmt.Sprint(future.Unix()),
 		RecoverAt: codexQuotaOverdraftTimePtr(future),
 	}
-	require.False(t, codexQuotaOverdraftRequestActive(recovered, now), "已恢复状态不能因残留的阈值快照重新注入")
+	require.False(t, codexQuotaOverdraftInjectionEligible(recovered, now), "已恢复状态不能因残留的阈值快照重新注入")
 }
 
 func TestCodexQuotaOverdraftSchedulingOnlyBypassesQuotaThresholds(t *testing.T) {

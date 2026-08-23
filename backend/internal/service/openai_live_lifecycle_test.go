@@ -487,7 +487,7 @@ func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 	require.Equal(t, "Bearer test-access-token", dialer.headers.Get("Authorization"))
 	require.Equal(t, "acct_test", dialer.headers.Get("Chatgpt-Account-Id"))
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.sideband"}`, dialer.headers.Get(liveAttestationHeader))
-	require.Equal(t, "codex_vscode/0.144.1 live-test", dialer.headers.Get("User-Agent"))
+	require.Equal(t, "codex_vscode/0.145.0 live-test", dialer.headers.Get("User-Agent"))
 	require.Equal(t, "codex_vscode", dialer.headers.Get("Originator"))
 	require.NotNil(t, dialer.tlsProfile)
 	require.Equal(t, "live-routed", dialer.tlsProfile.Name)

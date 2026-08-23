@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/model"
-	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/curve25519"
@@ -199,7 +198,7 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 	require.NotNil(t, upstream.profile)
 	require.Equal(t, "macOS auth TLS", upstream.profile.Name)
 	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
-	require.Equal(t, openai.CodexDefaultOriginator, upstream.req.Header.Get("Originator"))
+	require.Equal(t, "codex-tui", upstream.req.Header.Get("Originator"))
 	require.Empty(t, upstream.req.Header.Get("Version"))
 }
 

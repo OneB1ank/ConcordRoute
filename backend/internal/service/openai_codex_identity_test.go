@@ -14,6 +14,29 @@ func withCodexCanonicalUA(t *testing.T, ua string) {
 	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 }
 
+func TestCodexDefaultIdentityUsesWindowsDesktop(t *testing.T) {
+	SetCodexCanonicalUserAgentResolver(nil)
+
+	identity := resolveCodexOutboundIdentity("")
+	require.Equal(t, DefaultOpenAICodexUserAgent, identity.userAgent)
+	require.Equal(t, "Codex Desktop", identity.originator)
+	require.Equal(t, "0.145.0", identity.version)
+	require.Contains(t, identity.userAgent, "(Codex Desktop; 26.818.41509)")
+}
+
+func TestCodexTLSProfileOnlyRouteKeepsCanonicalDesktopIdentity(t *testing.T) {
+	withCodexCanonicalUA(t, DefaultOpenAICodexUserAgent)
+
+	h := make(http.Header)
+	h.Set("originator", "codex_exec")
+	h.Set("user-agent", "codex_exec/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_exec; 0.145.0)")
+	enforceCodexIdentityHeadersWithUA(h, "")
+
+	require.Equal(t, DefaultOpenAICodexUserAgent, h.Get("user-agent"))
+	require.Equal(t, "Codex Desktop", h.Get("originator"))
+	require.Equal(t, "0.145.0", h.Get("version"))
+}
+
 func TestEnsureCodexIdentityHeadersUsesCanonicalIdentity(t *testing.T) {
 	const macUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
 	withCodexCanonicalUA(t, macUA)
@@ -28,7 +51,7 @@ func TestEnsureCodexIdentityHeadersUsesCanonicalIdentity(t *testing.T) {
 	require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
 }
 
-func TestResolveCodexOutboundIdentityPreservesMacOSFingerprint(t *testing.T) {
+func TestResolveCodexOutboundIdentityPreservesConfiguredFingerprint(t *testing.T) {
 	const canonical = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
 	const routed = "codex_cli_rs/0.150.0 (Mac OS X 14.7; arm64) iTerm2 (codex_cli_rs; 0.150.0)"
 	withCodexCanonicalUA(t, canonical)

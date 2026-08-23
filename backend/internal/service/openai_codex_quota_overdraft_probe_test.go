@@ -710,7 +710,7 @@ func TestCodexQuotaOverdraftProbePayloadAcceptsInjection(t *testing.T) {
 }
 
 func TestCodexQuotaOverdraftProbeReusesNormalRequestIdentityTLSAndProxy(t *testing.T) {
-	const userAgent = "codex-tui/0.144.1 (Mac OS 15.6; arm64) Apple_Terminal"
+	const userAgent = "codex-tui/0.145.0 (Mac OS 15.6; arm64) Apple_Terminal"
 	proxyID := int64(18)
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
 		77: {ID: 77, Name: "macOS normal request", ALPNProtocols: []string{"h2", "http/1.1"}},

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
-	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -1168,7 +1167,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 			wantOriginator: "codex-tui",
 			wantUA:         canonicalUA,
 		},
-		{name: "official originator without ua converges to canonical identity", originator: "codex_vscode", wantOriginator: openai.CodexDefaultOriginator, wantUA: canonicalUA},
+		{name: "official originator without ua converges to canonical identity", originator: "codex_vscode", wantOriginator: "codex-tui", wantUA: canonicalUA},
 	}
 
 	for _, tt := range tests {

@@ -1294,7 +1294,7 @@ func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesTLSRouterProfile(t *tes
 }
 
 func TestAccountUsageService_ProbeOpenAICodexSnapshotReusesLatestNormalRequestIdentity(t *testing.T) {
-	const normalRequestUA = "codex-tui/0.144.1 (Mac OS 15.6; arm64) Apple_Terminal"
+	const normalRequestUA = "codex-tui/0.145.0 (Mac OS 15.6; arm64) Apple_Terminal"
 	proxyID := int64(8010)
 	upstream := &accountUsageHTTPUpstreamStub{}
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{

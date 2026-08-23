@@ -45,7 +45,7 @@ func newLiveTLSRoutingServices() (*TLSFingerprintProfileService, *TLSFingerprint
 			MatchType:               model.TLSRouterMatchExact,
 			Pattern:                 "test-live-client",
 			TLSFingerprintProfileID: 20,
-			UpstreamUserAgent:       "codex_vscode/0.144.1 live-test",
+			UpstreamUserAgent:       "codex_vscode/0.145.0 live-test",
 			UpstreamOriginator:      "codex_vscode",
 		}},
 	}
@@ -176,7 +176,7 @@ func TestCreateUpstreamLiveCallPreservesSession(t *testing.T) {
 	require.Equal(t, "Bearer test-access-token", upstream.request.Header.Get("Authorization"))
 	require.Equal(t, "acct_test", upstream.request.Header.Get("Chatgpt-Account-Id"))
 	require.Equal(t, "quicksilver=v2", upstream.request.Header.Get("OpenAI-Alpha"))
-	require.Equal(t, "codex_vscode/0.144.1 live-test", upstream.request.Header.Get("User-Agent"))
+	require.Equal(t, "codex_vscode/0.145.0 live-test", upstream.request.Header.Get("User-Agent"))
 	require.Equal(t, "codex_vscode", upstream.request.Header.Get("Originator"))
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.test"}`, upstream.request.Header.Get(liveAttestationHeader))
 	require.NotEmpty(t, upstream.request.Header.Get("Session-Id"))
