@@ -16,9 +16,6 @@ import (
 const (
 	// CodexQuotaOverdraftEnabledExtraKey 保存账号级透支开关，默认关闭。
 	CodexQuotaOverdraftEnabledExtraKey = "codex_quota_overdraft_enabled"
-	// codexQuotaOverdraftObservePercent 从 80% 开始保留额度观察机会；
-	// 低于该值且没有已持久化透支状态的账号直接跳过透支观察。
-	codexQuotaOverdraftObservePercent = 80.0
 	// codexQuotaOverdraftStartPercent 在 98% 时提前进入透支判定，
 	// 为窗口末端保留少量余量，避免第一条超限请求直接卡在上游限额。
 	codexQuotaOverdraftStartPercent = 98.0

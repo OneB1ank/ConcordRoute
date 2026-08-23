@@ -194,36 +194,6 @@ func TestCodexQuotaOverdraftSignalStartsAt98Percent(t *testing.T) {
 	require.WithinDuration(t, reset, signal.RecoverAt, time.Second)
 }
 
-func TestCodexQuotaOverdraftObservationStartsAt80ButProbeStaysAt98(t *testing.T) {
-	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
-	reset := now.Add(5 * time.Hour)
-	account := newCodexOverdraftProbeTestAccount(now)
-	account.Extra["codex_5h_reset_at"] = reset.Format(time.RFC3339)
-
-	account.Extra["codex_5h_used_percent"] = codexQuotaOverdraftObservePercent - 0.01
-	require.False(t, codexQuotaOverdraftObservationEligible(account, now))
-
-	account.Extra["codex_5h_used_percent"] = codexQuotaOverdraftObservePercent
-	require.True(t, codexQuotaOverdraftObservationEligible(account, now))
-	_, exhausted := codexQuotaOverdraftSignalFromAccount(account, nil, now)
-	require.False(t, exhausted, "80% observation must not enter the 98% probe state")
-
-	account.Extra["codex_5h_used_percent"] = codexQuotaOverdraftStartPercent
-	_, exhausted = codexQuotaOverdraftSignalFromAccount(account, nil, now)
-	require.True(t, exhausted)
-}
-
-func TestCodexQuotaOverdraftObservationKeepsPersistedStateBelow80(t *testing.T) {
-	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
-	account := newCodexOverdraftProbeTestAccount(now)
-	account.Extra["codex_5h_used_percent"] = codexQuotaOverdraftObservePercent - 1
-	account.Extra[CodexQuotaOverdraftProbeExtraKey] = CodexQuotaOverdraftProbeState{
-		Status:   codexQuotaOverdraftProbePassed,
-		CycleKey: "5h:existing",
-	}
-	require.True(t, codexQuotaOverdraftObservationEligible(account, now))
-}
-
 func TestCodexQuotaOverdraftQuotaLimitedHeadersUse98PercentThreshold(t *testing.T) {
 	headers := make(http.Header)
 	headers.Set("x-codex-primary-used-percent", "97.99")
