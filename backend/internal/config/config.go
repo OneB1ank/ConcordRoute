@@ -1735,12 +1735,6 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
-	// 作为兜底保留：setEnvReachableDefaults 已用实际默认值 true 注册该键，
-	// 因而 IsSet 通常恒为 true；若后续误删注册，这里仍能守住默认行为。
-	if !cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled && !viper.IsSet("gateway.advanced_scheduler.sticky_escape_enabled") {
-		cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled = true
-	}
-
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
@@ -2332,11 +2326,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.retry_total_budget_ms", 5000)
 	viper.SetDefault("gateway.openai_ws.payload_log_sample_rate", 0.2)
 	viper.SetDefault("gateway.advanced_scheduler.lb_top_k", 7)
-	viper.SetDefault("gateway.openai_ws.sticky_session_ttl_seconds", 3600)
+	viper.SetDefault("gateway.openai_ws.sticky_session_ttl_seconds", 21600)
 	viper.SetDefault("gateway.openai_ws.session_hash_read_old_fallback", true)
 	viper.SetDefault("gateway.openai_ws.session_hash_dual_write_old", true)
 	viper.SetDefault("gateway.openai_ws.metadata_bridge_enabled", true)
-	viper.SetDefault("gateway.openai_ws.sticky_response_id_ttl_seconds", 3600)
+	viper.SetDefault("gateway.openai_ws.sticky_response_id_ttl_seconds", 21600)
 	viper.SetDefault("gateway.openai_ws.sticky_previous_response_ttl_seconds", 3600)
 	viper.SetDefault("gateway.advanced_scheduler.score_weights.priority", 1.0)
 	viper.SetDefault("gateway.advanced_scheduler.score_weights.load", 1.0)
@@ -2505,9 +2499,9 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("clash_proxy.allow_insecure_subscription", false)
 	viper.SetDefault("clash_proxy.allow_private_subscription", false)
 
-	// sticky escape 使用实际默认值，保留显式 error rate 0，并让显式 TTFT 0
-	// 进入配置校验。配置文件或环境变量仍可覆盖这些值。
-	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_enabled", true)
+	// 缓存优先模式默认关闭 sticky escape；阈值仍注册为有效默认值，
+	// 便于显式启用时直接生效，同时保留显式 error rate 0 的语义。
+	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_enabled", false)
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_error_rate", 0.5)
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_ttft_ms", 15000)
 

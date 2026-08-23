@@ -367,14 +367,14 @@ gateway:
     # payload_schema 日志采样率（0-1）；降低热路径日志放大
     payload_log_sample_rate: 0.2
     # 粘连参数
-    sticky_session_ttl_seconds: 3600
+    sticky_session_ttl_seconds: 21600
     # 会话哈希迁移兼容开关：新 key 未命中时回退读取旧 SHA-256 key
     session_hash_read_old_fallback: true
     # 会话哈希迁移兼容开关：写入时双写旧 SHA-256 key（短 TTL）
     session_hash_dual_write_old: true
     # context 元数据迁移兼容开关：保留旧 ctxkey.* 读取/注入桥接
     metadata_bridge_enabled: true
-    sticky_response_id_ttl_seconds: 3600
+    sticky_response_id_ttl_seconds: 21600
     # 兼容旧键：当 sticky_response_id_ttl_seconds 缺失时回退该值
     sticky_previous_response_ttl_seconds: 3600
   # 通用高级调度器配置。是否使用由每个分组的 scheduler_type 决定。
@@ -393,11 +393,11 @@ gateway:
       quota_headroom: 0.0
       previous_response: 5.0
       session_sticky: 3.0
-    # 是否允许 session_hash sticky 在账号健康度恶化时临时逃逸；false 可回退旧行为
-    sticky_escape_enabled: true
-    # TTFT EWMA 超过该阈值（毫秒）时跳过 sticky，默认 15s，避免轻微抖动就逃逸
+    # 缓存优先：保持原账号粘性；账号不可用、限额或不兼容时仍由调度器执行故障转移
+    sticky_escape_enabled: false
+    # 显式启用逃逸时，TTFT EWMA 超过该阈值（毫秒）后跳过 sticky
     sticky_escape_ttft_ms: 15000
-    # 错误率 EWMA 超过该阈值时跳过 sticky，默认 0.5，仅在明显降级时触发
+    # 显式启用逃逸时，错误率 EWMA 超过该阈值后跳过 sticky
     sticky_escape_error_rate: 0.5
   # OpenAI HTTP upstream protocol strategy.
   # OpenAI HTTP 上游协议策略（默认 HTTP/2；代理明确不兼容时可临时回退 HTTP/1.1）。

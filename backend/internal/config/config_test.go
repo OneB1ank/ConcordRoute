@@ -133,6 +133,17 @@ func TestLoadAdvancedSchedulerStickyEscapeZeroBoundaries(t *testing.T) {
 	}
 }
 
+func TestLoadAdvancedSchedulerStickyEscapeExplicitEnable(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("gateway:\n  advanced_scheduler:\n    sticky_escape_enabled: true\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled)
+}
+
 func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("REDIS_USERNAME", "app-user")
@@ -515,11 +526,11 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor != 1.0 {
 		t.Fatalf("Gateway.OpenAIWS.APIKeyMaxConnsFactor = %v, want 1.0", cfg.Gateway.OpenAIWS.APIKeyMaxConnsFactor)
 	}
-	if cfg.Gateway.OpenAIWS.StickySessionTTLSeconds != 3600 {
-		t.Fatalf("Gateway.OpenAIWS.StickySessionTTLSeconds = %d, want 3600", cfg.Gateway.OpenAIWS.StickySessionTTLSeconds)
+	if cfg.Gateway.OpenAIWS.StickySessionTTLSeconds != 21600 {
+		t.Fatalf("Gateway.OpenAIWS.StickySessionTTLSeconds = %d, want 21600", cfg.Gateway.OpenAIWS.StickySessionTTLSeconds)
 	}
-	if !cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled {
-		t.Fatalf("Gateway.AdvancedScheduler.StickyEscapeEnabled = false, want true")
+	if cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled {
+		t.Fatalf("Gateway.AdvancedScheduler.StickyEscapeEnabled = true, want false")
 	}
 	if cfg.Gateway.AdvancedScheduler.StickyEscapeTTFTMs != 15000 {
 		t.Fatalf("Gateway.AdvancedScheduler.StickyEscapeTTFTMs = %d, want 15000", cfg.Gateway.AdvancedScheduler.StickyEscapeTTFTMs)
@@ -536,8 +547,8 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if !cfg.Gateway.OpenAIWS.MetadataBridgeEnabled {
 		t.Fatalf("Gateway.OpenAIWS.MetadataBridgeEnabled = false, want true")
 	}
-	if cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds != 3600 {
-		t.Fatalf("Gateway.OpenAIWS.StickyResponseIDTTLSeconds = %d, want 3600", cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds)
+	if cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds != 21600 {
+		t.Fatalf("Gateway.OpenAIWS.StickyResponseIDTTLSeconds = %d, want 21600", cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds)
 	}
 	if cfg.Gateway.OpenAIWS.FallbackCooldownSeconds != 30 {
 		t.Fatalf("Gateway.OpenAIWS.FallbackCooldownSeconds = %d, want 30", cfg.Gateway.OpenAIWS.FallbackCooldownSeconds)
