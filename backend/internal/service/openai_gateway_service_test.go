@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +50,16 @@ type snapshotUpdateAccountRepo struct {
 	updateExtraCalls chan map[string]any
 }
 
+type snapshotThresholdBridgeRepo struct {
+	stubOpenAIAccountRepo
+	probeClaims chan *CodexQuotaOverdraftProbeState
+}
+
+type snapshotBusinessSuccessRepo struct {
+	*snapshotThresholdBridgeRepo
+	businessSuccesses chan *CodexQuotaOverdraftProbeState
+}
+
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
@@ -58,6 +69,47 @@ func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, u
 		r.updateExtraCalls <- copied
 	}
 	return nil
+}
+
+func (r *snapshotThresholdBridgeRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
+	account, err := r.GetByID(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	mergeAccountExtra(account, updates)
+	return nil
+}
+
+func (r *snapshotThresholdBridgeRepo) ClaimCodexQuotaOverdraftProbe(
+	_ context.Context,
+	_ int64,
+	state *CodexQuotaOverdraftProbeState,
+) (bool, error) {
+	if r.probeClaims != nil {
+		clone := *state
+		r.probeClaims <- &clone
+	}
+	return false, nil
+}
+
+func (r *snapshotBusinessSuccessRepo) PersistCodexQuotaOverdraftProbeUnlessFailed(
+	_ context.Context,
+	accountID int64,
+	state *CodexQuotaOverdraftProbeState,
+) (bool, error) {
+	if state == nil || state.Status == codexQuotaOverdraftProbeFailed {
+		return false, nil
+	}
+	account, err := r.GetByID(context.Background(), accountID)
+	if err != nil {
+		return false, err
+	}
+	clone := *state
+	mergeAccountExtra(account, map[string]any{CodexQuotaOverdraftProbeExtraKey: &clone})
+	if r.businessSuccesses != nil {
+		r.businessSuccesses <- &clone
+	}
+	return true, nil
 }
 
 func (r stubOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
@@ -3016,6 +3068,109 @@ func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 		require.Equal(t, 86400, updates["codex_7d_reset_after_seconds"])
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected UpdateExtra to be called")
+	}
+}
+
+func TestOpenAIUpdateCodexUsageSnapshotStartsProbeAfterHeadersCrossThreshold(t *testing.T) {
+	now := time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC)
+	repo := &snapshotThresholdBridgeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
+			ID:          124,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Extra: map[string]any{
+				CodexQuotaOverdraftEnabledExtraKey: true,
+				"codex_7d_used_percent":            94.0,
+			},
+		}}},
+		probeClaims: make(chan *CodexQuotaOverdraftProbeState, 1),
+	}
+	coordinator := &CodexQuotaOverdraftCoordinator{
+		accountRepo:  repo,
+		httpUpstream: &accountUsageHTTPUpstreamStub{},
+		now:          func() time.Time { return now },
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo, codexQuotaOverdraft: coordinator}
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:         ptrFloat64(20),
+		PrimaryResetAfterSeconds:   ptrInt(1200),
+		PrimaryWindowMinutes:       ptrInt(300),
+		SecondaryUsedPercent:       ptrFloat64(100),
+		SecondaryResetAfterSeconds: ptrInt(6 * 24 * 60 * 60),
+		SecondaryWindowMinutes:     ptrInt(10080),
+	}
+
+	svc.updateCodexUsageSnapshot(context.Background(), 124, snapshot)
+
+	select {
+	case state := <-repo.probeClaims:
+		require.Equal(t, "7d", state.QuotaWindow)
+		require.NotEmpty(t, state.CycleKey)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected threshold-crossing response headers to start the overdraft probe path")
+	}
+}
+
+func TestObserveCodexQuotaOverdraftBusinessSuccessUsesLatestHeadersOnce(t *testing.T) {
+	now := time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC)
+	baseRepo := &snapshotThresholdBridgeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
+			ID:          125,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Extra: map[string]any{
+				CodexQuotaOverdraftEnabledExtraKey: true,
+				"codex_7d_used_percent":            95.0,
+			},
+		}}},
+		probeClaims: make(chan *CodexQuotaOverdraftProbeState, 1),
+	}
+	repo := &snapshotBusinessSuccessRepo{
+		snapshotThresholdBridgeRepo: baseRepo,
+		businessSuccesses:           make(chan *CodexQuotaOverdraftProbeState, 2),
+	}
+	coordinator := &CodexQuotaOverdraftCoordinator{
+		accountRepo:  repo,
+		httpUpstream: &accountUsageHTTPUpstreamStub{},
+		now:          func() time.Time { return now },
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo, codexQuotaOverdraft: coordinator}
+	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+	markCodexQuotaOverdraftInjected(ctx, 125)
+	headers := make(http.Header)
+	headers.Set("x-codex-primary-used-percent", "20")
+	headers.Set("x-codex-primary-window-minutes", "300")
+	headers.Set("x-codex-primary-reset-after-seconds", "1200")
+	headers.Set("x-codex-secondary-used-percent", "100")
+	headers.Set("x-codex-secondary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-reset-after-seconds", strconv.Itoa(6*24*60*60))
+
+	account, err := repo.GetByID(context.Background(), 125)
+	require.NoError(t, err)
+	svc.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, "gpt-5.4", headers)
+
+	select {
+	case state := <-repo.businessSuccesses:
+		require.Equal(t, codexQuotaOverdraftProbePassed, state.Status)
+		require.Equal(t, "business_request_ok", state.ReasonCode)
+		require.Equal(t, "7d", state.QuotaWindow)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected latest response headers to produce a business-success state")
+	}
+
+	select {
+	case state := <-repo.businessSuccesses:
+		t.Fatalf("unexpected duplicate business-success state: %+v", state)
+	case <-time.After(150 * time.Millisecond):
+	}
+	select {
+	case state := <-repo.probeClaims:
+		t.Fatalf("injected business success must not race a separate threshold probe: %+v", state)
+	default:
 	}
 }
 

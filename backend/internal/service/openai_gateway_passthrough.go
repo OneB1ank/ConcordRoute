@@ -303,14 +303,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	s.bindHTTPResponseAccount(ctx, c, account, responseID)
 
-	if !account.IsShadow() {
-		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
-		}
-	}
-	if codexQuotaOverdraftWasInjected(ctx, account.ID) && s.codexQuotaOverdraft != nil {
-		s.codexQuotaOverdraft.ObserveBusinessSuccess(account, reqModel)
-	}
+	s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, reqModel, resp.Header)
 
 	if usage == nil {
 		usage = &OpenAIUsage{}

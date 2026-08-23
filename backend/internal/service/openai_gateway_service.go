@@ -521,8 +521,24 @@ func (s *OpenAIGatewayService) SetCodexQuotaOverdraftCoordinator(coordinator *Co
 }
 
 // ObserveCodexQuotaOverdraftBusinessSuccess 统一接收 HTTP/WS 出站成功证据。
-func (s *OpenAIGatewayService) ObserveCodexQuotaOverdraftBusinessSuccess(ctx context.Context, account *Account, model string) {
-	if s == nil || s.codexQuotaOverdraft == nil || account == nil || !codexQuotaOverdraftWasInjected(ctx, account.ID) {
+// 有额度响应头时先合并最新快照，再用同一条异步链判定业务成功；没有响应头时
+// 才直接使用当前账号快照，避免调用方重复触发成功观察。
+func (s *OpenAIGatewayService) ObserveCodexQuotaOverdraftBusinessSuccess(
+	ctx context.Context,
+	account *Account,
+	model string,
+	headers http.Header,
+) {
+	if s == nil || account == nil {
+		return
+	}
+	if account.Type == AccountTypeOAuth && !account.IsShadow() {
+		if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
+			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
+			return
+		}
+	}
+	if s.codexQuotaOverdraft == nil || !codexQuotaOverdraftWasInjected(ctx, account.ID) {
 		return
 	}
 	s.codexQuotaOverdraft.ObserveBusinessSuccess(account, model)

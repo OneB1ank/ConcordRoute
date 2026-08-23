@@ -2194,10 +2194,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					return
 				}
 				if turnErr == nil && openAIForwardSucceededForScheduling(result) {
-					h.gatewayService.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, result.Model)
-				}
-				// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-				if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
+					h.gatewayService.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, result.Model, result.ResponseHeaders)
+				} else if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
+					// 失败终态仍保存握手阶段返回的额度头，但不作为透支成功证据。
 					h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, result.ResponseHeaders)
 				}
 				scheduleModel := strings.TrimSpace(result.UpstreamModel)

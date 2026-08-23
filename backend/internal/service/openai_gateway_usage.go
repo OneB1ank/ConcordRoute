@@ -1004,7 +1004,9 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	}
 	persistSnapshot := codexQuotaOverdraftSnapshotPrearmReached(updates) || s.getCodexSnapshotThrottle().Allow(accountID, now)
 	businessSuccess := codexQuotaOverdraftWasInjected(ctx, accountID)
-	if !persistSnapshot && !businessSuccess {
+	probeThresholdReached := parseExtraFloat64(updates["codex_5h_used_percent"]) >= codexQuotaOverdraftStartPercent ||
+		parseExtraFloat64(updates["codex_7d_used_percent"]) >= codexQuotaOverdraftStartPercent
+	if !persistSnapshot && !businessSuccess && !probeThresholdReached {
 		return
 	}
 
@@ -1016,7 +1018,7 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 				return
 			}
 		}
-		if !businessSuccess || s.codexQuotaOverdraft == nil {
+		if s.codexQuotaOverdraft == nil || (!businessSuccess && !probeThresholdReached) {
 			return
 		}
 		account, err := s.accountRepo.GetByID(updateCtx, accountID)
@@ -1024,7 +1026,11 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 			return
 		}
 		mergeAccountExtra(account, updates)
-		s.codexQuotaOverdraft.observeBusinessSuccess(account, "")
+		if businessSuccess {
+			s.codexQuotaOverdraft.observeBusinessSuccess(account, "")
+			return
+		}
+		s.codexQuotaOverdraft.observeAccount(account, "")
 	}()
 }
 
