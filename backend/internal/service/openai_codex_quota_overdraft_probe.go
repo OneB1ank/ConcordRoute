@@ -140,9 +140,13 @@ func (c *CodexQuotaOverdraftCoordinator) enabled() bool {
 	return c != nil && c.accountRepo != nil && c.httpUpstream != nil
 }
 
-// ObserveAccount 在 5h/7d 快照达到 98% 启动阈值时启动探测，并在额度恢复后关闭旧周期。
+// ObserveAccount 在 80% 观察门槛后跟踪额度周期；只有达到 98% 才启动真实探针，
+// 并在额度恢复后关闭旧周期。
 func (c *CodexQuotaOverdraftCoordinator) ObserveAccount(account *Account, preferredModel string) {
 	if !c.enabled() || !isCodexQuotaOverdraftAccount(account) || account.ID <= 0 {
+		return
+	}
+	if !codexQuotaOverdraftObservationEligible(account, c.currentTime()) {
 		return
 	}
 	accountCopy := cloneCodexQuotaOverdraftAccount(account)
@@ -913,6 +917,27 @@ func codexQuotaOverdraftSignalFromAccount(account *Account, state *CodexQuotaOve
 		signal.FiveHourRecoverAt = nil
 	}
 	return signal, true
+}
+
+// codexQuotaOverdraftObservationEligible separates the inexpensive observation
+// gate from the 98% exhausted signal. Existing state remains observable even
+// after utilization falls below 80%, so recovery cleanup is not skipped.
+func codexQuotaOverdraftObservationEligible(account *Account, now time.Time) bool {
+	if !isCodexQuotaOverdraftAccount(account) {
+		return false
+	}
+	if state, ok := codexQuotaOverdraftStateFromAccount(account); ok && state != nil {
+		return true
+	}
+	windowEligible := func(usedKey, resetKey string) bool {
+		if parseExtraFloat64(account.Extra[usedKey]) < codexQuotaOverdraftObservePercent {
+			return false
+		}
+		resetAt := codexQuotaOverdraftResetAt(account.Extra[resetKey], now)
+		return resetAt == nil || resetAt.After(now)
+	}
+	return windowEligible("codex_5h_used_percent", "codex_5h_reset_at") ||
+		windowEligible("codex_7d_used_percent", "codex_7d_reset_at")
 }
 
 func clearRecoveredCodexQuotaOverdraftWindows(state *CodexQuotaOverdraftProbeState, account *Account, now time.Time) bool {
