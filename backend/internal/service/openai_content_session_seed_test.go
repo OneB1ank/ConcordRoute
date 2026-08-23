@@ -45,6 +45,92 @@ func TestDeriveOpenAIContentSessionSeed_ChatCompletions_StableAcrossTurns(t *tes
 	require.NotEmpty(t, s1)
 }
 
+func TestDeriveOpenAIContentSessionSeed_ChatCompletions_IgnoresLaterSystemMessages(t *testing.T) {
+	turn1 := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi there!"},
+			{"role": "user", "content": "How are you?"}
+		]
+	}`)
+	turn2 := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi there!"},
+			{"role": "system", "content": "Return JSON for this turn."},
+			{"role": "user", "content": "How are you?"}
+		]
+	}`)
+
+	require.Equal(t, deriveOpenAIContentSessionSeed(turn1), deriveOpenAIContentSessionSeed(turn2))
+}
+
+func TestDeriveOpenAIContentSessionSeed_ChatCompletions_UsesLeadingSystemDeveloperPrefix(t *testing.T) {
+	firstSystem := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "System A"},
+			{"role": "developer", "content": "Developer B"},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+	changedLeadingDeveloper := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "System A"},
+			{"role": "developer", "content": "Developer C"},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+
+	seed := deriveOpenAIContentSessionSeed(firstSystem)
+	require.Contains(t, seed, "System A")
+	require.Contains(t, seed, "Developer B")
+	require.NotEqual(t, seed, deriveOpenAIContentSessionSeed(changedLeadingDeveloper))
+
+	withLaterSystem := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "System A"},
+			{"role": "developer", "content": "Developer B"},
+			{"role": "user", "content": "Hello"},
+			{"role": "system", "content": "Dynamic system"}
+		]
+	}`)
+	require.Equal(t, seed, deriveOpenAIContentSessionSeed(withLaterSystem))
+}
+
+func TestDeriveOpenAIContentSessionSeed_ChatCompletions_StopsSystemPrefixAfterToolRole(t *testing.T) {
+	withoutLaterSystem := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "System A"},
+			{"role": "tool", "content": "tool result"},
+			{"role": "system", "content": "Dynamic system"},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+	changedLaterSystem := []byte(`{
+		"model": "gpt-5.4",
+		"messages": [
+			{"role": "system", "content": "System A"},
+			{"role": "tool", "content": "tool result"},
+			{"role": "system", "content": "Changed dynamic system"},
+			{"role": "user", "content": "Hello"}
+		]
+	}`)
+
+	require.Equal(t,
+		deriveOpenAIContentSessionSeed(withoutLaterSystem),
+		deriveOpenAIContentSessionSeed(changedLaterSystem),
+		"system/developer items after assistant, tool, or another non-prefix role must not move the sticky account",
+	)
+}
+
 func TestDeriveOpenAIContentSessionSeed_ChatCompletions_DifferentFirstUserDiffers(t *testing.T) {
 	req1 := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"Question A"}]}`)
 	req2 := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"Question B"}]}`)
@@ -137,6 +223,31 @@ func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_InputArray(t *testing.T) {
 	seed := deriveOpenAIContentSessionSeed(body)
 	require.Contains(t, seed, "|system=")
 	require.Contains(t, seed, "|first_user=")
+}
+
+func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_IgnoresLaterSystemMessages(t *testing.T) {
+	turn1 := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi there!"},
+			{"role": "user", "content": "Continue"}
+		]
+	}`)
+	turn2 := []byte(`{
+		"model": "gpt-5.4",
+		"input": [
+			{"role": "system", "content": "You are helpful."},
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": "Hi there!"},
+			{"role": "developer", "content": "Dynamic turn policy"},
+			{"role": "user", "content": "Continue"}
+		]
+	}`)
+
+	require.Equal(t, deriveOpenAIContentSessionSeed(turn1), deriveOpenAIContentSessionSeed(turn2),
+		"later Responses system/developer items must not move the sticky account or its egress")
 }
 
 func TestDeriveOpenAIContentSessionSeed_ResponsesAPI_WithInstructions(t *testing.T) {
@@ -271,7 +382,7 @@ func TestDeriveOpenAIContentSessionSeed_SingleScanMatchesLegacyBytes(t *testing.
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, legacyDeriveOpenAIContentSessionSeed(test.body), deriveOpenAIContentSessionSeed(test.body))
+			require.Equal(t, referenceDeriveOpenAIContentSessionSeed(test.body), deriveOpenAIContentSessionSeed(test.body))
 		})
 	}
 }
@@ -284,13 +395,13 @@ func TestDeriveOpenAIContentSessionSeed_AllTruncationOffsetsMatchLegacyBytes(t *
 	for bodyIndex, body := range bodies {
 		for end := 1; end < len(body); end++ {
 			truncated := []byte(body[:end])
-			require.Equalf(t, legacyDeriveOpenAIContentSessionSeed(truncated), deriveOpenAIContentSessionSeed(truncated), "body %d truncated at byte %d", bodyIndex, end)
+			require.Equalf(t, referenceDeriveOpenAIContentSessionSeed(truncated), deriveOpenAIContentSessionSeed(truncated), "body %d truncated at byte %d", bodyIndex, end)
 		}
 	}
 }
 
-func TestDeriveOpenAIContentSessionSeed_DeterministicMalformedCorpusMatchesLegacy(t *testing.T) {
-	// 固定随机种子生成畸形 JSON 语料，持续守住旧版 gjson 宽松解析语义。
+func TestDeriveOpenAIContentSessionSeed_DeterministicMalformedCorpusMatchesReference(t *testing.T) {
+	// 固定随机种子生成畸形 JSON 语料，持续守住 gjson 宽松解析语义。
 	rng := rand.New(rand.NewSource(4274))
 	alphabet := []byte(`{}[]":,modeltfsuinpcr0123456789 \\`)
 	for caseIndex := 0; caseIndex < 5000; caseIndex++ {
@@ -300,7 +411,7 @@ func TestDeriveOpenAIContentSessionSeed_DeterministicMalformedCorpusMatchesLegac
 		}
 		require.Equalf(
 			t,
-			legacyDeriveOpenAIContentSessionSeed(body),
+			referenceDeriveOpenAIContentSessionSeed(body),
 			deriveOpenAIContentSessionSeed(body),
 			"malformed case %d: %q",
 			caseIndex,
@@ -309,7 +420,7 @@ func TestDeriveOpenAIContentSessionSeed_DeterministicMalformedCorpusMatchesLegac
 	}
 }
 
-func legacyDeriveOpenAIContentSessionSeed(body []byte) string {
+func referenceDeriveOpenAIContentSessionSeed(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
@@ -340,15 +451,19 @@ func legacyDeriveOpenAIContentSessionSeed(body []byte) string {
 
 	msgs := gjson.GetBytes(body, "messages")
 	if msgs.Exists() && msgs.IsArray() {
+		systemPrefixOpen := true
 		msgs.ForEach(func(_, msg gjson.Result) bool {
 			role := msg.Get("role").String()
 			switch role {
 			case "system", "developer":
-				_, _ = b.WriteString("|system=")
-				if c := msg.Get("content"); c.Exists() {
-					_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+				if systemPrefixOpen {
+					_, _ = b.WriteString("|system=")
+					if c := msg.Get("content"); c.Exists() {
+						_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+					}
 				}
 			case "user":
+				systemPrefixOpen = false
 				if !firstUserCaptured {
 					_, _ = b.WriteString("|first_user=")
 					if c := msg.Get("content"); c.Exists() {
@@ -356,6 +471,8 @@ func legacyDeriveOpenAIContentSessionSeed(body []byte) string {
 					}
 					firstUserCaptured = true
 				}
+			default:
+				systemPrefixOpen = false
 			}
 			return true
 		})
@@ -364,15 +481,19 @@ func legacyDeriveOpenAIContentSessionSeed(body []byte) string {
 			_, _ = b.WriteString("|input=")
 			_, _ = b.WriteString(inp.String())
 		} else if inp.IsArray() {
+			systemPrefixOpen := true
 			inp.ForEach(func(_, item gjson.Result) bool {
 				role := item.Get("role").String()
 				switch role {
 				case "system", "developer":
-					_, _ = b.WriteString("|system=")
-					if c := item.Get("content"); c.Exists() {
-						_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+					if systemPrefixOpen {
+						_, _ = b.WriteString("|system=")
+						if c := item.Get("content"); c.Exists() {
+							_, _ = b.WriteString(normalizeCompatSeedJSON(json.RawMessage(c.Raw)))
+						}
 					}
 				case "user":
+					systemPrefixOpen = false
 					if !firstUserCaptured {
 						_, _ = b.WriteString("|first_user=")
 						if c := item.Get("content"); c.Exists() {
@@ -380,6 +501,8 @@ func legacyDeriveOpenAIContentSessionSeed(body []byte) string {
 						}
 						firstUserCaptured = true
 					}
+				default:
+					systemPrefixOpen = false
 				}
 				if !firstUserCaptured && item.Get("type").String() == "input_text" {
 					_, _ = b.WriteString("|first_user=")
