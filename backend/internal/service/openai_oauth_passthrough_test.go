@@ -2086,7 +2086,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexTuiIdentityConvergesToCanoni
 	require.Equal(t, "0.200.1", upstream.lastReq.Header.Get("version"))
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterFingerprintPreservedWithCanonicalVersion(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterIdentityOverridesGlobal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const routedUA = "codex-tui/9.9.0 (Linux; x86_64) xterm (codex-tui; 9.9.0)"
 	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
@@ -2139,9 +2139,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_TLSRouterFingerprintPreservedWith
 
 	_, err := svc.Forward(context.Background(), c, account, inputBody)
 	require.NoError(t, err)
-	require.Equal(t, "codex-tui/0.200.1 (Linux; x86_64) xterm (codex-tui; 0.200.1)", upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, routedUA, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
-	require.Equal(t, "0.200.1", upstream.lastReq.Header.Get("version"))
+	require.Equal(t, "9.9.0", upstream.lastReq.Header.Get("version"))
 }
 
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {

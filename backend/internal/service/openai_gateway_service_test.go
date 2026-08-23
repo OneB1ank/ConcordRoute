@@ -3407,9 +3407,9 @@ func TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders(t *testing.T) {
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false, routerMatch)
 	require.NoError(t, err)
-	require.Equal(t, "codex-tui/0.200.1 (Mac OS X 15.5; arm64) iTerm (codex-tui; 0.200.1)", req.Header.Get("User-Agent"))
+	require.Equal(t, routerMatch.UpstreamUserAgent, req.Header.Get("User-Agent"))
 	require.Equal(t, routerMatch.UpstreamOriginator, req.Header.Get("originator"))
-	require.Equal(t, "0.200.1", req.Header.Get("version"))
+	require.Equal(t, "9.9.0", req.Header.Get("version"))
 }
 
 func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesAccountFallback(t *testing.T) {
@@ -3433,9 +3433,33 @@ func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesAccountFallback(t *testing.T
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false, TLSFingerprintRouterMatchResult{Matched: true})
 	require.NoError(t, err)
-	require.Equal(t, "codex-tui/0.200.1 account-fallback", req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/9.8.0 account-fallback", req.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", req.Header.Get("originator"))
-	require.Equal(t, "0.200.1", req.Header.Get("version"))
+	require.Equal(t, "9.8.0", req.Header.Get("version"))
+}
+
+func TestOpenAIExplicitUserAgentOverridesForceCodexCLIGlobalFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCanonicalUA(t, "Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}}}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"user_agent": "codex-tui/0.146.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.146.0)",
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("originator", "Codex Desktop")
+
+	svc.applyOpenAIUpstreamUserAgent(context.Background(), nil, account, req, false)
+	enforceCodexIdentityHeadersWithUA(req.Header, svc.codexIdentityOverrideUA(account))
+
+	require.Equal(t, "codex-tui/0.146.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.146.0)", req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", req.Header.Get("originator"))
+	require.Equal(t, "0.146.0", req.Header.Get("version"))
 }
 
 // ==================== P1-08 修复：model 替换性能优化测试 ====================

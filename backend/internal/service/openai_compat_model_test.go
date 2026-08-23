@@ -1112,7 +1112,7 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 			userAgent:        "third-party-client/1.0.0",
 			originator:       "opencode",
 			accountUserAgent: "codex_vscode/9.9.9 (Mac OS X 15.6; arm64) vscode (codex_vscode; 9.9.9)",
-			wantUserAgent:    "codex_vscode/0.144.1 (Mac OS X 15.6; arm64) vscode (codex_vscode; 0.144.1)",
+			wantUserAgent:    "codex_vscode/9.9.9 (Mac OS X 15.6; arm64) vscode (codex_vscode; 9.9.9)",
 			wantOriginator:   "codex_vscode",
 		},
 	}

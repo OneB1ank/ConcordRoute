@@ -59,8 +59,8 @@ type codexOutboundIdentity struct {
 }
 
 // resolveCodexOutboundIdentity 生成同源的 UA、originator 和 version。
-// 管理员显式配置的 OS/架构/终端后缀会保留；版本统一取全局规范 UA，账号或
-// TLS Router 的显式 UA 只覆盖客户端类型和设备指纹，避免各出站路径版本漂移。
+// 管理员显式配置的账号/TLS Router UA 优先并作为完整身份来源；只有候选为空或
+// 无效时才回退全局规范 UA，避免全局版本覆盖显式模板中的真实客户端版本。
 func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 	canonicalUA := strings.TrimSpace(codexCanonicalUserAgent())
 	canonicalOriginator, canonicalPairedUA, ok := openai.PairCodexClientIdentity(canonicalUA)
@@ -90,6 +90,7 @@ func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 			version:    version,
 		}
 	}
+	version = codexClientVersionFromUA(pairedUA)
 	if rebuilt := openai.SetCodexUserAgentVersion(pairedUA, version); rebuilt != "" {
 		pairedUA = rebuilt
 	}
@@ -121,8 +122,8 @@ func CodexCanonicalAuthIdentity() (userAgent, originator string) {
 	return identity.userAgent, identity.originator
 }
 
-// CodexAuthIdentityForUserAgent 保留 TLS Router/账号显式配置的设备指纹，
-// 同时把版本与全局规范身份收敛到同一来源。
+// CodexAuthIdentityForUserAgent 使用 TLS Router/账号显式配置的完整身份；
+// 候选为空或无效时才回退全局规范身份。
 func CodexAuthIdentityForUserAgent(candidateUA string) (userAgent, originator string) {
 	identity := resolveCodexOutboundIdentity(candidateUA)
 	return identity.userAgent, identity.originator

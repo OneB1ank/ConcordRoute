@@ -58,9 +58,9 @@ func TestResolveCodexOutboundIdentityPreservesConfiguredFingerprint(t *testing.T
 
 	identity := resolveCodexOutboundIdentity(routed)
 	require.Equal(t, "codex_cli_rs", identity.originator)
-	require.Equal(t, "0.200.1", identity.version)
+	require.Equal(t, "0.150.0", identity.version)
 	require.Equal(t,
-		"codex_cli_rs/0.200.1 (Mac OS X 14.7; arm64) iTerm2 (codex_cli_rs; 0.200.1)",
+		"codex_cli_rs/0.150.0 (Mac OS X 14.7; arm64) iTerm2 (codex_cli_rs; 0.150.0)",
 		identity.userAgent,
 	)
 }
@@ -112,9 +112,9 @@ func TestEnforceCodexIdentityHeadersWithUA(t *testing.T) {
 	enforceCodexIdentityHeadersWithUA(h, accountUA)
 
 	require.Equal(t, "codex_vscode", h.Get("originator"))
-	require.Equal(t, "0.200.1", h.Get("version"))
+	require.Equal(t, "0.180.0", h.Get("version"))
 	require.Equal(t,
-		"codex_vscode/0.200.1 (Mac OS X 14.7; arm64) vscode (codex_vscode; 0.200.1)",
+		"codex_vscode/0.180.0 (Mac OS X 14.7; arm64) vscode (codex_vscode; 0.180.0)",
 		h.Get("user-agent"),
 	)
 }

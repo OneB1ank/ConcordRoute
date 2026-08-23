@@ -1419,6 +1419,7 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgent(
 	if identityAccount != nil {
 		if customUA := strings.TrimSpace(identityAccount.GetOpenAIUserAgent()); customUA != "" {
 			req.Header.Set("user-agent", customUA)
+			return
 		}
 	}
 	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
@@ -1434,11 +1435,8 @@ func (s *OpenAIGatewayService) applyOpenAIUpstreamUserAgent(
 }
 
 // codexIdentityOverrideUA 返回管理员显式选择的设备身份。
-// TLS Router 优先于账号 UA；ForceCodexCLI 使用全局规范身份。
+// TLS Router 优先于账号 UA；两者都未配置时才由全局规范身份兜底。
 func (s *OpenAIGatewayService) codexIdentityOverrideUA(account *Account, routerMatch ...TLSFingerprintRouterMatchResult) string {
-	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		return ""
-	}
 	if len(routerMatch) > 0 && routerMatch[0].Matched {
 		if ua := strings.TrimSpace(routerMatch[0].UpstreamUserAgent); ua != "" {
 			return ua
