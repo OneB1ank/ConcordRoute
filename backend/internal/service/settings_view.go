@@ -726,6 +726,11 @@ func DefaultOpenAIOAuthImportDefaults() *OpenAIOAuthImportDefaults {
 				"gpt-5.5",
 			},
 		},
+		// 新导入账号显式使用 Cockpit 会话与缓存键收敛；已有账号未配置该字段时，
+		// 运行态仍由 GetCodexFingerprintMode 按 off 处理，避免静默改变存量行为。
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
+		},
 	}
 }
 

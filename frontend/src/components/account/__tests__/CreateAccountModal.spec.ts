@@ -357,21 +357,38 @@ describe('CreateAccountModal OpenAI account options', () => {
     expect(apiMock.mock.calls[0]?.[0]?.credential_extras?.model_whitelist).toEqual(['gpt-5.2'])
   })
 
-  it('defaults Codex fingerprint convergence to off for OAuth imports', async () => {
+  it('applies the Cockpit fingerprint mode returned by OAuth import defaults', async () => {
+    getOpenAIOAuthImportDefaultsMock.mockResolvedValueOnce({
+      credentials: { model_whitelist: [] },
+      extra: { codex_fingerprint_mode: 'cockpit' },
+    })
+
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
 
     const modeSelect = wrapper.get<HTMLSelectElement>(
       '[data-testid="create-codex-fingerprint-mode-select"]'
     )
-    expect(modeSelect.element.value).toBe('off')
+    await flushPromises()
+    expect(modeSelect.element.value).toBe('cockpit')
 
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
     await flushPromises()
 
-    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('codex_fingerprint_mode')
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('cockpit')
+  })
+
+  it('keeps missing OAuth fingerprint defaults off', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+
+    const modeSelect = wrapper.get<HTMLSelectElement>(
+      '[data-testid="create-codex-fingerprint-mode-select"]'
+    )
+    await flushPromises()
+    expect(modeSelect.element.value).toBe('off')
   })
 
   it('persists an explicit Codex fingerprint convergence mode for OAuth imports', async () => {

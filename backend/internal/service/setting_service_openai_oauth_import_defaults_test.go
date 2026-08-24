@@ -6,19 +6,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultOpenAIOAuthImportDefaultsLeavesFingerprintOff(t *testing.T) {
+func TestDefaultOpenAIOAuthImportDefaultsUsesCockpitFingerprint(t *testing.T) {
 	defaults := DefaultOpenAIOAuthImportDefaults()
-	require.NotContains(t, defaults.Extra, codexFingerprintModeExtraKey)
+	require.Equal(t, "cockpit", defaults.Extra[codexFingerprintModeExtraKey])
 }
 
 func TestFillOpenAIOAuthImportDefaultsPreservesExplicitFingerprintMode(t *testing.T) {
 	missing := fillOpenAIOAuthImportDefaults(&OpenAIOAuthImportDefaults{})
-	require.NotContains(t, missing.Extra, codexFingerprintModeExtraKey)
+	require.Equal(t, "cockpit", missing.Extra[codexFingerprintModeExtraKey])
 
 	explicit := fillOpenAIOAuthImportDefaults(&OpenAIOAuthImportDefaults{
-		Extra: map[string]any{codexFingerprintModeExtraKey: "cockpit"},
+		Extra: map[string]any{codexFingerprintModeExtraKey: "off"},
 	})
-	require.Equal(t, "cockpit", explicit.Extra[codexFingerprintModeExtraKey])
+	require.Equal(t, "off", explicit.Extra[codexFingerprintModeExtraKey])
 }
 
 func TestMergeMissingOpenAIOAuthImportDefaultsKeepsGenericExtraMerging(t *testing.T) {
