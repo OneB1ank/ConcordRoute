@@ -420,9 +420,8 @@ var (
 // ErrNoAvailableAccounts 表示没有可用的账号
 var ErrNoAvailableAccounts = errors.New("no available accounts")
 
-// ErrOpenAIPreviousResponseAffinityUnavailable means a response chain cannot
-// be continued on its original account. Requests whose input depends on that
-// chain must stop instead of forwarding the old response ID to another account.
+// ErrOpenAIPreviousResponseAffinityUnavailable 表示响应续链已无法回到原账号。
+// 依赖该续链的请求必须终止，避免把旧 response ID 转发给其他账号。
 var ErrOpenAIPreviousResponseAffinityUnavailable = errors.New("previous response affinity unavailable")
 
 // ErrClaudeCodeOnly 表示分组仅允许 Claude Code 客户端访问
@@ -479,10 +478,8 @@ type GatewayCache interface {
 	RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error
 }
 
-// ErrGatewayCacheMiss is the storage-independent sentinel returned when a
-// GatewayCache lookup has no value. Callers that need fail-closed affinity can
-// distinguish a normal miss from Redis/network/decoding failures without
-// importing a repository-specific error such as redis.Nil.
+// ErrGatewayCacheMiss 是 GatewayCache 查无数据时返回的存储无关哨兵错误。
+// 调用方可据此区分正常未命中与 Redis、网络或解码故障，无需依赖 redis.Nil 等仓储实现错误。
 var ErrGatewayCacheMiss = errors.New("gateway cache miss")
 
 // GrokVideoBillingCache 为异步视频任务保存创建时定价快照，并跨实例防止轮询重复扣费。
@@ -568,8 +565,7 @@ type AccountSelectionResult struct {
 	ReleaseFunc       func()
 	WaitPlan          *AccountWaitPlan // nil means no wait allowed
 	AdvancedScheduler bool             // 仅内部转发链路使用，不对外序列化。
-	// FinalGroupID is the resolved scheduler scope for this request.  It is
-	// populated by OpenAI scheduling and consumed by subsequent bindings.
+	// FinalGroupID 保存本次请求经调度解析后的最终分组，供后续绑定复用。
 	FinalGroupID int64
 }
 

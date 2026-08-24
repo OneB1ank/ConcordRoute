@@ -985,6 +985,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		var usage *OpenAIUsage
 		var firstTokenMs *int
 		responseID := ""
+		responseBindingEvent := ""
 		imageCount := 0
 		searchCount := 0
 		var imageOutputSizes []string
@@ -997,6 +998,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
 			responseID = strings.TrimSpace(streamResult.responseID)
+			responseBindingEvent = streamResult.responseBindingEvent
 			imageCount = streamResult.imageCount
 			imageOutputSizes = streamResult.imageOutputSizes
 			responseBody = streamResult.responseBody
@@ -1007,11 +1009,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			usage = nonStreamResult.usage
 			responseID = strings.TrimSpace(nonStreamResult.responseID)
+			responseBindingEvent = nonStreamResult.responseBindingEvent
 			imageCount = nonStreamResult.imageCount
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 			responseBody = nonStreamResult.responseBody
 		}
-		s.bindHTTPResponseAccount(ctx, c, account, responseID)
+		if openAIWSTerminalEventMayBind(responseBindingEvent) {
+			s.bindHTTPResponseAccount(ctx, c, account, responseID)
+		}
 
 		s.ObserveCodexUsageHeaders(ctx, account, resp.Header)
 

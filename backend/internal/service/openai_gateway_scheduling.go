@@ -75,10 +75,8 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 	return sessionID
 }
 
-// stagedOpenAICompactSessionSeed returns the explicit prompt_cache_key captured
-// before legacy /responses/compact normalization removes it from the body. It
-// deliberately returns an empty string when no stable client value exists so
-// callers can continue to the normal content-derived fallback.
+// stagedOpenAICompactSessionSeed 返回旧版 /responses/compact 规范化前暂存的显式 prompt_cache_key。
+// 没有稳定客户端值时返回空串，让调用方继续使用基于内容的常规回退。
 func stagedOpenAICompactSessionSeed(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -148,14 +146,14 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 // GenerateSessionHash generates a sticky-session hash for OpenAI requests.
 //
 // Priority:
-//  1. Header: session-id（Codex CLI）
-//  2. Header: session_id
-//  3. Header: conversation_id
-//  4. Header：x-session-affinity / x-session-id / x-opencode-session（OpenCode）
-//  5. Header：x-conversation-id（CodeBuddy）
-//  6. Header：x-grok-conv-id（仅 Grok 分组）
-//  7. Body：prompt_cache_key
-//  8. Body：基于内容回退（model + system + tools + 第一条用户消息）
+//  1. 请求头：session-id（Codex CLI）
+//  2. 请求头：session_id
+//  3. 请求头：conversation_id
+//  4. 请求头：x-session-affinity / x-session-id / x-opencode-session（OpenCode）
+//  5. 请求头：x-conversation-id（CodeBuddy）
+//  6. 请求头：x-grok-conv-id（仅 Grok 分组）
+//  7. 请求体：prompt_cache_key
+//  8. 请求体：基于内容回退（model + system + tools + 第一条用户消息）
 func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
@@ -246,9 +244,8 @@ func (s *OpenAIGatewayService) BindStickySession(ctx context.Context, groupID *i
 	return s.bindStickySessionResolved(resolvedCtx, resolvedGroupID, sessionHash, accountID)
 }
 
-// bindStickySessionResolved writes a binding using a group that was already
-// resolved by the current scheduling attempt. Keeping this separate from the
-// public helper avoids a second fallback-chain lookup in the scheduler hot path.
+// bindStickySessionResolved 使用本次调度已解析的分组写入绑定，
+// 使调度热路径无需再次查询回退链。
 func (s *OpenAIGatewayService) bindStickySessionResolved(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
 	if s == nil || strings.TrimSpace(sessionHash) == "" || accountID <= 0 {
 		return nil

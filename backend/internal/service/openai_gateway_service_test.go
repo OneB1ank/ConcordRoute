@@ -660,8 +660,7 @@ func TestOpenAIGatewayService_BindStickySessionUsesResolvedFinalGroupContext(t *
 		ClaudeCodeOnly:  true,
 		FallbackGroupID: &fallbackGroupID,
 	})
-	// Simulate a scheduler result captured before the fallback configuration is
-	// edited concurrently: the binding must retain the captured scope.
+	// 模拟并发修改回退配置前已捕获的调度结果；绑定必须保留当时的作用域。
 	ctx = WithOpenAIFinalGroupID(ctx, originalGroupID)
 	cache := &stubGatewayCache{}
 	svc := &OpenAIGatewayService{cache: cache}

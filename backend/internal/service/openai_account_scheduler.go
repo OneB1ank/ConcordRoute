@@ -22,9 +22,8 @@ const (
 	openAIAccountScheduleLayerPreviousResponse = "previous_response_id"
 	openAIAccountScheduleLayerSessionSticky    = "session_hash"
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
-	// Negative account IDs are never valid. This sentinel tells the legacy
-	// selector that the caller already attempted the sticky-cache lookup and
-	// degraded after an infrastructure error, avoiding a second Redis timeout.
+	// 账号 ID 不会为负；该哨兵表示调用方已尝试 sticky 缓存并因基础设施故障降级，
+	// 防止旧选择器再次访问 Redis 并重复超时。
 	openAIStickyLookupDegradedAccountID int64 = -1
 )
 
@@ -93,9 +92,8 @@ type OpenAIAccountScheduleDecision struct {
 	Layer             string
 	StickyPreviousHit bool
 	StickySessionHit  bool
-	// FinalGroupID is the group resolved for this scheduling attempt.  It is
-	// carried through the request context so later sticky/response bindings use
-	// the exact scope selected here instead of resolving the fallback chain again.
+	// FinalGroupID 是本次调度解析出的最终分组，后续 sticky/response 绑定直接复用该作用域，
+	// 避免再次解析回退链。
 	FinalGroupID        int64
 	CandidateCount      int
 	TopK                int
@@ -1665,10 +1663,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerForRouting(
 	groupID = resolvedGroupID
 	finalGroupID := derefGroupID(groupID)
 	if finalGroupID > 0 {
-		// Keep the resolved scope attached to the request context.  The pointer
-		// is intentionally an immutable scalar value, so retries and async
-		// response binding cannot observe a later fallback-chain change.
-		ctx = context.WithValue(ctx, ctxkey.OpenAIFinalGroupID, finalGroupID)
+		// 将已解析作用域固定在请求上下文，重试与异步绑定不会受后续回退链变更影响。
+		ctx = WithOpenAIFinalGroupID(ctx, finalGroupID)
 	}
 	if derefGroupID(groupID) != originalGroupID {
 		// 回退后的分组可能有不同渠道映射，必须重新解析账号层模型。

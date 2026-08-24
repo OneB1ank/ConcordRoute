@@ -45,11 +45,9 @@ type openAIWSPolicyEnforcingFrameConn struct {
 	onBlock     func(blocked *OpenAIFastBlockedError)
 }
 
-// openAIWSSerializedFrameConn enforces the one-writer-at-a-time contract of
-// coder/websocket. Passthrough has two possible upstream writers: the relay's
-// client-frame goroutine and the previous_response_not_found recovery callback
-// running from the upstream reader. Serializing here keeps a recovery retry
-// from interleaving with a client control frame.
+// openAIWSSerializedFrameConn 保证 coder/websocket 同一时刻只有一个写入方。
+// 透传路径的客户端帧协程与 previous_response_not_found 恢复回调都可能写上游，
+// 此处串行化可防止恢复重试与客户端控制帧交错。
 type openAIWSSerializedFrameConn struct {
 	inner   openaiwsv2.FrameConn
 	writeMu sync.Mutex
@@ -143,9 +141,8 @@ func (q *openAIWSTurnPayloadQueue) Peek() openAIWSTurnPayload {
 	return q.items[0]
 }
 
-// ReplaceCurrentRequest records the request that was actually accepted by the
-// upstream after an in-place turn recovery. This keeps usage/data-sharing
-// callbacks aligned with the retried payload instead of the rejected anchor.
+// ReplaceCurrentRequest 记录原地恢复后被上游实际接受的请求，
+// 使 usage 与数据共享回调对应重试载荷，而不是已被拒绝的续链锚点。
 func (q *openAIWSTurnPayloadQueue) ReplaceCurrentRequest(payload []byte) {
 	if q == nil {
 		return

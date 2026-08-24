@@ -58,10 +58,8 @@ type RelayExit struct {
 	WroteDownstream bool
 }
 
-// ErrDropDownstreamFrame tells Relay that the current upstream frame was
-// handled by the adapter and must not be forwarded to the client. The relay
-// remains active so the same turn can continue (for example after a bounded
-// in-place recovery retry).
+// ErrDropDownstreamFrame 表示当前上游帧已由适配器处理，不应继续转发给客户端。
+// 中继保持运行，使同一轮次可在受限原地恢复重试后继续。
 var ErrDropDownstreamFrame = errors.New("drop upstream frame before downstream write")
 
 type RelayOptions struct {

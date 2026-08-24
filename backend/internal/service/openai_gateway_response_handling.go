@@ -23,23 +23,25 @@ import (
 
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
-	usage            *OpenAIUsage
-	firstTokenMs     *int
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	searchCount      int
-	responseBody     []byte
+	usage                *OpenAIUsage
+	firstTokenMs         *int
+	responseID           string
+	responseBindingEvent string
+	imageCount           int
+	imageOutputSizes     []string
+	searchCount          int
+	responseBody         []byte
 }
 
 type openaiNonStreamingResult struct {
 	*OpenAIUsage
-	usage            *OpenAIUsage
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	searchCount      int
-	responseBody     []byte
+	usage                *OpenAIUsage
+	responseID           string
+	responseBindingEvent string
+	imageCount           int
+	imageOutputSizes     []string
+	searchCount          int
+	responseBody         []byte
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
@@ -234,6 +236,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	clientDisconnected := false // 客户端断开后继续 drain 上游以收集 usage
 	sawTerminalEvent := false
 	sawFailedEvent := false
+	successfulTerminalEvent := ""
+	upstreamTransportFailed := false
 	responsesSemanticOutputSeen := false
 	failedMessage := ""
 	var failedPayload []byte
@@ -324,14 +328,19 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	// 可能包含同一 call_id，重复统计会使附加费接近翻倍。
 	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResult {
+		responseBindingEvent := successfulTerminalEvent
+		if upstreamTransportFailed || clientDisconnected {
+			responseBindingEvent = ""
+		}
 		return &openaiStreamingResult{
-			usage:            usage,
-			firstTokenMs:     firstTokenMs,
-			responseID:       responseID,
-			imageCount:       imageCounter.Count(),
-			imageOutputSizes: imageCounter.Sizes(),
-			searchCount:      searchCounter,
-			responseBody:     cloneDataSharingRequestBody(restoreStagedCodexFingerprintResponsePayload(c, finalResponseBody)),
+			usage:                usage,
+			firstTokenMs:         firstTokenMs,
+			responseID:           responseID,
+			responseBindingEvent: responseBindingEvent,
+			imageCount:           imageCounter.Count(),
+			imageOutputSizes:     imageCounter.Sizes(),
+			searchCount:          searchCounter,
+			responseBody:         cloneDataSharingRequestBody(restoreStagedCodexFingerprintResponsePayload(c, finalResponseBody)),
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -381,6 +390,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if scanErr == nil {
 			return nil, nil, false
 		}
+		upstreamTransportFailed = true
 		if errors.Is(scanErr, errOpenAIFirstOutputScannerLimit) && !firstOutputProgressObserved {
 			logger.LegacyPrintf("service.openai_gateway", "SSE token exceeded guarded first-output limit: account=%d limit=%d error=%v", account.ID, openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance, scanErr)
 			failoverErr := s.newOpenAIStreamFailoverError(
@@ -454,6 +464,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// 初始上游 data 的 type 只解析一次：原始值保持终止事件的精确匹配，规范化值供后续分支复用。
 			if openAIStreamEventIsTerminalWithType(data, eventTypeRaw) {
 				sawTerminalEvent = true
+			}
+			if openAIStreamEventTypeIsTerminal(eventType) {
+				if openAIWSTerminalEventMayBind(eventType) {
+					successfulTerminalEvent = eventType
+				} else {
+					successfulTerminalEvent = ""
+				}
 			}
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
@@ -1319,13 +1336,14 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	return &openaiNonStreamingResult{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
-		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
-		searchCount:      countGrokNativeSearchCallsFromJSONBytes(body),
-		responseBody:     cloneDataSharingRequestBody(body),
+		OpenAIUsage:          usage,
+		usage:                usage,
+		responseID:           extractOpenAIResponseIDFromJSONBytes(body),
+		responseBindingEvent: openAIHTTPJSONResponseBindingEvent(body),
+		imageCount:           countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageOutputSizes:     collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		searchCount:          countGrokNativeSearchCallsFromJSONBytes(body),
+		responseBody:         cloneDataSharingRequestBody(body),
 	}, nil
 }
 
@@ -1348,6 +1366,7 @@ func bodyHasSSEFraming(body []byte) bool {
 
 func (s *OpenAIGatewayService) handleSSEToJSON(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
+	responseBindingEvent := openAIHTTPSSEBindingEvent(bodyText)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
 	usage := &OpenAIUsage{}
@@ -1430,13 +1449,14 @@ func (s *OpenAIGatewayService) handleSSEToJSON(ctx context.Context, resp *http.R
 	}
 
 	return &openaiNonStreamingResult{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
-		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
-		searchCount:      countGrokNativeSearchCallsFromSSEBody(bodyText),
-		responseBody:     cloneDataSharingRequestBody(body),
+		OpenAIUsage:          usage,
+		usage:                usage,
+		responseID:           extractOpenAIResponseIDFromJSONBytes(body),
+		responseBindingEvent: responseBindingEvent,
+		imageCount:           countOpenAIImageOutputsFromSSEBody(bodyText),
+		imageOutputSizes:     collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		searchCount:          countGrokNativeSearchCallsFromSSEBody(bodyText),
+		responseBody:         cloneDataSharingRequestBody(body),
 	}, nil
 }
 
@@ -1458,6 +1478,39 @@ func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {
 		return terminalType, terminalPayload, true
 	}
 	return "", nil, false
+}
+
+// openAIHTTPJSONResponseBindingEvent 仅把明确成功的 Responses JSON 终态转换为绑定事件。
+func openAIHTTPJSONResponseBindingEvent(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	eventType := strings.TrimSpace(gjson.GetBytes(body, "type").String())
+	if openAIStreamEventTypeIsTerminal(eventType) && !openAIWSTerminalEventMayBind(eventType) {
+		return ""
+	}
+	switch strings.TrimSpace(gjson.GetBytes(body, "status").String()) {
+	case "completed":
+		return "response.completed"
+	case "done":
+		return "response.done"
+	case "failed", "incomplete", "cancelled", "canceled":
+		return ""
+	default:
+		if openAIWSTerminalEventMayBind(eventType) {
+			return eventType
+		}
+		return ""
+	}
+}
+
+// openAIHTTPSSEBindingEvent 从完整 SSE 文档中提取可用于续链的成功终态。
+func openAIHTTPSSEBindingEvent(body string) string {
+	eventType, _, ok := extractOpenAISSETerminalEvent(body)
+	if !ok || !openAIWSTerminalEventMayBind(eventType) {
+		return ""
+	}
+	return eventType
 }
 
 func extractOpenAISSEErrorMessage(payload []byte) string {

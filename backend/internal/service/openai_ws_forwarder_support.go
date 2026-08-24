@@ -469,15 +469,11 @@ func getOpenAIGroupIDFromContext(c *gin.Context) int64 {
 	return *apiKey.GroupID
 }
 
-// resolveOpenAIResponseBindingGroupID returns the group that actually owns the
-// selected OpenAI account after Claude-Code-only fallback resolution. Response
-// bindings must use the same scope for both reads and writes; otherwise a
-// request selected from a fallback group writes its response ID into the API
-// key's original group and the next turn misses the binding.
+// resolveOpenAIResponseBindingGroupID 返回回退解析后实际承载所选 OpenAI 账号的分组。
+// 响应绑定读写必须使用同一作用域，否则回退分组产生的 response ID 会误写到原始分组，
+// 导致下一轮查找绑定失败。
 func (s *OpenAIGatewayService) resolveOpenAIResponseBindingGroupID(ctx context.Context, c *gin.Context) (int64, bool) {
-	// The scheduler records the final scope on the request context. Prefer it
-	// over re-reading the fallback chain so a concurrent group edit cannot move
-	// this response binding to a different namespace mid-request.
+	// 优先使用调度器写入请求上下文的最终作用域，避免并发修改分组时绑定命名空间漂移。
 	if finalGroupID, ok := OpenAIFinalGroupIDFromContext(ctx); ok {
 		return finalGroupID, true
 	}
@@ -530,10 +526,8 @@ func (s *OpenAIGatewayService) resolveOpenAIResponseBindingGroupID(ctx context.C
 	return *resolvedGroupID, true
 }
 
-// clearOpenAIPreviousResponseBindings invalidates both routing and connection
-// affinity after the upstream confirms that a response ID no longer exists.
-// The account binding is scoped to the final scheduler group, matching writes
-// performed after Claude-Code-only fallback resolution.
+// clearOpenAIPreviousResponseBindings 在上游确认 response ID 不存在后，
+// 同时清理路由与连接亲和性；账号绑定使用调度器最终分组，与回退后的写入作用域一致。
 func (s *OpenAIGatewayService) clearOpenAIPreviousResponseBindings(ctx context.Context, c *gin.Context, responseID string) error {
 	responseID = strings.TrimSpace(responseID)
 	if s == nil || responseID == "" {
@@ -544,8 +538,7 @@ func (s *OpenAIGatewayService) clearOpenAIPreviousResponseBindings(ctx context.C
 		return nil
 	}
 
-	// Connection affinity is process-local and not group-scoped, so clear it
-	// even when final group resolution fails.
+	// 连接亲和性属于进程本地且不按分组划分，即使最终分组解析失败也要清理。
 	store.DeleteResponseConn(responseID)
 	groupID, ok := s.resolveOpenAIResponseBindingGroupID(ctx, c)
 	if !ok {

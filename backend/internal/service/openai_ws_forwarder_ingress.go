@@ -51,10 +51,8 @@ func newOpenAIWSDownstreamWriteContext(controlCtx context.Context, hooks *OpenAI
 	return context.WithTimeout(writeParent, timeout)
 }
 
-// openAIWSResultMayBindResponseAccount restricts response affinity to an
-// explicitly successful upstream terminal event. A response id observed on a
-// failed, incomplete, cancelled, or transport-error turn is not a usable
-// continuation anchor and must not move subsequent requests to this account.
+// openAIWSResultMayBindResponseAccount 仅允许明确成功的上游终态建立响应亲和性。
+// 失败、未完成、取消或传输错误轮次中的 response ID 不是有效续链锚点。
 func openAIWSResultMayBindResponseAccount(result *OpenAIForwardResult) bool {
 	if result == nil || strings.TrimSpace(result.RequestID) == "" {
 		return false
@@ -63,8 +61,7 @@ func openAIWSResultMayBindResponseAccount(result *OpenAIForwardResult) bool {
 }
 
 func openAIWSTerminalEventMayBind(event string) bool {
-	// response.done is emitted by the WS/Realtime compatibility path and is
-	// treated as a successful terminal alias everywhere else in the gateway.
+	// response.done 由 WS/Realtime 兼容路径产生，在网关中统一视为成功终态别名。
 	switch strings.TrimSpace(event) {
 	case "response.completed", "response.done":
 		return true
@@ -73,13 +70,8 @@ func openAIWSTerminalEventMayBind(event string) bool {
 	}
 }
 
-func openAIWSTurnMayBindResponseAccount(capture OpenAIWSTurnCapture) bool {
-	return capture.Err == nil && openAIWSResultMayBindResponseAccount(capture.Result)
-}
-
-// withOpenAIWSIngressResponseBinding wraps passthrough callbacks so completed
-// turns publish the same response->account binding as HTTP, pooled WSv2 and
-// HTTP-bridge ingress modes. The caller callback remains intact.
+// withOpenAIWSIngressResponseBinding 包装透传回调，使成功轮次与 HTTP、池化 WSv2
+// 及 HTTP 桥接入口写入一致的 response→account 绑定，同时保留调用方原回调。
 func (s *OpenAIGatewayService) withOpenAIWSIngressResponseBinding(
 	ctx context.Context,
 	c *gin.Context,
@@ -92,7 +84,7 @@ func (s *OpenAIGatewayService) withOpenAIWSIngressResponseBinding(
 	}
 	downstreamAfterTurn := wrapped.AfterTurn
 	wrapped.AfterTurn = func(capture OpenAIWSTurnCapture) {
-		if openAIWSTurnMayBindResponseAccount(capture) {
+		if capture.Err == nil && openAIWSResultMayBindResponseAccount(capture.Result) {
 			responseID := strings.TrimSpace(capture.Result.RequestID)
 			s.bindHTTPResponseAccount(ctx, c, account, responseID)
 			s.bindOpenAIWSResponseSessionOwner(ctx, c, responseID)

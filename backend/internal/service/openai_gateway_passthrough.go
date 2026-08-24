@@ -276,6 +276,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	var usage *OpenAIUsage
 	var firstTokenMs *int
 	responseID := ""
+	responseBindingEvent := ""
 	imageCount := 0
 	var imageOutputSizes []string
 	var responseBody []byte
@@ -287,6 +288,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		usage = result.usage
 		firstTokenMs = result.firstTokenMs
 		responseID = strings.TrimSpace(result.responseID)
+		responseBindingEvent = result.responseBindingEvent
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 		responseBody = result.responseBody
@@ -297,11 +299,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		usage = result.usage
 		responseID = strings.TrimSpace(result.responseID)
+		responseBindingEvent = result.responseBindingEvent
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 		responseBody = result.responseBody
 	}
-	s.bindHTTPResponseAccount(ctx, c, account, responseID)
+	if openAIWSTerminalEventMayBind(responseBindingEvent) {
+		s.bindHTTPResponseAccount(ctx, c, account, responseID)
+	}
 
 	s.ObserveCodexUsageHeaders(ctx, account, resp.Header)
 
@@ -826,21 +831,23 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 }
 
 type openaiStreamingResultPassthrough struct {
-	usage            *OpenAIUsage
-	firstTokenMs     *int
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	responseBody     []byte
+	usage                *OpenAIUsage
+	firstTokenMs         *int
+	responseID           string
+	responseBindingEvent string
+	imageCount           int
+	imageOutputSizes     []string
+	responseBody         []byte
 }
 
 type openaiNonStreamingResultPassthrough struct {
 	*OpenAIUsage
-	usage            *OpenAIUsage
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
-	responseBody     []byte
+	usage                *OpenAIUsage
+	responseID           string
+	responseBindingEvent string
+	imageCount           int
+	imageOutputSizes     []string
+	responseBody         []byte
 }
 
 func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
@@ -1383,6 +1390,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	sawDone := false
 	sawTerminalEvent := false
 	sawFailedEvent := false
+	successfulTerminalEvent := ""
+	upstreamTransportFailed := false
 	semanticOutputSeen := false
 	failedMessage := ""
 	var failedPayload []byte
@@ -1428,13 +1437,18 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
+		responseBindingEvent := successfulTerminalEvent
+		if upstreamTransportFailed || clientDisconnected {
+			responseBindingEvent = ""
+		}
 		return &openaiStreamingResultPassthrough{
-			usage:            usage,
-			firstTokenMs:     firstTokenMs,
-			responseID:       responseID,
-			imageCount:       imageCounter.Count(),
-			imageOutputSizes: imageCounter.Sizes(),
-			responseBody:     cloneDataSharingRequestBody(restoreStagedCodexFingerprintResponsePayload(c, finalResponseBody)),
+			usage:                usage,
+			firstTokenMs:         firstTokenMs,
+			responseID:           responseID,
+			responseBindingEvent: responseBindingEvent,
+			imageCount:           imageCounter.Count(),
+			imageOutputSizes:     imageCounter.Sizes(),
+			responseBody:         cloneDataSharingRequestBody(restoreStagedCodexFingerprintResponsePayload(c, finalResponseBody)),
 		}
 	}
 
@@ -1474,6 +1488,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
+			if openAIStreamEventTypeIsTerminal(eventType) {
+				if openAIWSTerminalEventMayBind(eventType) {
+					successfulTerminalEvent = eventType
+				} else {
+					successfulTerminalEvent = ""
+				}
+			}
 			if eventType == "response.failed" {
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
 				failedPayload = append(failedPayload[:0], dataBytes...)
@@ -1626,6 +1647,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 	if err := documentScanner.Err(); err != nil {
+		upstreamTransportFailed = true
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 			return resultWithUsage(), nil
@@ -1733,12 +1755,13 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		c.Data(resp.StatusCode, contentType, body)
 	}
 	return &openaiNonStreamingResultPassthrough{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
-		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
-		responseBody:     cloneDataSharingRequestBody(body),
+		OpenAIUsage:          usage,
+		usage:                usage,
+		responseID:           extractOpenAIResponseIDFromJSONBytes(body),
+		responseBindingEvent: openAIHTTPJSONResponseBindingEvent(body),
+		imageCount:           countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageOutputSizes:     collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		responseBody:         cloneDataSharingRequestBody(body),
 	}, nil
 }
 
@@ -1748,6 +1771,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 // rewrite model fields back to the original requested model.
 func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
 	bodyText := string(body)
+	responseBindingEvent := openAIHTTPSSEBindingEvent(bodyText)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
 	usage := &OpenAIUsage{}
@@ -1823,12 +1847,13 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(ctx context.Context, r
 	}
 
 	return &openaiNonStreamingResultPassthrough{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
-		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
-		responseBody:     cloneDataSharingRequestBody(body),
+		OpenAIUsage:          usage,
+		usage:                usage,
+		responseID:           extractOpenAIResponseIDFromJSONBytes(body),
+		responseBindingEvent: responseBindingEvent,
+		imageCount:           countOpenAIImageOutputsFromSSEBody(bodyText),
+		imageOutputSizes:     collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		responseBody:         cloneDataSharingRequestBody(body),
 	}, nil
 }
 
