@@ -162,15 +162,6 @@ func (s *OpenAIGatewayService) applyOpenAIAccountUpstreamErrorInternal(
 		}
 		return decision
 	}
-	preferredModel := ""
-	if len(canonicalModel) > 0 {
-		preferredModel = canonicalModel[0]
-	}
-	if statusCode == http.StatusTooManyRequests && s.codexQuotaOverdraft != nil &&
-		s.codexQuotaOverdraft.HandleQuota429(stateCtx, account, headers, responseBody, preferredModel) {
-		// 明确的订阅额度 429 交给账号级透支状态机；普通瞬时 429 仍走既有路径。
-		return decision
-	}
 	if s.rateLimitService != nil && len(canonicalModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, canonicalModel[0], statusCode, responseBody) {
 		decision.StopScheduling = true
 		return decision
@@ -364,12 +355,6 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlockIfReason(accountID int
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
-	return s.isOpenAIAccountRuntimeBlockedExceptReason(account, "")
-}
-
-// isOpenAIAccountRuntimeBlockedExceptReason 为单次业务复验忽略指定阻断原因，
-// 不修改共享运行时状态，且任意其他活跃原因仍然优先生效。
-func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlockedExceptReason(account *Account, ignoredReason string) bool {
 	if s == nil || !isOpenAIAccount(account) {
 		return false
 	}
@@ -396,13 +381,7 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlockedExceptReason(account
 		cooldownUntil := latestOpenAIAccountRuntimeBlockUntil(reasons)
 		s.openaiAccountRuntimeBlockReasons.Store(account.ID, reasons)
 		s.openaiAccountRuntimeBlockUntil.Store(account.ID, cooldownUntil)
-		ignoredReason = strings.TrimSpace(ignoredReason)
-		for reason, until := range reasons {
-			if reason != ignoredReason && now.Before(until) {
-				return true
-			}
-		}
-		return false
+		return true
 	}
 	cooldownUntil, ok := value.(time.Time)
 	if !ok || cooldownUntil.IsZero() {
@@ -498,15 +477,11 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 	return state.isBlocked(account.ID, openAIAccountModelTransientModel(canonicalModel), time.Now())
 }
 
-func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(ctx context.Context, account *Account, requestedModel string) bool {
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(_ context.Context, account *Account, requestedModel string) bool {
 	if s == nil {
 		return false
 	}
-	ignoredReason := ""
-	if codexQuotaOverdraftSchedulingEnabled(ctx) && codexQuotaOverdraftProbationEligible(account, time.Now().UTC()) {
-		ignoredReason = codexQuotaOverdraftPauseSource
-	}
-	return s.isOpenAIAccountRuntimeBlockedExceptReason(account, ignoredReason) ||
+	return s.isOpenAIAccountRuntimeBlocked(account) ||
 		s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel)
 }
 

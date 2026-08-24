@@ -820,7 +820,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
 	}
 	firstClientMessage = updatedFirst
-	firstClientMessage = s.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, firstClientMessage)
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter
@@ -1103,9 +1102,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				policyCtx = openAIWSFastModePolicyContext(ctx, hooks, turnNo)
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(policyCtx, account, model, payload)
-			if policyErr == nil && blocked == nil && isResponseCreate {
-				out = s.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, out)
-			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用
 			// filter 处理后的 payload，与首帧 policy-after-extract 语义

@@ -8,10 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TokenFlux/TokenRouter/internal/model"
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/errors"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
-	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 )
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
@@ -295,25 +293,20 @@ func (s *OpenAIOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 }
 
 func (s *OpenAIOAuthService) resolveChatGPTOAuthTokenRequestOptions(ctx context.Context, routerID int64, account *Account) []OpenAIOAuthTokenRequestOptions {
-	if s == nil {
+	if s == nil || routerID <= 0 || s.tlsFPRouterReader == nil {
 		return nil
 	}
-	var router *model.TLSFingerprintRouter
-	if routerID > 0 && s.tlsFPRouterReader != nil {
-		router = s.tlsFPRouterReader.GetRuntimeRouter(routerID)
-		if router != nil && !router.Enabled {
-			router = nil
-		}
+	router := s.tlsFPRouterReader.GetRuntimeRouter(routerID)
+	if router == nil || !router.Enabled {
+		return nil
 	}
 
-	tokenUA := ""
-	if router != nil {
-		tokenUA = strings.TrimSpace(router.ChatGPTOAuthTokenUserAgent)
+	tokenUA := strings.TrimSpace(router.ChatGPTOAuthTokenUserAgent)
+	tokenProfileID := router.ChatGPTOAuthTokenTLSFingerprintProfileID
+	if tokenUA == "" && tokenProfileID == nil {
+		return nil
 	}
-	if tokenUA == "" && account != nil {
-		tokenUA = strings.TrimSpace(account.GetOpenAIUserAgent())
-	}
-	if tokenUA == "" && s.settingService != nil {
+	if tokenUA == "" && tokenProfileID != nil && s.settingService != nil {
 		tokenUA = strings.TrimSpace(s.settingService.GetOpenAICodexUserAgent(ctx))
 	}
 	if tokenUA != "" {
@@ -326,47 +319,15 @@ func (s *OpenAIOAuthService) resolveChatGPTOAuthTokenRequestOptions(ctx context.
 		option.AccountID = account.ID
 		option.AccountConcurrency = account.Concurrency
 	}
-	option.TLSProfile = resolveOpenAIAuthTLSProfile(account, routerID, router, option.UserAgent, s.tlsFPRouterReader, s.tlsFPProfileResolver)
+	if tokenProfileID != nil && s.tlsFPProfileResolver != nil {
+		if profile, ok := s.tlsFPProfileResolver.ResolveTokenTLSProfileByID(*tokenProfileID); ok {
+			option.TLSProfile = profile
+		}
+	}
 	if option.UserAgent == "" && option.TLSProfile == nil {
 		return nil
 	}
 	return []OpenAIOAuthTokenRequestOptions{option}
-}
-
-// resolveOpenAIAuthTLSProfile 统一 auth.openai.com 相关请求的 TLS 选择顺序：
-// auth 专用模板 > 同一路由器的 UA 规则 > 账号普通 TLS 模板 > 标准 TLS。
-func resolveOpenAIAuthTLSProfile(
-	account *Account,
-	routerID int64,
-	router *model.TLSFingerprintRouter,
-	userAgent string,
-	routerReader OpenAIOAuthTLSRouterReader,
-	profileResolver OpenAIOAuthTokenProfileResolver,
-) *tlsfingerprint.Profile {
-	if profileResolver == nil {
-		return nil
-	}
-	if router != nil && router.ChatGPTOAuthTokenTLSFingerprintProfileID != nil {
-		if profile, ok := profileResolver.ResolveTokenTLSProfileByID(*router.ChatGPTOAuthTokenTLSFingerprintProfileID); ok {
-			return profile
-		}
-	}
-	if matcher, ok := routerReader.(OpenAIOAuthTLSRouterMatcher); ok && routerID > 0 {
-		match := matcher.MatchUserAgent(routerID, userAgent)
-		if match.Matched {
-			if accountResolver, supported := profileResolver.(OpenAIOAuthAccountProfileResolver); supported && account != nil {
-				if profile, resolved := accountResolver.ResolveRoutableTLSProfileByID(account, match.TLSFingerprintProfileID); resolved {
-					return profile
-				}
-			} else if profile, resolved := profileResolver.ResolveTokenTLSProfileByID(match.TLSFingerprintProfileID); resolved {
-				return profile
-			}
-		}
-	}
-	if accountResolver, ok := profileResolver.(OpenAIOAuthAccountProfileResolver); ok && account != nil {
-		return accountResolver.ResolveTLSProfile(account)
-	}
-	return nil
 }
 
 func valueFromInt64Ptr(value *int64) int64 {

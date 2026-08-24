@@ -4340,7 +4340,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
+const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexQuotaOverdraftEnabled = ref(false)
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
@@ -4732,8 +4732,9 @@ const applyOpenAIOAuthImportDefaultsToForm = () => {
     defaultFingerprintMode === 'off' ||
     defaultFingerprintMode === 'device' ||
     defaultFingerprintMode === 'session' ||
+    defaultFingerprintMode === 'cockpit' ||
     defaultFingerprintMode === 'full'
-  ) ? defaultFingerprintMode : 'cockpit'
+  ) ? defaultFingerprintMode : 'off'
   codexQuotaOverdraftEnabled.value = extra.codex_quota_overdraft_enabled === true
   if (extra.openai_passthrough === true || extra.openai_oauth_passthrough === true) {
     openaiPassthroughEnabled.value = true
@@ -5602,7 +5603,7 @@ const resetForm = () => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
-  codexFingerprintMode.value = 'cockpit'
+  codexFingerprintMode.value = 'off'
   codexQuotaOverdraftEnabled.value = false
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -5776,8 +5777,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.tls_fingerprint_router_id
   }
 
-  // Cockpit 是运行时默认模式，不重复写入；其它模式显式保存以覆盖默认值。
-  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'cockpit') {
+  // 默认关闭时不写入；其它模式必须显式保存，避免隐藏的身份改写。
+  if (accountCategory.value === 'oauth-based' && codexFingerprintMode.value !== 'off') {
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode

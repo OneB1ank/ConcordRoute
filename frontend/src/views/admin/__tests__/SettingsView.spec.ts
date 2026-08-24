@@ -2051,6 +2051,35 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("defaults a missing OpenAI OAuth fingerprint setting to off", async () => {
+    getOpenAIOAuthImportDefaults.mockResolvedValueOnce({
+      credentials: { model_whitelist: ["gpt-5.2"] },
+      extra: {},
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const mode = wrapper.get(
+      '[data-testid="openai-oauth-default-codex-fingerprint-mode"]',
+    );
+    expect((mode.element as HTMLSelectElement).value).toBe("off");
+
+    const defaultsCard = wrapper.get("#openai-oauth-import-defaults");
+    const saveButton = defaultsCard
+      .findAll("button")
+      .find((node) => node.text() === "common.save");
+    expect(saveButton).toBeDefined();
+    await saveButton?.trigger("click");
+    await flushPromises();
+
+    expect(updateOpenAIOAuthImportDefaults).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extra: expect.objectContaining({ codex_fingerprint_mode: "off" }),
+      }),
+    );
+  });
+
   it("loads and submits the OpenAI OAuth import default native V2 compact mode", async () => {
     getOpenAIOAuthImportDefaults.mockResolvedValueOnce({
       credentials: { model_whitelist: ["gpt-5.2"] },

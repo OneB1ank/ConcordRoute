@@ -352,13 +352,15 @@ func (s *CodexInviteResetService) prepareAccount(ctx context.Context, accountID 
 	}
 
 	router := s.resolveRuntimeRouter(account)
+	userAgent := s.resolveUserAgent(account, router)
+	userAgent, _ = CodexAuthIdentityForUserAgent(userAgent)
 
 	return &codexInviteResetAccountContext{
 		account:    account,
 		token:      token,
 		proxyURL:   proxyURL,
-		userAgent:  s.resolveUserAgent(router),
-		tlsProfile: s.resolveTLSProfile(account, router),
+		userAgent:  userAgent,
+		tlsProfile: s.resolveTLSProfile(account, router, userAgent),
 	}, nil
 }
 
@@ -373,17 +375,22 @@ func (s *CodexInviteResetService) resolveRuntimeRouter(account *Account) *model.
 	return router
 }
 
-func (s *CodexInviteResetService) resolveUserAgent(router *model.TLSFingerprintRouter) string {
+func (s *CodexInviteResetService) resolveUserAgent(account *Account, router *model.TLSFingerprintRouter) string {
 	if router != nil {
 		// 邀请重置专用配置优先于全局规范 UA，且不复用 token 身份字段。
 		if userAgent := strings.TrimSpace(router.CodexInviteResetUserAgent); userAgent != "" {
 			return userAgent
 		}
 	}
+	if account != nil {
+		if userAgent := strings.TrimSpace(account.GetOpenAIUserAgent()); userAgent != "" {
+			return userAgent
+		}
+	}
 	return CodexCanonicalUserAgent()
 }
 
-func (s *CodexInviteResetService) resolveTLSProfile(account *Account, router *model.TLSFingerprintRouter) *tlsfingerprint.Profile {
+func (s *CodexInviteResetService) resolveTLSProfile(account *Account, router *model.TLSFingerprintRouter, _ string) *tlsfingerprint.Profile {
 	if s == nil || s.tlsFPProfileService == nil {
 		return nil
 	}
@@ -428,15 +435,17 @@ func (s *CodexInviteResetService) postJSON(ctx context.Context, accountCtx *code
 
 func (s *CodexInviteResetService) applyHeaders(req *http.Request, accountCtx *codexInviteResetAccountContext) {
 	*req = *req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	userAgent, originator := CodexAuthIdentityForUserAgent(accountCtx.userAgent)
 	req.Host = "chatgpt.com"
 	req.Header.Set("Authorization", "Bearer "+accountCtx.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OpenAI-Beta", openaiQuotaCodexBeta)
 	req.Header.Set("OAI-Language", "zh-CN")
-	req.Header.Set("originator", "Codex Desktop")
+	req.Header.Set("originator", originator)
+	req.Header.Del("version")
 	req.Header.Set("X-OpenAI-Attach-Auth", "1")
 	req.Header.Set("X-OpenAI-Attach-Integrity-State", "1")
-	req.Header.Set("User-Agent", accountCtx.userAgent)
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("sec-fetch-site", "none")
 	req.Header.Set("sec-fetch-mode", "no-cors")
 	req.Header.Set("sec-fetch-dest", "empty")
@@ -449,7 +458,13 @@ func (s *CodexInviteResetService) doJSON(req *http.Request, accountCtx *codexInv
 		return nil, infraerrors.InternalServer("HTTP_UPSTREAM_NOT_CONFIGURED", "http upstream is not configured")
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-	resp, err := s.httpUpstream.DoWithTLS(req, accountCtx.proxyURL, accountCtx.account.ID, accountCtx.account.Concurrency, accountCtx.tlsProfile)
+	var resp *http.Response
+	var err error
+	if accountCtx.tlsProfile != nil {
+		resp, err = s.httpUpstream.DoWithTLS(req, accountCtx.proxyURL, accountCtx.account.ID, accountCtx.account.Concurrency, accountCtx.tlsProfile)
+	} else {
+		resp, err = s.httpUpstream.Do(req, accountCtx.proxyURL, accountCtx.account.ID, accountCtx.account.Concurrency)
+	}
 	if err != nil {
 		return nil, err
 	}

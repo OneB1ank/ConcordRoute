@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TokenFlux/TokenRouter/internal/model"
-	openaipkg "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/qoder"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
@@ -56,56 +54,6 @@ func (r *accountUsageCodexProbeRepo) ClearError(_ context.Context, id int64) err
 		r.clearErrorCh <- id
 	}
 	return nil
-}
-
-type accountUsageHTTPUpstreamStub struct {
-	tlsProfile *tlsfingerprint.Profile
-	req        *http.Request
-	proxyURL   string
-	accountID  int64
-}
-
-type accountUsageIdentityCacheSpy struct {
-	getFingerprintCalls int
-	fingerprint         *Fingerprint
-}
-
-func (s *accountUsageIdentityCacheSpy) GetFingerprint(_ context.Context, _ int64) (*Fingerprint, error) {
-	s.getFingerprintCalls++
-	return s.fingerprint, nil
-}
-
-func (s *accountUsageIdentityCacheSpy) SetFingerprint(_ context.Context, _ int64, _ *Fingerprint) error {
-	return nil
-}
-
-func (s *accountUsageIdentityCacheSpy) GetMaskedSessionID(_ context.Context, _ int64) (string, error) {
-	return "", nil
-}
-
-func (s *accountUsageIdentityCacheSpy) SetMaskedSessionID(_ context.Context, _ int64, _ string) error {
-	return nil
-}
-
-func (s *accountUsageHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return s.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
-}
-
-func (s *accountUsageHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
-	s.req = req
-	s.proxyURL = proxyURL
-	s.accountID = accountID
-	s.tlsProfile = profile
-	headers := make(http.Header)
-	headers.Set("x-codex-primary-used-percent", "7")
-	headers.Set("x-codex-primary-window-minutes", "10080")
-	headers.Set("x-codex-secondary-used-percent", "3")
-	headers.Set("x-codex-secondary-window-minutes", "300")
-	return &http.Response{
-		StatusCode: http.StatusTooManyRequests,
-		Header:     headers,
-		Body:       io.NopCloser(strings.NewReader("")),
-	}, nil
 }
 
 type qoderUsageHTTPUpstreamStub struct {
@@ -1136,7 +1084,7 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 		t.Fatal("expected missing 5h snapshot to require refresh")
 	}
 
-	staleAt := now.Add(-(openAIProbeCacheTTL + time.Minute)).Format(time.RFC3339)
+	staleAt := now.Add(-(openAIUsageQueryCacheTTL + time.Minute)).Format(time.RFC3339)
 	if !shouldRefreshOpenAICodexSnapshot(&Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
@@ -1149,298 +1097,78 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 	}
 }
 
-func TestAccountUsageService_ShouldProbeOpenAICodexSnapshot_ForceBypassesCache(t *testing.T) {
+func TestAccountUsageService_ShouldQueryOpenAICodexUsage_ForceBypassesCache(t *testing.T) {
 	t.Parallel()
 
 	svc := &AccountUsageService{cache: NewUsageCache()}
 	now := time.Now()
 	accountID := int64(123)
 
-	if !svc.shouldProbeOpenAICodexSnapshot(accountID, now) {
-		t.Fatal("首次探测应该写入缓存并允许执行")
+	if !svc.shouldQueryOpenAICodexUsage(accountID, now) {
+		t.Fatal("首次元数据查询应该写入缓存并允许执行")
 	}
-	if svc.shouldProbeOpenAICodexSnapshot(accountID, now.Add(time.Minute)) {
-		t.Fatal("缓存有效期内的普通探测应该被跳过")
+	if svc.shouldQueryOpenAICodexUsage(accountID, now.Add(time.Minute)) {
+		t.Fatal("缓存有效期内的普通元数据查询应该被跳过")
 	}
-	if !svc.shouldProbeOpenAICodexSnapshot(accountID, now.Add(2*time.Minute), true) {
+	if !svc.shouldQueryOpenAICodexUsage(accountID, now.Add(2*time.Minute), true) {
 		t.Fatal("强制刷新应该绕过探测缓存")
 	}
 }
 
-func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesHTTPUpstreamTLSProfile(t *testing.T) {
-	t.Parallel()
-
-	upstream := &accountUsageHTTPUpstreamStub{}
-	svc := &AccountUsageService{
-		httpUpstream:        upstream,
-		tlsFPProfileService: &TLSFingerprintProfileService{},
-	}
+func TestAccountUsageService_GetOpenAIUsageUsesWhamMetadataOnly(t *testing.T) {
 	account := &Account{
 		ID:          456,
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
-		Concurrency: 9,
-		Credentials: map[string]any{"access_token": "token"},
-		Extra:       map[string]any{"enable_tls_fingerprint": true},
-	}
-
-	updates, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-	if err != nil {
-		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
-	}
-	if len(updates) == 0 {
-		t.Fatal("expected codex usage updates")
-	}
-	if upstream.tlsProfile == nil {
-		t.Fatal("expected non-nil TLS profile")
-	}
-	if upstream.req == nil || HTTPUpstreamProfileFromContext(upstream.req.Context()) != HTTPUpstreamProfileOpenAI {
-		t.Fatal("expected OpenAI upstream profile on probe request")
-	}
-	if upstream.accountID != account.ID {
-		t.Fatalf("accountID = %d, want %d", upstream.accountID, account.ID)
-	}
-	body, err := io.ReadAll(upstream.req.Body)
-	if err != nil {
-		t.Fatalf("read probe request body: %v", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("unmarshal probe request body: %v", err)
-	}
-	if got := payload["model"]; got != openaipkg.CodexUsageProbeModel {
-		t.Fatalf("probe model = %v, want %s", got, openaipkg.CodexUsageProbeModel)
-	}
-}
-
-func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesFullCockpitIdentity(t *testing.T) {
-	upstream := &accountUsageHTTPUpstreamStub{}
-	svc := &AccountUsageService{httpUpstream: upstream}
-	account := newTestOAuthAccount(460, map[string]any{
-		codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
-	})
-	account.Concurrency = 1
-	account.Credentials = map[string]any{"access_token": "token"}
-
-	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-	require.NoError(t, err)
-	require.NotNil(t, upstream.req)
-
-	body, err := io.ReadAll(upstream.req.Body)
-	require.NoError(t, err)
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(body, &payload))
-	metadata, ok := payload["client_metadata"].(map[string]any)
-	require.True(t, ok)
-
-	require.Equal(t, upstream.req.Header.Get("x-codex-installation-id"), metadata["x-codex-installation-id"])
-	require.Equal(t, upstream.req.Header.Get("session-id"), metadata["session_id"])
-	require.Equal(t, upstream.req.Header.Get("thread-id"), metadata["thread_id"])
-	require.Equal(t, upstream.req.Header.Get("x-codex-window-id"), metadata["x-codex-window-id"])
-	require.Equal(t, upstream.req.Header.Get("conversation_id"), payload["prompt_cache_key"])
-	require.NotEmpty(t, metadata["turn_id"])
-	require.Contains(t, upstream.req.Header.Get("x-codex-turn-metadata"), metadata["turn_id"])
-}
-
-func TestAccountUsageService_ProbeOpenAICodexSnapshotUsesTLSRouterProfile(t *testing.T) {
-	const accountUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
-	routedUA := resolveCodexOutboundIdentity(accountUA).userAgent
-	upstream := &accountUsageHTTPUpstreamStub{}
-	profileService := &TLSFingerprintProfileService{
-		localCache: map[int64]*model.TLSFingerprintProfile{
-			77: {ID: 77, Name: "macOS Codex routed", ALPNProtocols: []string{"h2", "http/1.1"}},
-		},
-	}
-	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
-		ID:      9,
-		Name:    "Codex devices",
-		Enabled: true,
-		Rules: []model.TLSFingerprintRouterRule{{
-			Name:                    "macOS Codex",
-			Enabled:                 true,
-			MatchType:               model.TLSRouterMatchExact,
-			Pattern:                 routedUA,
-			TLSFingerprintProfileID: 77,
-		}},
-	})
-	gateway := &OpenAIGatewayService{
-		tlsFPProfileService: profileService,
-		tlsFPRouterService:  routerService,
-	}
-	svc := &AccountUsageService{
-		httpUpstream:         upstream,
-		tlsFPProfileService:  profileService,
-		openAIGatewayService: gateway,
-	}
-	account := &Account{
-		ID:          457,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Concurrency: 2,
-		Credentials: map[string]any{"access_token": "token", "user_agent": accountUA},
-		Extra: map[string]any{
-			"enable_tls_fingerprint":    true,
-			"tls_fingerprint_router_id": int64(9),
-		},
-	}
-
-	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-	if err != nil {
-		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
-	}
-	if upstream.tlsProfile == nil || upstream.tlsProfile.Name != "macOS Codex routed" {
-		t.Fatalf("TLS profile = %#v, want routed macOS profile", upstream.tlsProfile)
-	}
-}
-
-func TestAccountUsageService_ProbeOpenAICodexSnapshotReusesLatestNormalRequestIdentity(t *testing.T) {
-	const normalRequestUA = "codex-tui/0.145.0 (Mac OS 15.6; arm64) Apple_Terminal"
-	proxyID := int64(8010)
-	upstream := &accountUsageHTTPUpstreamStub{}
-	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
-		88: {ID: 88, Name: "normal request profile", ALPNProtocols: []string{"h2", "http/1.1"}},
-	}}
-	match := TLSFingerprintRouterMatchResult{
-		Matched:                 true,
-		RouterID:                10,
-		RuleName:                "latest normal request",
-		TLSFingerprintProfileID: 88,
-		UpstreamUserAgent:       normalRequestUA,
-	}
-	gateway := &OpenAIGatewayService{tlsFPProfileService: profileService}
-	account := &Account{
-		ID:          459,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Concurrency: 3,
+		Status:      StatusActive,
+		Schedulable: true,
 		Credentials: map[string]any{
-			"access_token": "token",
-			"user_agent":   "codex-tui/0.100.0 (Mac OS 14.0; arm64) Apple_Terminal",
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-account",
 		},
-		Extra: map[string]any{
-			"enable_tls_fingerprint":    true,
-			"tls_fingerprint_router_id": int64(10),
-		},
-		ProxyID: &proxyID,
-		Proxy:   &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
+		Extra: map[string]any{},
 	}
-	gateway.rememberOpenAIOutboundIdentity(account, normalRequestUA, match)
-	svc := &AccountUsageService{
-		httpUpstream:         upstream,
-		tlsFPProfileService:  profileService,
-		openAIGatewayService: gateway,
-	}
-
-	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-
-	require.NoError(t, err)
-	require.NotNil(t, upstream.req)
-	require.Equal(t, normalRequestUA, upstream.req.Header.Get("User-Agent"))
-	identity := resolveCodexOutboundIdentity(normalRequestUA)
-	require.Equal(t, identity.originator, upstream.req.Header.Get("Originator"))
-	require.Equal(t, identity.version, upstream.req.Header.Get("Version"))
-	require.Equal(t, account.Proxy.URL(), upstream.proxyURL)
-	require.NotNil(t, upstream.tlsProfile)
-	require.Equal(t, "normal request profile", upstream.tlsProfile.Name)
-}
-
-func TestAccountUsageService_ProbeOpenAICodexSnapshotIgnoresClaudeIdentityCacheUA(t *testing.T) {
-	t.Parallel()
-
-	upstream := &accountUsageHTTPUpstreamStub{}
-	identityCache := &accountUsageIdentityCacheSpy{fingerprint: &Fingerprint{
-		UserAgent: "claude-cli/2.1.220 (external, cli)",
+	upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
+		codexInviteResetJSONResponse(`{
+			"rate_limit": {
+				"primary_window": {"used_percent": 23, "limit_window_seconds": 18000, "reset_after_seconds": 900},
+				"secondary_window": {"used_percent": 41, "limit_window_seconds": 604800, "reset_after_seconds": 86400}
+			}
+		}`),
+		codexInviteResetJSONResponse(`{"credits":[]}`),
 	}}
-	const accountUA = "codex-tui/9.9.9 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 9.9.9)"
-	expectedIdentity := resolveCodexOutboundIdentity(accountUA)
+	quotaService := NewOpenAIQuotaService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, nil, nil)
+	repo := &accountUsageCodexProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}},
+		updateExtraCh:         make(chan map[string]any, 1),
+	}
 	svc := &AccountUsageService{
-		httpUpstream:  upstream,
-		identityCache: identityCache,
-	}
-	account := &Account{
-		ID:       457,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-		Credentials: map[string]any{
-			"access_token": "token",
-			"user_agent":   accountUA,
-		},
+		accountRepo:        repo,
+		openAIQuotaService: quotaService,
+		cache:              NewUsageCache(),
 	}
 
-	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-	if err != nil {
-		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
+	usage, err := svc.getOpenAIUsage(context.Background(), account, true)
+	require.NoError(t, err)
+	require.NotNil(t, usage.FiveHour)
+	require.NotNil(t, usage.SevenDay)
+	require.Equal(t, 23.0, usage.FiveHour.Utilization)
+	require.Equal(t, 41.0, usage.SevenDay.Utilization)
+	require.Len(t, upstream.requests, 2)
+	for _, req := range upstream.requests {
+		require.NotContains(t, req.URL.Path, "/responses")
 	}
-	if identityCache.getFingerprintCalls != 0 {
-		t.Fatalf("Claude identity cache reads = %d, want 0", identityCache.getFingerprintCalls)
-	}
-	if upstream.req == nil {
-		t.Fatal("expected upstream request")
-	}
-	if got := upstream.req.Header.Get("User-Agent"); got != expectedIdentity.userAgent {
-		t.Fatalf("User-Agent = %q, want %q", got, expectedIdentity.userAgent)
-	}
-	if got := upstream.req.Header.Get("Originator"); got != expectedIdentity.originator {
-		t.Fatalf("Originator = %q, want %q", got, expectedIdentity.originator)
-	}
-	if got := upstream.req.Header.Get("Version"); got != expectedIdentity.version {
-		t.Fatalf("Version = %q, want %q", got, expectedIdentity.version)
+	require.Equal(t, "/backend-api/wham/usage", upstream.requests[0].URL.Path)
+
+	select {
+	case updates := <-repo.updateExtraCh:
+		require.Equal(t, 23.0, updates["codex_5h_used_percent"])
+		require.Equal(t, 41.0, updates["codex_7d_used_percent"])
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected passive codex usage snapshot persistence")
 	}
 }
 
-func TestAccountUsageService_ProbeOpenAICodexSnapshotConfiguredProxyMissingFailsClosed(t *testing.T) {
-	t.Parallel()
-
-	upstream := &accountUsageHTTPUpstreamStub{}
-	proxyID := int64(8001)
-	svc := &AccountUsageService{httpUpstream: upstream}
-	account := &Account{
-		ID:          458,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		ProxyID:     &proxyID,
-		Credentials: map[string]any{"access_token": "token"},
-	}
-
-	_, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-	if err != nil {
-		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
-	}
-	if upstream.proxyURL != unavailableAccountProxyURL {
-		t.Fatalf("proxyURL = %q, want fail-closed sentinel %q", upstream.proxyURL, unavailableAccountProxyURL)
-	}
-}
-
-func TestAccountUsageService_ProbeOpenAICodexSnapshotSkipsTLSProfileWhenDisabled(t *testing.T) {
-	t.Parallel()
-
-	upstream := &accountUsageHTTPUpstreamStub{}
-	svc := &AccountUsageService{
-		httpUpstream:        upstream,
-		tlsFPProfileService: &TLSFingerprintProfileService{},
-	}
-	account := &Account{
-		ID:          789,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Credentials: map[string]any{"access_token": "token"},
-		Extra:       map[string]any{"enable_tls_fingerprint": false},
-	}
-
-	updates, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
-	if err != nil {
-		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
-	}
-	if len(updates) == 0 {
-		t.Fatal("expected codex usage updates")
-	}
-	if upstream.tlsProfile != nil {
-		t.Fatal("关闭 TLS 指纹时不应传入 profile")
-	}
-}
-
-// TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 外审第9轮 P1:spark 影子用量走
-// QueryUsage(/wham/usage,与 WSv2 无关),staleness 不得被 WSv2 门控,否则首刷后窗口永久冻结。
 func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	t.Parallel()
 
@@ -1449,7 +1177,7 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		FiveHour: &UsageProgress{Utilization: 0},
 		SevenDay: &UsageProgress{Utilization: 0},
 	}
-	staleAt := now.Add(-(openAIProbeCacheTTL + time.Minute)).Format(time.RFC3339)
+	staleAt := now.Add(-(openAIUsageQueryCacheTTL + time.Minute)).Format(time.RFC3339)
 	freshAt := now.Add(-time.Minute).Format(time.RFC3339)
 	parentID := int64(7001)
 
@@ -1477,18 +1205,18 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		t.Fatal("expected fresh spark shadow to skip refresh (TTL not elapsed)")
 	}
 
-	// 反向对照:普通账号无 WSv2 + 过期时间戳仍不刷新，WSv2 仅门控普通账号的 probe 刷新。
+	// 普通账号同样通过 /wham/usage 刷新，与 WSv2 传输开关无关。
 	normalNoWS := &Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra:    map[string]any{"codex_usage_updated_at": staleAt},
 	}
-	if shouldRefreshOpenAICodexSnapshot(normalNoWS, usage, now) {
-		t.Fatal("expected non-WSv2 normal account to skip codex probe refresh")
+	if !shouldRefreshOpenAICodexSnapshot(normalNoWS, usage, now) {
+		t.Fatal("expected stale normal account to refresh through metadata endpoint")
 	}
 }
 
-func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) {
+func TestExtractOpenAICodexUsageUpdatesAccepts429WithCodexHeaders(t *testing.T) {
 	t.Parallel()
 
 	headers := make(http.Header)
@@ -1499,12 +1227,12 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	headers.Set("x-codex-secondary-reset-after-seconds", "18000")
 	headers.Set("x-codex-secondary-window-minutes", "300")
 
-	updates, err := extractOpenAICodexProbeUpdates(&http.Response{StatusCode: http.StatusTooManyRequests, Header: headers})
+	updates, err := extractOpenAICodexUsageUpdates(&http.Response{StatusCode: http.StatusTooManyRequests, Header: headers})
 	if err != nil {
-		t.Fatalf("extractOpenAICodexProbeUpdates() error = %v", err)
+		t.Fatalf("extractOpenAICodexUsageUpdates() error = %v", err)
 	}
 	if len(updates) == 0 {
-		t.Fatal("expected codex probe updates from 429 headers")
+		t.Fatal("expected codex usage updates from 429 headers")
 	}
 	if got := updates["codex_5h_used_percent"]; got != 100.0 {
 		t.Fatalf("codex_5h_used_percent = %v, want 100", got)
@@ -1514,7 +1242,7 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
-func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
+func TestAccountUsageService_PersistOpenAICodexUsageSnapshotOnlyUpdatesExtra(t *testing.T) {
 	t.Parallel()
 
 	repo := &accountUsageCodexProbeRepo{
@@ -1522,7 +1250,7 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 		rateLimitCh:   make(chan time.Time, 1),
 	}
 	svc := &AccountUsageService{accountRepo: repo}
-	svc.persistOpenAICodexProbeSnapshot(321, map[string]any{
+	svc.persistOpenAICodexUsageSnapshot(321, map[string]any{
 		"codex_7d_used_percent": 100.0,
 		"codex_7d_reset_at":     time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339),
 	})
@@ -1533,12 +1261,12 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 			t.Fatalf("codex_7d_used_percent = %v, want 100", got)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("等待 codex 探测快照写入 extra 超时")
+		t.Fatal("等待 codex 用量快照写入 extra 超时")
 	}
 
 	select {
 	case got := <-repo.rateLimitCh:
-		t.Fatalf("不应将探测快照写入运行时限流状态: %v", got)
+		t.Fatalf("不应将用量快照写入运行时限流状态: %v", got)
 	case <-time.After(200 * time.Millisecond):
 	}
 }

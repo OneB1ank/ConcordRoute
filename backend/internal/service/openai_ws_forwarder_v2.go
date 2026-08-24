@@ -321,7 +321,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	)
 	if handshakeTurnState != "" {
 		if stateStore != nil && sessionHash != "" {
-			stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
+			stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIStickySessionTTL())
 		}
 		if c != nil {
 			c.Header(http.CanonicalHeaderKey(openAIWSTurnStateHeader), handshakeTurnState)
@@ -846,7 +846,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		s.bindOpenAIWSResponseSessionOwner(ctx, c, responseID)
 	}
 	if stateStore != nil && storeDisabled && sessionHash != "" {
-		stateStore.BindSessionConn(groupID, sessionHash, lease.ConnID(), s.openAIWSSessionStickyTTL())
+		stateStore.BindSessionConn(groupID, sessionHash, lease.ConnID(), s.openAIStickySessionTTL())
 	}
 	firstTokenMsValue := -1
 	if firstTokenMs != nil {

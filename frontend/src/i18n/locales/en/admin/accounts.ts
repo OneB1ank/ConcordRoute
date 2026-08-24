@@ -693,14 +693,14 @@ export default {
         codexCLIOnlyAllowClaudeCodeDesc:
           'Only takes effect when the switch above is on. Additionally allows requests from the Claude Code Codex plugin (exact match on originator=Claude Code) without weakening blocking of other non-official clients.',
         codexFingerprintMode: 'Codex fingerprint convergence',
-        codexFingerprintModeDesc: 'Identity convergence for shared OAuth accounts. Cockpit is the default: it stabilizes the account device and primary session while deriving stable per-conversation threads and cache keys.',
+        codexFingerprintModeDesc: 'Optional identity convergence for shared OAuth accounts. It is off by default; enable a mode only when the upstream identity rewrite is intentional.',
         codexFingerprintOff: 'Off',
         codexFingerprintDevice: 'Device only',
         codexFingerprintSession: 'Device + Session',
         codexFingerprintCockpit: 'Cockpit (session + cache key)',
         codexFingerprintFull: 'Full convergence',
         codexQuotaOverdraft: 'Codex quota overdraft (experimental)',
-        codexQuotaOverdraftDesc: 'Off by default. The OAuth account ignores reserve thresholds. Overdraft context is prearmed at 95%; bounded real probes start at 98% and reuse the same UA, TLS profile, and account proxy egress. An explicit quota-exhaustion 429 also starts the probe immediately.',
+        codexQuotaOverdraftDesc: 'Only bypasses local quota reserve thresholds. A real upstream 429 pauses the account through standard rate limiting; no active model probes are sent and requests are not rewritten.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

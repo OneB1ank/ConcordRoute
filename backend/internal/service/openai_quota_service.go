@@ -29,7 +29,6 @@ const (
 	chatGPTRateLimitResetPath   = "/wham/rate-limit-reset-credits/consume"
 	openaiQuotaUpstreamTimeout  = 20 * time.Second
 	openaiQuotaCodexBeta        = "codex-1"
-	openaiQuotaCodexOriginator  = "Codex Desktop"
 	openaiQuotaCodexLanguageTag = "zh-CN"
 	openaiQuotaSecFetchSite     = "none"
 	openaiQuotaSecFetchMode     = "no-cors"
@@ -314,12 +313,14 @@ func (s *OpenAIQuotaService) prepareAccount(ctx context.Context, accountID int64
 	}
 
 	router := s.resolveRuntimeRouter(account)
+	userAgent := s.resolveUserAgent(account, router)
+	userAgent, _ = CodexAuthIdentityForUserAgent(userAgent)
 	return &openAIQuotaAccountContext{
 		account:    account,
 		token:      token,
 		proxyURL:   proxyURL,
-		userAgent:  s.resolveUserAgent(router),
-		tlsProfile: s.resolveTLSProfile(account, router),
+		userAgent:  userAgent,
+		tlsProfile: s.resolveTLSProfile(account, router, userAgent),
 	}, nil
 }
 
@@ -348,17 +349,22 @@ func (s *OpenAIQuotaService) resolveRuntimeRouter(account *Account) *model.TLSFi
 	return router
 }
 
-func (s *OpenAIQuotaService) resolveUserAgent(router *model.TLSFingerprintRouter) string {
+func (s *OpenAIQuotaService) resolveUserAgent(account *Account, router *model.TLSFingerprintRouter) string {
 	if router != nil {
 		// 配额查询与重置专用配置优先于全局规范 UA。
 		if userAgent := strings.TrimSpace(router.CodexInviteResetUserAgent); userAgent != "" {
 			return userAgent
 		}
 	}
+	if account != nil {
+		if userAgent := strings.TrimSpace(account.GetOpenAIUserAgent()); userAgent != "" {
+			return userAgent
+		}
+	}
 	return CodexCanonicalUserAgent()
 }
 
-func (s *OpenAIQuotaService) resolveTLSProfile(account *Account, router *model.TLSFingerprintRouter) *tlsfingerprint.Profile {
+func (s *OpenAIQuotaService) resolveTLSProfile(account *Account, router *model.TLSFingerprintRouter, _ string) *tlsfingerprint.Profile {
 	if s == nil || s.tlsFPProfileService == nil {
 		return nil
 	}
@@ -451,10 +457,12 @@ func (s *OpenAIQuotaService) applyHeaders(req *http.Request, accountCtx *openAIQ
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OpenAI-Beta", openaiQuotaCodexBeta)
 	req.Header.Set("OAI-Language", openaiQuotaCodexLanguageTag)
-	req.Header.Set("originator", openaiQuotaCodexOriginator)
+	userAgent, originator := CodexAuthIdentityForUserAgent(accountCtx.userAgent)
+	req.Header.Set("originator", originator)
+	req.Header.Del("version")
 	req.Header.Set("X-OpenAI-Attach-Auth", "1")
 	req.Header.Set("X-OpenAI-Attach-Integrity-State", "1")
-	req.Header.Set("User-Agent", accountCtx.userAgent)
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("sec-fetch-site", openaiQuotaSecFetchSite)
 	req.Header.Set("sec-fetch-mode", openaiQuotaSecFetchMode)
 	req.Header.Set("sec-fetch-dest", openaiQuotaSecFetchDest)
@@ -482,7 +490,13 @@ func (s *OpenAIQuotaService) doJSON(req *http.Request, accountCtx *openAIQuotaAc
 // doJSONRaw 执行请求并保留原始响应；Agent task 失效时最多注册并重放一次。
 func (s *OpenAIQuotaService) doJSONRaw(req *http.Request, accountCtx *openAIQuotaAccountContext, expectedTaskID string) ([]byte, error) {
 	for recovered := false; ; {
-		resp, err := s.httpUpstream.DoWithTLS(req, accountCtx.proxyURL, accountCtx.account.ID, accountCtx.account.Concurrency, accountCtx.tlsProfile)
+		var resp *http.Response
+		var err error
+		if accountCtx.tlsProfile != nil {
+			resp, err = s.httpUpstream.DoWithTLS(req, accountCtx.proxyURL, accountCtx.account.ID, accountCtx.account.Concurrency, accountCtx.tlsProfile)
+		} else {
+			resp, err = s.httpUpstream.Do(req, accountCtx.proxyURL, accountCtx.account.ID, accountCtx.account.Concurrency)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -575,10 +589,19 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 	if spark == nil {
 		return nil
 	}
+	return buildCodexRateLimitWindowExtraUpdates(spark, now)
+}
 
-	// 复用普通 Codex 探测的窗口归一化逻辑，保证 primary/secondary 到 5h/7d 的映射一致。
+// buildCodexRateLimitWindowExtraUpdates 将 /wham/usage 的限额窗口转换为
+// 调度与界面共用的被动 codex_* 快照；不创建模型请求，也不产生额外副作用。
+func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.Time) map[string]any {
+	if rateLimit == nil {
+		return nil
+	}
+
+	// 复用响应头快照的窗口归一化逻辑，保证 primary/secondary 到 5h/7d 的映射一致。
 	snap := &OpenAICodexUsageSnapshot{}
-	if w := spark.PrimaryWindow; w != nil {
+	if w := rateLimit.PrimaryWindow; w != nil {
 		p := w.UsedPercent
 		snap.PrimaryUsedPercent = &p
 		ra := int(w.ResetAfterSeconds)
@@ -586,7 +609,7 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 		wm := int(w.LimitWindowSeconds / 60)
 		snap.PrimaryWindowMinutes = &wm
 	}
-	if w := spark.SecondaryWindow; w != nil {
+	if w := rateLimit.SecondaryWindow; w != nil {
 		p := w.UsedPercent
 		snap.SecondaryUsedPercent = &p
 		ra := int(w.ResetAfterSeconds)

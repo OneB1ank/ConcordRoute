@@ -74,10 +74,24 @@ const (
 	openAI403CooldownMinutesDefault      = 10
 	openAI403DisableThresholdDefault     = 3
 	openAI403CounterWindowMinutesDefault = 180
-	openAIProxy401Cooldown               = time.Minute
 	defaultRateLimit429CooldownSeconds   = 5
 	maxRateLimit429CooldownSeconds       = 7200
 )
+
+// openAIOAuth401MutationRepository 原子标记可恢复的 OpenAI OAuth 401。
+// false 表示并发刷新、重新授权或代理绑定变化已先完成。
+type openAIOAuth401MutationRepository interface {
+	MarkOpenAIOAuth401RefreshRequiredIfUnchanged(
+		ctx context.Context,
+		id int64,
+		expectedCredentials map[string]any,
+		expectedProxyID *int64,
+		expiredAt time.Time,
+		tokenVersion int64,
+		until time.Time,
+		reason string,
+	) (bool, error)
+}
 
 const (
 	openAIImageRateLimitDefaultCooldown = time.Minute
@@ -170,8 +184,7 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	if !account.IsActive() || !account.Schedulable {
 		return false
 	}
-	if codexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) &&
-		codexQuotaOverdraftSchedulingAllowed(account, time.Now().UTC()) {
+	if codexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) {
 		return false
 	}
 
@@ -201,8 +214,8 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 
 	account.TempUnschedulableUntil = cloneTimePtr(decision.Until)
 	account.TempUnschedulableReason = reason
-	// 启用透支的账号仍持久化阈值暂停，但透支请求会按状态机决定是否绕过，
-	// 因此这里不写入无法区分请求类型的运行时阻断器。
+	// 启用透支的账号仍持久化阈值暂停；只有带透支调度 context 的推理请求
+	// 会忽略这一来源。运行时阻断器没有请求 context，因此不写入该阈值阻断。
 	if !isCodexQuotaOverdraftAccount(account) {
 		s.notifyAccountSchedulingBlocked(account, *decision.Until, "account_scheduling_threshold")
 	}
@@ -487,25 +500,9 @@ func (s *RateLimitService) handleDefaultUpstreamError(ctx context.Context, accou
 			shouldDisable = true
 			break
 		}
-		// 代理节点返回的通用 Unauthorized 只证明当前出站链路异常。
-		// 这类响应不失效 Token，也不写长期错误；冷却一分钟后由调度器自动重试。
-		proxyUnauthorized := authAccount.Platform == PlatformOpenAI &&
-			authAccount.Type == AccountTypeOAuth &&
-			(authAccount.ProxyID != nil || authAccount.Proxy != nil) &&
-			strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responseBody, "detail").String()), "unauthorized")
-		if proxyUnauthorized {
-			msg := "Proxy returned 401 Unauthorized; temporary egress cooldown"
-			until := time.Now().Add(openAIProxy401Cooldown)
-			s.notifyAccountSchedulingBlocked(authAccount, until, "proxy_401")
-			if err := s.accountRepo.SetTempUnschedulable(ctx, authAccount.ID, until, msg); err != nil {
-				slog.Warn("proxy_401_set_temp_unschedulable_failed", "account_id", authAccount.ID, "error", err)
-			}
-			shouldDisable = true
-			break
-		}
 		// 非 OAuth OpenAI 凭据返回 {"detail":"Unauthorized"} 时视为永久认证失败。
-		// OAuth 请求可能由不稳定代理节点生成同形响应；只要仍有 refresh_token，
-		// 就交给下方缓存失效与临时停调流程，避免一次链路抖动把账号永久置错。
+		// OAuth 请求统一走凭据代际 CAS；代理绑定本身不足以证明 401 来自代理，
+		// 避免把上游真实凭据失效误判为出口故障而跳过刷新。
 		if authAccount.Platform == PlatformOpenAI && authAccount.Type != AccountTypeOAuth &&
 			gjson.GetBytes(responseBody, "detail").String() == "Unauthorized" {
 			msg := "Unauthorized (401): account authentication failed permanently"
@@ -518,15 +515,14 @@ func (s *RateLimitService) handleDefaultUpstreamError(ctx context.Context, accou
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
 		if authAccount.Type == AccountTypeOAuth {
-			// 1. 失效缓存
-			if s.tokenCacheInvalidator != nil {
-				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
-					slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
-				}
-			}
 			// 缺少 refresh_token 的 OAuth 账号无法在冷却期内自愈（后台刷新服务也会跳过），
 			// 直接走 SetError 永久禁用，避免冷却结束后再被选中产生一发无意义的 502。
 			if strings.TrimSpace(authAccount.GetCredential("refresh_token")) == "" {
+				if s.tokenCacheInvalidator != nil {
+					if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
+						slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
+					}
+				}
 				msg := "Authentication failed (401): refresh_token missing, cannot recover"
 				if upstreamMsg != "" {
 					msg = "OAuth 401 (no refresh_token): " + upstreamMsg
@@ -535,18 +531,63 @@ func (s *RateLimitService) handleDefaultUpstreamError(ctx context.Context, accou
 				shouldDisable = true
 				break
 			}
-			// 2. 临时不可调度，替代 SetError（保持 status=active 让刷新服务能拾取）
-			// 注意：此处不再写回 account.Credentials/expires_at。
-			// 原实现使用请求开始时的 account 快照整列覆盖 credentials JSONB（见
-			// persistAccountCredentials → accountRepository.UpdateCredentials → SetCredentials），
-			// 在另一个 worker 刚刷新完 refresh_token 的窄窗口内会把新 refresh_token 回滚为旧值，
-			// 导致下一周期用旧 refresh_token 调上游拿到 invalid_grant 后，
-			// tryRecoverFromRefreshRace 重读 DB 发现 currentRT == usedRT 也救不回来，账号被错误 disable。
-			// 这里仅依赖 InvalidateToken + SetTempUnschedulable 让账号在冷却期内不被调度，
-			// 冷却结束后由 token_provider 的 NeedsRefresh / token_refresh_service 走带分布式锁的正路刷新。
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
 				msg = "OAuth 401: " + upstreamMsg
+			}
+			cooldownMinutes := s.cfg.RateLimit.OAuth401CooldownMinutes
+			if cooldownMinutes <= 0 {
+				cooldownMinutes = 10
+			}
+			now := time.Now().UTC()
+			until := now.Add(time.Duration(cooldownMinutes) * time.Minute)
+
+			if authAccount.Platform == PlatformOpenAI {
+				mutationRepo, ok := s.accountRepo.(openAIOAuth401MutationRepository)
+				if !ok {
+					slog.Error("openai_oauth_401_mutation_repository_missing", "account_id", authAccount.ID)
+					shouldDisable = true
+					break
+				}
+				expectedCredentials := shallowCopyMap(authAccount.Credentials)
+				tokenVersion := authAccount.GetCredentialAsInt64("_token_version") + 1
+				if tokenVersion <= 0 {
+					tokenVersion = 1
+				}
+				applied, err := mutationRepo.MarkOpenAIOAuth401RefreshRequiredIfUnchanged(
+					ctx, authAccount.ID, expectedCredentials, authAccount.ProxyID,
+					now, tokenVersion, until, msg,
+				)
+				if err != nil {
+					slog.Error("openai_oauth_401_force_refresh_mark_failed", "account_id", authAccount.ID, "error", err)
+					shouldDisable = true
+					break
+				}
+				if !applied {
+					slog.Info("openai_oauth_401_stale_response_skipped", "account_id", authAccount.ID)
+					// 新凭据代际仍可继续调度；401 的入口默认 failover 规则会结束当前失败请求，
+					// 这里返回 false 同时避免网关外层为新代凭据追加运行时阻断。
+					shouldDisable = false
+					break
+				}
+				authAccount.Credentials["expires_at"] = now.Format(time.RFC3339Nano)
+				authAccount.Credentials["_token_version"] = tokenVersion
+				authAccount.TempUnschedulableUntil = &until
+				authAccount.TempUnschedulableReason = msg
+				s.notifyAccountSchedulingBlocked(authAccount, until, "oauth_401")
+				if s.tokenCacheInvalidator != nil {
+					if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
+						slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
+					}
+				}
+				shouldDisable = true
+				break
+			}
+
+			if s.tokenCacheInvalidator != nil {
+				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
+					slog.Warn("oauth_401_invalidate_cache_failed", "account_id", authAccount.ID, "error", err)
+				}
 			}
 			if authAccount.Platform == PlatformAntigravity {
 				extraUpdates := antigravityForceTokenRefreshExtra("401_invalid")
@@ -562,11 +603,6 @@ func (s *RateLimitService) handleDefaultUpstreamError(ctx context.Context, accou
 					slog.Info("antigravity_401_force_refresh_marked", "account_id", authAccount.ID)
 				}
 			}
-			cooldownMinutes := s.cfg.RateLimit.OAuth401CooldownMinutes
-			if cooldownMinutes <= 0 {
-				cooldownMinutes = 10
-			}
-			until := time.Now().Add(time.Duration(cooldownMinutes) * time.Minute)
 			s.notifyAccountSchedulingBlocked(authAccount, until, "oauth_401")
 			if err := s.accountRepo.SetTempUnschedulable(ctx, authAccount.ID, until, msg); err != nil {
 				slog.Warn("oauth_401_set_temp_unschedulable_failed", "account_id", authAccount.ID, "error", err)

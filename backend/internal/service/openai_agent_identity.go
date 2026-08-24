@@ -247,14 +247,11 @@ func registerAgentIdentityTask(ctx context.Context, account *Account, executors 
 }
 
 func (s *OpenAIGatewayService) executeAgentIdentityTaskRegistration(_ context.Context, account *Account, req *http.Request) (*http.Response, bool, error) {
-	if s == nil || s.httpUpstream == nil {
+	if s == nil || s.httpUpstream == nil || account == nil || req == nil {
 		return nil, false, nil
 	}
 	var profile *tlsfingerprint.Profile
-	var explicitAuthProfile bool
-	var explicitAuthUserAgent bool
-	var routerMatch TLSFingerprintRouterMatchResult
-	if s.tlsFPRouterService != nil && account != nil {
+	if s.tlsFPRouterService != nil {
 		router := s.tlsFPRouterService.GetRuntimeRouter(account.GetTLSFingerprintRouterID())
 		if router != nil && router.Enabled {
 			if userAgent := strings.TrimSpace(router.ChatGPTOAuthTokenUserAgent); userAgent != "" {
@@ -262,30 +259,18 @@ func (s *OpenAIGatewayService) executeAgentIdentityTaskRegistration(_ context.Co
 				req.Header.Set("User-Agent", ua)
 				req.Header.Set("Originator", originator)
 				req.Header.Del("Version")
-				explicitAuthUserAgent = true
 			}
 			if router.ChatGPTOAuthTokenTLSFingerprintProfileID != nil && s.tlsFPProfileService != nil {
-				profile, explicitAuthProfile = s.tlsFPProfileService.ResolveTokenTLSProfileByID(*router.ChatGPTOAuthTokenTLSFingerprintProfileID)
+				profile, _ = s.tlsFPProfileService.ResolveTokenTLSProfileByID(*router.ChatGPTOAuthTokenTLSFingerprintProfileID)
 			}
 		}
 	}
-	if !explicitAuthUserAgent {
-		identityUA, match := s.resolveOpenAIBackgroundIdentity(account)
-		ua, originator := CodexAuthIdentityForUserAgent(identityUA)
-		req.Header.Set("User-Agent", ua)
-		req.Header.Set("Originator", originator)
-		req.Header.Del("Version")
-		routerMatch = match
-	}
-	if !explicitAuthProfile {
-		// auth 专用模板未配置或已失效时，复用普通 Codex 路由/账号模板。
-		if explicitAuthUserAgent && s.tlsFPRouterService != nil && account != nil {
-			routerMatch = s.tlsFPRouterService.MatchUserAgent(account.GetTLSFingerprintRouterID(), req.Header.Get("User-Agent"))
-		}
-		profile = s.resolveOpenAITLSProfile(account, routerMatch)
-	}
 	proxyURL := resolveAccountProxyURL(account)
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, profile)
+	if profile != nil {
+		resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, profile)
+		return resp, true, err
+	}
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	return resp, true, err
 }
 

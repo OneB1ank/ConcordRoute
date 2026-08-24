@@ -153,7 +153,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	// 终态收口：originator 必须与最终 user-agent 首段配套且为官方身份，非官方 UA 整体回退为
 	// 默认 Codex TUI 身份，同时避免 originator 与 UA 首段错配导致上游 404，详见 issue #3901。
 	if account != nil && account.Type == AccountTypeOAuth {
-		enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityOverrideUA(account, routerMatch...))
+		s.enforceCodexOutboundIdentityHeaders(headers, account, routerMatch...)
 	}
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）。

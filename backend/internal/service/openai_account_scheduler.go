@@ -427,7 +427,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
-		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+		_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIStickySessionTTL())
 		return &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
@@ -1906,11 +1906,11 @@ func (s *OpenAIGatewayService) SnapshotOpenAIAccountSchedulerMetrics() OpenAIAcc
 	return scheduler.SnapshotMetrics()
 }
 
-func (s *OpenAIGatewayService) openAIWSSessionStickyTTL() time.Duration {
+func (s *OpenAIGatewayService) openAIStickySessionTTL() time.Duration {
 	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds > 0 {
 		return time.Duration(s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds) * time.Second
 	}
-	return openaiStickySessionTTL
+	return openAIStickySessionDefaultTTL
 }
 
 func (s *OpenAIGatewayService) openAIWSLBTopK() int {
@@ -1932,10 +1932,6 @@ func (s *OpenAIGatewayService) openAIWSLBTopKForRequest(ctx context.Context) int
 func resolveAdvancedStickyEscapeConfig(appConfig *config.Config) advancedStickyEscapeConfig {
 	if appConfig != nil {
 		cfg := appConfig.Gateway.AdvancedScheduler
-		enabled := cfg.StickyEscapeEnabled
-		if !enabled && cfg.StickyEscapeTTFTMs == 0 && cfg.StickyEscapeErrorRate == 0 {
-			enabled = true
-		}
 		ttftMs := float64(cfg.StickyEscapeTTFTMs)
 		if ttftMs <= 0 {
 			ttftMs = 15000
@@ -1948,13 +1944,13 @@ func resolveAdvancedStickyEscapeConfig(appConfig *config.Config) advancedStickyE
 			errorRate = 0.5
 		}
 		return advancedStickyEscapeConfig{
-			enabled:   enabled,
+			enabled:   cfg.StickyEscapeEnabled,
 			ttftMs:    ttftMs,
 			errorRate: errorRate,
 		}
 	}
 	return advancedStickyEscapeConfig{
-		enabled:   true,
+		enabled:   false,
 		ttftMs:    15000,
 		errorRate: 0.5,
 	}

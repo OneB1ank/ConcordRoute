@@ -109,6 +109,7 @@ func DiscardDeprecatedAccountExtra(extra map[string]any) {
 	delete(extra, deprecatedUpstreamBillingProbeExtraKey)
 	delete(extra, deprecatedUpstreamBillingProbeEnabledExtraKey)
 	delete(extra, deprecatedOpenAILongContextBillingExtraKey)
+	delete(extra, CodexQuotaOverdraftLegacyProbeExtraKey)
 }
 
 // NormalizeDeprecatedAccountExtraUpdate 规范化整份替换语义的账号 Extra 更新。
@@ -168,7 +169,7 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"quota_daily_reset_at":  {},
 	"quota_weekly_reset_at": {},
 	// 上游观测、能力探测与临时调度状态不属于可复制配置。
-	CodexQuotaOverdraftProbeExtraKey:              {},
+	CodexQuotaOverdraftLegacyProbeExtraKey:        {},
 	"model_rate_limits":                           {},
 	"session_window_utilization":                  {},
 	"passive_usage_7d_utilization":                {},
@@ -654,7 +655,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 	wasOveragesEnabled := account.IsOveragesEnabled()
-	wasSchedulingThresholdPaused := IsAccountSchedulingThresholdReason(account.TempUnschedulableReason)
+	wasSchedulingThresholdPaused := isCodexQuotaOverdraftBypassablePause(account.TempUnschedulableReason)
 
 	if input.Name != "" {
 		account.Name = input.Name
@@ -706,17 +707,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
 			}
-		}
-		if resolveAccountExtraBool(normalizedExtra, CodexQuotaOverdraftEnabledExtraKey) {
-			// 账号普通编辑未携带运行态时保留当前探测周期；配置字段仍以输入为准。
-			if _, exists := normalizedExtra[CodexQuotaOverdraftProbeExtraKey]; !exists {
-				if state, ok := account.Extra[CodexQuotaOverdraftProbeExtraKey]; ok {
-					normalizedExtra[CodexQuotaOverdraftProbeExtraKey] = state
-				}
-			}
-		} else {
-			// 显式关闭或缺失账号级开关时清除旧周期，后续重新开启会重新探测。
-			delete(normalizedExtra, CodexQuotaOverdraftProbeExtraKey)
 		}
 		account.Extra = normalizedExtra
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
@@ -878,9 +868,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 				return err
 			}
 			clearThresholdRuntimeBlock = account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
-				!account.IsShadow() && IsAccountSchedulingThresholdReason(account.TempUnschedulableReason)
-		} else {
-			updates[CodexQuotaOverdraftProbeExtraKey] = nil
+				!account.IsShadow() && isCodexQuotaOverdraftBypassablePause(account.TempUnschedulableReason)
 		}
 	}
 	if len(updates) == 0 {
@@ -907,11 +895,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
-	if _, provided := input.Extra[CodexQuotaOverdraftEnabledExtraKey]; provided &&
-		!resolveAccountExtraBool(input.Extra, CodexQuotaOverdraftEnabledExtraKey) {
-		input.Extra[CodexQuotaOverdraftProbeExtraKey] = nil
-	}
-
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)
 		if err != nil {
@@ -1076,7 +1059,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if clearOverdraftThresholdRuntimeBlocks {
 		for _, account := range cachedTargets {
 			if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
-				!account.IsShadow() && IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) {
+				!account.IsShadow() && isCodexQuotaOverdraftBypassablePause(account.TempUnschedulableReason) {
 				s.clearAccountSchedulingThresholdRuntimeBlock(account.ID)
 			}
 		}
@@ -1125,6 +1108,7 @@ func (s *adminServiceImpl) clearAccountSchedulingThresholdRuntimeBlock(accountID
 	}
 	if clearer, ok := s.runtimeBlocker.(accountRuntimeConditionalBlockClearer); ok {
 		clearer.ClearAccountSchedulingBlockIfReason(accountID, "account_scheduling_threshold")
+		clearer.ClearAccountSchedulingBlockIfReason(accountID, codexQuotaOverdraftLegacyPauseSource)
 	}
 }
 

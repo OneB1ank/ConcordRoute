@@ -106,6 +106,24 @@ type tokenRefreshTestRefresher struct {
 	err error
 }
 
+type tokenRefreshCandidateRuntimeBlocker struct{ clearCalls int }
+
+func (*tokenRefreshCandidateRuntimeBlocker) BlockAccountScheduling(*Account, time.Time, string) {}
+func (b *tokenRefreshCandidateRuntimeBlocker) ClearAccountSchedulingBlock(int64)                { b.clearCalls++ }
+
+type tokenRefreshCandidateTempCache struct{ deleteCalls int }
+
+func (*tokenRefreshCandidateTempCache) SetTempUnsched(context.Context, int64, *TempUnschedState) error {
+	return nil
+}
+func (*tokenRefreshCandidateTempCache) GetTempUnsched(context.Context, int64) (*TempUnschedState, error) {
+	return nil, nil
+}
+func (c *tokenRefreshCandidateTempCache) DeleteTempUnsched(context.Context, int64) error {
+	c.deleteCalls++
+	return nil
+}
+
 func (r *tokenRefreshTestRefresher) CanRefresh(*Account) bool { return true }
 
 func (r *tokenRefreshTestRefresher) NeedsRefresh(*Account, time.Duration) bool { return true }
@@ -119,15 +137,19 @@ func (r *tokenRefreshTestRefresher) Refresh(context.Context, *Account) (map[stri
 
 func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
+	runtimeBlocker := &tokenRefreshCandidateRuntimeBlocker{}
+	tempCache := &tokenRefreshCandidateTempCache{}
 	repo := &tokenRefreshCandidateRepo{
 		accounts: []Account{
 			{
-				ID:          1,
-				Platform:    PlatformOpenAI,
-				Type:        AccountTypeOAuth,
-				Status:      StatusActive,
-				Schedulable: true,
-				Credentials: map[string]any{"refresh_token": "refresh-token"},
+				ID:                      1,
+				Platform:                PlatformOpenAI,
+				Type:                    AccountTypeOAuth,
+				Status:                  StatusActive,
+				Schedulable:             true,
+				Credentials:             map[string]any{"refresh_token": "refresh-token"},
+				TempUnschedulableUntil:  &future,
+				TempUnschedulableReason: "OAuth 401: unauthorized",
 			},
 			{
 				ID:          2,
@@ -201,15 +223,19 @@ func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing
 			{platform: PlatformAntigravity, refresher: &tokenRefreshTestRefresher{}},
 			{platform: PlatformQoder, refresher: &tokenRefreshTestRefresher{}},
 		},
-		refreshPolicy: DefaultBackgroundRefreshPolicy(),
-		cfg:           &config.TokenRefreshConfig{RefreshBeforeExpiryHours: 1, MaxRetries: 1},
+		refreshPolicy:    DefaultBackgroundRefreshPolicy(),
+		cfg:              &config.TokenRefreshConfig{RefreshBeforeExpiryHours: 1, MaxRetries: 1},
+		tempUnschedCache: tempCache,
+		runtimeBlocker:   runtimeBlocker,
 	}
 
 	svc.processRefresh()
 
 	require.Zero(t, repo.listActiveCalls, "TokenRefreshService should not use the broad active-account query")
 	require.ElementsMatch(t, []int64{1, 6, 7}, repo.updatedCredentialIDs)
-	require.Equal(t, 1, repo.clearTempCalls, "successful refresh should clear the OAuth 401 temp-unschedulable state")
+	require.Equal(t, 2, repo.clearTempCalls, "successful refresh should clear OpenAI and Antigravity OAuth 401 pauses")
+	require.Equal(t, 2, tempCache.deleteCalls, "successful refresh should clear the temp-unsched cache")
+	require.Equal(t, 2, runtimeBlocker.clearCalls, "successful refresh should clear the runtime scheduling block")
 }
 
 func TestTokenRefreshService_RefreshFailureDoesNotCallPrivacy(t *testing.T) {

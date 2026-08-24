@@ -96,7 +96,7 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 	}
 	s.openaiCodexTurnStateOrigins.Store(seed, openAICodexTurnStateOrigin{
 		accountID: account.ID,
-		expiresAt: time.Now().Add(s.openAIWSSessionStickyTTL()),
+		expiresAt: time.Now().Add(s.openAIStickySessionTTL()),
 	})
 	s.sweepOpenAICodexTurnStateOrigins()
 }

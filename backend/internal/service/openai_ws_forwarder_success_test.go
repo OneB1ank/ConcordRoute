@@ -1237,6 +1237,50 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 	}
 }
 
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersTLSProfileOnlyRouteKeepsCLIRSIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCanonicalUA(t, DefaultOpenAICodexUserAgent)
+
+	const cliRSUA = "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)"
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", cliRSUA)
+	c.Request.Header.Set("originator", "codex_cli_rs")
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "oauth-token"},
+	}
+	routerMatch := TLSFingerprintRouterMatchResult{
+		Matched:                 true,
+		RouterID:                9,
+		RuleName:                "Codex CLI RS TLS only",
+		TLSFingerprintProfileID: 9,
+	}
+
+	headers, _, err := svc.buildOpenAIWSHeaders(
+		context.Background(),
+		c,
+		account,
+		"oauth-token",
+		OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2},
+		true,
+		"",
+		"",
+		"",
+		"gpt-5.1",
+		"",
+		routerMatch,
+	)
+	require.NoError(t, err)
+	require.Equal(t, cliRSUA, headers.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
+	require.Equal(t, "0.145.0", headers.Get("version"))
+}
+
 func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1286,7 +1330,7 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 		},
 		Extra: map[string]any{
 			"responses_websockets_v2_enabled": true,
-			// 本用例只验证 WS 的 prompt_cache_key 回退，显式关闭默认 Cockpit 收敛。
+			// 本用例只验证 WS 的 prompt_cache_key 回退，显式保持身份收敛关闭。
 			codexFingerprintModeExtraKey: "off",
 		},
 	}

@@ -26,7 +26,13 @@ func (s *GatewayService) EnsureSessionIsolation(ctx context.Context, apiKey *API
 
 // EnsureSessionIsolation 记录 OpenAI 显式会话 owner，并在目标分组开启隔离时拒绝跨分组切入。
 func (s *OpenAIGatewayService) EnsureSessionIsolation(ctx context.Context, apiKey *APIKey, userID int64, source, sessionHash string) error {
-	return ensureSessionIsolation(ctx, s.cache, apiKey, userID, source, sessionHash, openaiStickySessionTTL)
+	ttl := openAIStickySessionDefaultTTL
+	var cache GatewayCache
+	if s != nil {
+		ttl = s.openAIStickySessionTTL()
+		cache = s.cache
+	}
+	return ensureSessionIsolation(ctx, cache, apiKey, userID, source, sessionHash, ttl)
 }
 
 func ensureSessionIsolation(ctx context.Context, cache GatewayCache, apiKey *APIKey, userID int64, source, sessionHash string, ttl time.Duration) error {

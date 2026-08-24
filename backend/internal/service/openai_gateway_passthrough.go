@@ -303,7 +303,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	s.bindHTTPResponseAccount(ctx, c, account, responseID)
 
-	s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, reqModel, resp.Header)
+	s.ObserveCodexUsageHeaders(ctx, account, resp.Header)
 
 	if usage == nil {
 		usage = &OpenAIUsage{}
@@ -372,7 +372,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	token string,
 	routerMatch ...TLSFingerprintRouterMatchResult,
 ) (*http.Request, error) {
-	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -482,7 +481,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// 终态收口：originator 必须与最终 User-Agent 首段配套且为官方身份，非官方 UA 整体回退为
 	// 默认 Codex TUI 身份，同时避免 originator 与 UA 首段错配导致上游 404，详见 issue #3901。
 	if account.Type == AccountTypeOAuth {
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, routerMatch...))
+		s.enforceCodexOutboundIdentityHeaders(req.Header, account, routerMatch...)
 	}
 
 	if req.Header.Get("content-type") == "" {
@@ -1026,7 +1025,7 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	combined := strings.TrimSpace(errType + " " + code + " " + strings.ToLower(strings.TrimSpace(message)))
 	switch {
 	// 上游可能用泛化 invalid_request 类型包装真实限流代码，限流信号优先。
-	case strings.Contains(combined, "rate_limit"):
+	case openAIStreamFailedEventIsDefiniteQuotaLimit(payload, message), strings.Contains(combined, "rate_limit"):
 		return http.StatusTooManyRequests
 	case strings.Contains(errType, "invalid_request"):
 		return http.StatusBadRequest
@@ -1052,6 +1051,47 @@ func openAIStreamFailureStatus(payload []byte, message string) int {
 	return http.StatusBadGateway
 }
 
+// openAIStreamFailedEventRateLimitBody 将 response.failed 中的嵌套 error
+// 归一化为标准上游错误体，让既有 429 链可以解析 resets_at 等字段。
+func openAIStreamFailedEventRateLimitBody(payload []byte) []byte {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) || gjson.GetBytes(payload, "error").Exists() {
+		return payload
+	}
+	responseError := gjson.GetBytes(payload, "response.error")
+	if !responseError.Exists() || responseError.Type != gjson.JSON || !gjson.Valid(responseError.Raw) {
+		return payload
+	}
+	body := make([]byte, 0, len(responseError.Raw)+10)
+	body = append(body, `{"error":`...)
+	body = append(body, responseError.Raw...)
+	body = append(body, '}')
+	return body
+}
+
+// openAIStreamFailedEventIsDefiniteQuotaLimit 只识别明确的订阅额度耗尽。
+// 泛化 rate_limit_exceeded（例如并发限制）仍是请求级瞬时 429。
+func openAIStreamFailedEventIsDefiniteQuotaLimit(payload []byte, message string) bool {
+	body := openAIStreamFailedEventRateLimitBody(payload)
+	errType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.type").String()))
+	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
+	if errType == "usage_limit_reached" || code == "usage_limit_reached" {
+		return true
+	}
+	errorMessage := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
+	text := strings.ToLower(strings.Join(strings.Fields(errType+" "+code+" "+errorMessage+" "+message), " "))
+	for _, marker := range []string{
+		"usage limit has been reached",
+		"quota exhausted",
+		"quota has been exhausted",
+		"weekly limit reached",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // openAIStreamGenericFailedEventPayload 构造流已经提交后使用的通用失败终止事件。
 func openAIStreamGenericFailedEventPayload() []byte {
 	return []byte(`{"type":"response.failed","response":{"status":"failed","error":{"type":"upstream_error","message":"Upstream gateway error"}}}`)
@@ -1072,6 +1112,11 @@ func (s *OpenAIGatewayService) applyOpenAIStreamFailedAccountPolicy(
 		return status, s.applyGrokAccountUpstreamError(ctx, account, status, headers, payload, canonicalModel)
 	}
 	if status == http.StatusTooManyRequests {
+		if openAIStreamFailedEventIsDefiniteQuotaLimit(payload, message) {
+			return status, s.applyOpenAIAccountUpstreamError(
+				ctx, account, status, headers, openAIStreamFailedEventRateLimitBody(payload), canonicalModel,
+			)
+		}
 		return status, s.applyOpenAIAccountStreamRateLimitError(ctx, account, status, headers, payload, canonicalModel)
 	}
 	return status, s.applyOpenAIAccountUpstreamError(ctx, account, status, headers, payload, canonicalModel)

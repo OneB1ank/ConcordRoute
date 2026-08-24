@@ -82,43 +82,21 @@ func TestOpenAIRuntimeBlock_ConditionalClearRequiresMatchingReason(t *testing.T)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
-func TestOpenAIRuntimeBlock_CodexProbationBypassesOnlyOverdraftReason(t *testing.T) {
-	now := time.Now().UTC()
-	reset := now.Add(time.Hour)
+func TestOpenAIRuntimeBlock_CodexReal429RemainsBlocked(t *testing.T) {
+	reset := time.Now().UTC().Add(time.Hour)
 	account := &Account{
 		ID:          452,
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Status:      StatusActive,
 		Schedulable: true,
-		Extra: map[string]any{
-			CodexQuotaOverdraftEnabledExtraKey: true,
-			"codex_5h_used_percent":            100,
-			"codex_5h_reset_at":                reset.Format(time.RFC3339),
-		},
+		Extra:       map[string]any{CodexQuotaOverdraftEnabledExtraKey: true},
 	}
-	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, nil, now)
-	require.True(t, exhausted)
-	state := newCodexOverdraftPendingState(signal, now)
-	state.Status = codexQuotaOverdraftProbeFailed
-	state.ReasonCode = "quota_limited"
-	account.Extra[CodexQuotaOverdraftProbeExtraKey] = state
 	svc := &OpenAIGatewayService{}
-	svc.BlockAccountScheduling(account, reset, codexQuotaOverdraftPauseSource)
+	svc.BlockAccountScheduling(account, reset, "429")
 
-	ordinaryCtx := context.Background()
-	probationCtx := WithCodexQuotaOverdraftScheduling(context.Background())
-	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(ordinaryCtx, account, "gpt-5.4"))
-	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(probationCtx, account, "gpt-5.4"))
-
-	svc.BlockAccountScheduling(account, reset, "oauth_401")
-	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(probationCtx, account, "gpt-5.4"), "无关阻断仍必须生效")
-
-	svc.ClearAccountSchedulingBlock(account.ID)
-	state.ReasonCode = CodexQuotaOverdraftBusinessQuotaLimitedReason
-	account.Extra[CodexQuotaOverdraftProbeExtraKey] = state
-	svc.BlockAccountScheduling(account, reset, codexQuotaOverdraftPauseSource)
-	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(probationCtx, account, "gpt-5.4"), "真实业务失败不得绕过")
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(context.Background(), account, "gpt-5.4"))
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(WithCodexQuotaOverdraftScheduling(context.Background()), account, "gpt-5.4"), "真实 429 在透支调度上下文中仍必须阻断")
 }
 
 func TestOpenAIRuntimeBlock_ConditionalClearPreservesNewerDifferentReason(t *testing.T) {

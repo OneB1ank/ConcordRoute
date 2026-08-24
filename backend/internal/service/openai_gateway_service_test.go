@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +31,20 @@ type stubOpenAIAccountRepo struct {
 	accounts []Account
 }
 
+type streamRateLimitAccountRepo struct {
+	stubOpenAIAccountRepo
+	setRateLimitedCalls int
+	lastAccountID       int64
+	lastResetAt         time.Time
+}
+
+func (r *streamRateLimitAccountRepo) SetRateLimited(_ context.Context, accountID int64, resetAt time.Time) error {
+	r.setRateLimitedCalls++
+	r.lastAccountID = accountID
+	r.lastResetAt = resetAt
+	return nil
+}
+
 // tempUnschedulableOpenAIAccountRepo 记录临时不可调度规则写入的模型范围。
 type tempUnschedulableOpenAIAccountRepo struct {
 	stubOpenAIAccountRepo
@@ -50,16 +63,6 @@ type snapshotUpdateAccountRepo struct {
 	updateExtraCalls chan map[string]any
 }
 
-type snapshotThresholdBridgeRepo struct {
-	stubOpenAIAccountRepo
-	probeClaims chan *CodexQuotaOverdraftProbeState
-}
-
-type snapshotBusinessSuccessRepo struct {
-	*snapshotThresholdBridgeRepo
-	businessSuccesses chan *CodexQuotaOverdraftProbeState
-}
-
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
@@ -69,47 +72,6 @@ func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, u
 		r.updateExtraCalls <- copied
 	}
 	return nil
-}
-
-func (r *snapshotThresholdBridgeRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
-	account, err := r.GetByID(context.Background(), id)
-	if err != nil {
-		return err
-	}
-	mergeAccountExtra(account, updates)
-	return nil
-}
-
-func (r *snapshotThresholdBridgeRepo) ClaimCodexQuotaOverdraftProbe(
-	_ context.Context,
-	_ int64,
-	state *CodexQuotaOverdraftProbeState,
-) (bool, error) {
-	if r.probeClaims != nil {
-		clone := *state
-		r.probeClaims <- &clone
-	}
-	return false, nil
-}
-
-func (r *snapshotBusinessSuccessRepo) PersistCodexQuotaOverdraftProbeUnlessFailed(
-	_ context.Context,
-	accountID int64,
-	state *CodexQuotaOverdraftProbeState,
-) (bool, error) {
-	if state == nil || state.Status == codexQuotaOverdraftProbeFailed {
-		return false, nil
-	}
-	account, err := r.GetByID(context.Background(), accountID)
-	if err != nil {
-		return false, err
-	}
-	clone := *state
-	mergeAccountExtra(account, map[string]any{CodexQuotaOverdraftProbeExtraKey: &clone})
-	if r.businessSuccesses != nil {
-		r.businessSuccesses <- &clone
-	}
-	return true, nil
 }
 
 func (r stubOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
@@ -568,6 +530,19 @@ func TestOpenAIGatewayService_BindHTTPResponseAccount(t *testing.T) {
 	require.Equal(t, account.ID, got)
 }
 
+func TestOpenAIGatewayService_BindStickySessionUsesConfiguredTTL(t *testing.T) {
+	cache := &stubGatewayCache{}
+	svc := &OpenAIGatewayService{
+		cache: cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS: config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+		}},
+	}
+
+	require.NoError(t, svc.BindStickySession(context.Background(), nil, "session", 101))
+	require.Equal(t, 6*time.Hour, cache.lastSetTTL)
+}
+
 func TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
@@ -687,6 +662,8 @@ func (c stubConcurrencyCache) GetAccountWaitingCount(ctx context.Context, accoun
 type stubGatewayCache struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
+	lastSetTTL      time.Duration
+	lastRefreshTTL  time.Duration
 }
 
 func (c *stubGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
@@ -701,10 +678,12 @@ func (c *stubGatewayCache) SetSessionAccountID(ctx context.Context, groupID int6
 		c.sessionBindings = make(map[string]int64)
 	}
 	c.sessionBindings[sessionHash] = accountID
+	c.lastSetTTL = ttl
 	return nil
 }
 
 func (c *stubGatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
+	c.lastRefreshTTL = ttl
 	return nil
 }
 
@@ -1106,8 +1085,11 @@ func TestOpenAISelectAccountWithLoadAwareness_LoadBatchErrorFallback(t *testing.
 	}
 
 	svc := &OpenAIGatewayService{
-		accountRepo:        repo,
-		cache:              cache,
+		accountRepo: repo,
+		cache:       cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS: config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+		}},
 		concurrencyService: NewConcurrencyService(concurrencyCache),
 	}
 
@@ -1124,6 +1106,7 @@ func TestOpenAISelectAccountWithLoadAwareness_LoadBatchErrorFallback(t *testing.
 	if cache.sessionBindings["openai:fallback"] != 2 {
 		t.Fatalf("expected sticky session updated")
 	}
+	require.Equal(t, 6*time.Hour, cache.lastSetTTL)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -1174,6 +1157,9 @@ func TestOpenAISelectAccountForModelWithExclusions_SetsStickyBinding(t *testing.
 	svc := &OpenAIGatewayService{
 		accountRepo: repo,
 		cache:       cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS: config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+		}},
 	}
 
 	acc, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, sessionHash, "gpt-4", nil)
@@ -1186,6 +1172,28 @@ func TestOpenAISelectAccountForModelWithExclusions_SetsStickyBinding(t *testing.
 	if cache.sessionBindings["openai:"+sessionHash] != 1 {
 		t.Fatalf("expected sticky session binding")
 	}
+	require.Equal(t, 6*time.Hour, cache.lastSetTTL)
+}
+
+func TestOpenAISelectAccountForModelWithExclusions_StickyHitRefreshUsesConfiguredTTL(t *testing.T) {
+	sessionHash := "refresh"
+	repo := stubOpenAIAccountRepo{accounts: []Account{
+		{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 1},
+	}}
+	cache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: 1}}
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		cache:       cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS: config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+		}},
+	}
+
+	account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, sessionHash, "gpt-4", nil)
+	require.NoError(t, err)
+	require.NotNil(t, account)
+	require.Equal(t, int64(1), account.ID)
+	require.Equal(t, 6*time.Hour, cache.lastRefreshTTL)
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
@@ -1205,8 +1213,11 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 	}
 
 	svc := &OpenAIGatewayService{
-		accountRepo:        repo,
-		cache:              cache,
+		accountRepo: repo,
+		cache:       cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS: config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+		}},
 		concurrencyService: NewConcurrencyService(concurrencyCache),
 	}
 
@@ -1220,6 +1231,7 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 	if selection.Account == nil || selection.Account.ID != 1 {
 		t.Fatalf("expected account 1")
 	}
+	require.Zero(t, cache.lastRefreshTTL, "creating a wait plan must not extend a binding before the slot is acquired")
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_PrefersLowerLoad(t *testing.T) {
@@ -1239,8 +1251,12 @@ func TestOpenAISelectAccountWithLoadAwareness_PrefersLowerLoad(t *testing.T) {
 	}
 
 	svc := &OpenAIGatewayService{
-		accountRepo:        repo,
-		cache:              cache,
+		accountRepo: repo,
+		cache:       cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS:   config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+			Scheduling: config.GatewaySchedulingConfig{LoadBatchEnabled: true},
+		}},
 		concurrencyService: NewConcurrencyService(concurrencyCache),
 	}
 
@@ -1254,6 +1270,7 @@ func TestOpenAISelectAccountWithLoadAwareness_PrefersLowerLoad(t *testing.T) {
 	if cache.sessionBindings["openai:load"] != 2 {
 		t.Fatalf("expected sticky session updated")
 	}
+	require.Equal(t, 6*time.Hour, cache.lastSetTTL)
 }
 
 func TestOpenAISelectAccountForModelWithExclusions_StickyExcludedFallback(t *testing.T) {
@@ -1888,7 +1905,58 @@ func TestOpenAIStreamingResponseFailedBeforeOutputRateLimitUsesPoolRetryPolicy(t
 	require.Equal(t, http.StatusTooManyRequests, opsEvents[len(opsEvents)-1].UpstreamStatusCode)
 }
 
-// HTTP 200 流内限流的响应头是正常配额快照，不能用于写入默认账号冷却。
+func TestOpenAIStreamingResponseFailedUsageLimitPersistsStandard429AndBlocksAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	repo := &streamRateLimitAccountRepo{}
+	rateLimitService := NewRateLimitService(repo, nil, cfg, nil, nil)
+	svc := &OpenAIGatewayService{cfg: cfg, rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	resetAt := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	failedPayload := fmt.Sprintf(
+		`{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":%d}}}`,
+		resetAt.Unix(),
+	)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.failed",
+			"data: " + failedPayload,
+			"",
+		}, "\n"))),
+	}
+	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "oauth-account"}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Equal(t, 1, repo.setRateLimitedCalls)
+	require.Equal(t, account.ID, repo.lastAccountID)
+	require.Equal(t, resetAt, repo.lastResetAt)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	rawUntil, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok)
+	runtimeUntil, ok := rawUntil.(time.Time)
+	require.True(t, ok)
+	require.Equal(t, resetAt, runtimeUntil)
+}
+
+// HTTP 200 流内并发限流的响应头是正常配额快照，不能用于写入默认账号冷却。
 func TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockAccountScheduling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -1898,7 +1966,10 @@ func TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockAccountScheduling(t *
 			MaxLineSize:               defaultMaxLineSize,
 		},
 	}
-	svc := &OpenAIGatewayService{cfg: cfg}
+	repo := &streamRateLimitAccountRepo{}
+	rateLimitService := NewRateLimitService(repo, nil, cfg, nil, nil)
+	svc := &OpenAIGatewayService{cfg: cfg, rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1927,6 +1998,7 @@ func TestOpenAIStreamingResponseFailedRateLimitDoesNotBlockAccountScheduling(t *
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Zero(t, repo.setRateLimitedCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
@@ -3071,112 +3143,6 @@ func TestOpenAIUpdateCodexUsageSnapshotFromHeaders(t *testing.T) {
 	}
 }
 
-// ptrIntOpenAIGateway 返回测试用 int 指针，供非 unit 构建的集成测试使用。
-func ptrIntOpenAIGateway(v int) *int { return &v }
-
-func TestOpenAIUpdateCodexUsageSnapshotStartsProbeAfterHeadersCrossThreshold(t *testing.T) {
-	now := time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC)
-	repo := &snapshotThresholdBridgeRepo{
-		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
-			ID:          124,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: true,
-			Extra: map[string]any{
-				CodexQuotaOverdraftEnabledExtraKey: true,
-				"codex_7d_used_percent":            94.0,
-			},
-		}}},
-		probeClaims: make(chan *CodexQuotaOverdraftProbeState, 1),
-	}
-	coordinator := &CodexQuotaOverdraftCoordinator{
-		accountRepo:  repo,
-		httpUpstream: &accountUsageHTTPUpstreamStub{},
-		now:          func() time.Time { return now },
-	}
-	svc := &OpenAIGatewayService{accountRepo: repo, codexQuotaOverdraft: coordinator}
-	snapshot := &OpenAICodexUsageSnapshot{
-		PrimaryUsedPercent:         ptrFloat64(20),
-		PrimaryResetAfterSeconds:   ptrIntOpenAIGateway(1200),
-		PrimaryWindowMinutes:       ptrIntOpenAIGateway(300),
-		SecondaryUsedPercent:       ptrFloat64(100),
-		SecondaryResetAfterSeconds: ptrIntOpenAIGateway(6 * 24 * 60 * 60),
-		SecondaryWindowMinutes:     ptrIntOpenAIGateway(10080),
-	}
-
-	svc.updateCodexUsageSnapshot(context.Background(), 124, snapshot)
-
-	select {
-	case state := <-repo.probeClaims:
-		require.Equal(t, "7d", state.QuotaWindow)
-		require.NotEmpty(t, state.CycleKey)
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected threshold-crossing response headers to start the overdraft probe path")
-	}
-}
-
-func TestObserveCodexQuotaOverdraftBusinessSuccessUsesLatestHeadersOnce(t *testing.T) {
-	now := time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC)
-	baseRepo := &snapshotThresholdBridgeRepo{
-		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
-			ID:          125,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: true,
-			Extra: map[string]any{
-				CodexQuotaOverdraftEnabledExtraKey: true,
-				"codex_7d_used_percent":            95.0,
-			},
-		}}},
-		probeClaims: make(chan *CodexQuotaOverdraftProbeState, 1),
-	}
-	repo := &snapshotBusinessSuccessRepo{
-		snapshotThresholdBridgeRepo: baseRepo,
-		businessSuccesses:           make(chan *CodexQuotaOverdraftProbeState, 2),
-	}
-	coordinator := &CodexQuotaOverdraftCoordinator{
-		accountRepo:  repo,
-		httpUpstream: &accountUsageHTTPUpstreamStub{},
-		now:          func() time.Time { return now },
-	}
-	svc := &OpenAIGatewayService{accountRepo: repo, codexQuotaOverdraft: coordinator}
-	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
-	markCodexQuotaOverdraftInjected(ctx, 125)
-	headers := make(http.Header)
-	headers.Set("x-codex-primary-used-percent", "20")
-	headers.Set("x-codex-primary-window-minutes", "300")
-	headers.Set("x-codex-primary-reset-after-seconds", "1200")
-	headers.Set("x-codex-secondary-used-percent", "100")
-	headers.Set("x-codex-secondary-window-minutes", "10080")
-	headers.Set("x-codex-secondary-reset-after-seconds", strconv.Itoa(6*24*60*60))
-
-	account, err := repo.GetByID(context.Background(), 125)
-	require.NoError(t, err)
-	svc.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, "gpt-5.4", headers)
-
-	select {
-	case state := <-repo.businessSuccesses:
-		require.Equal(t, codexQuotaOverdraftProbePassed, state.Status)
-		require.Equal(t, "business_request_ok", state.ReasonCode)
-		require.Equal(t, "7d", state.QuotaWindow)
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected latest response headers to produce a business-success state")
-	}
-
-	select {
-	case state := <-repo.businessSuccesses:
-		t.Fatalf("unexpected duplicate business-success state: %+v", state)
-	case <-time.After(150 * time.Millisecond):
-	}
-	select {
-	case state := <-repo.probeClaims:
-		t.Fatalf("injected business success must not race a separate threshold probe: %+v", state)
-	default:
-	}
-}
-
 func TestOpenAIResponsesRequestPathSuffix(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -3237,6 +3203,57 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
 	require.NotEmpty(t, req.Header.Get("Session_Id"))
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+}
+
+func TestOpenAIBusinessRequestBodyPreservedWhenQuotaOverdraftEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"keep this request byte-for-byte"}]}],"stream":true,"store":false}`)
+	account := &Account{
+		ID:       125,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra: map[string]any{
+			CodexQuotaOverdraftEnabledExtraKey: true,
+			"codex_7d_used_percent":            99.0,
+		},
+	}
+	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+
+	tests := []struct {
+		name  string
+		build func(*OpenAIGatewayService, *gin.Context) (*http.Request, error)
+	}{
+		{
+			name: "normal",
+			build: func(svc *OpenAIGatewayService, c *gin.Context) (*http.Request, error) {
+				return svc.buildUpstreamRequest(ctx, c, account, body, "token", true, "", true)
+			},
+		},
+		{
+			name: "passthrough",
+			build: func(svc *OpenAIGatewayService, c *gin.Context) (*http.Request, error) {
+				return svc.buildUpstreamRequestOpenAIPassthrough(ctx, c, account, body, "token")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body)).WithContext(ctx)
+			req, err := tt.build(&OpenAIGatewayService{}, c)
+			require.NoError(t, err)
+			got, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			require.Equal(t, body, got)
+			require.NotContains(t, string(got), "custom_tool_call")
+			require.NotContains(t, string(got), "call_sub2api_overdraft_")
+		})
+	}
 }
 
 func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesExplicitAPIKeyBetaHeader(t *testing.T) {
@@ -3410,6 +3427,105 @@ func TestOpenAIBuildUpstreamRequestUsesTLSRouterUpstreamHeaders(t *testing.T) {
 	require.Equal(t, routerMatch.UpstreamUserAgent, req.Header.Get("User-Agent"))
 	require.Equal(t, routerMatch.UpstreamOriginator, req.Header.Get("originator"))
 	require.Equal(t, "9.9.0", req.Header.Get("version"))
+}
+
+func TestOpenAIBuildUpstreamRequestTLSProfileOnlyRouteKeepsExecIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCanonicalUA(t, DefaultOpenAICodexUserAgent)
+
+	const execUA = "codex_exec/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_exec; 0.145.0)"
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", execUA)
+	c.Request.Header.Set("originator", "codex_exec")
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+	routerMatch := TLSFingerprintRouterMatchResult{
+		Matched:                 true,
+		RouterID:                9,
+		RuleName:                "Codex exec TLS only",
+		TLSFingerprintProfileID: 7,
+	}
+
+	req, err := svc.buildUpstreamRequest(
+		c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", true, routerMatch,
+	)
+	require.NoError(t, err)
+	require.Equal(t, execUA, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex_exec", req.Header.Get("originator"))
+	require.Equal(t, "0.145.0", req.Header.Get("version"))
+}
+
+func TestOpenAIBuildUpstreamRequestTLSProfileOnlyRouteRejectsNonOfficialIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const canonicalUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", "opencode/1.0")
+	c.Request.Header.Set("originator", "opencode")
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+	routerMatch := TLSFingerprintRouterMatchResult{
+		Matched:                 true,
+		RouterID:                9,
+		RuleName:                "TLS only",
+		TLSFingerprintProfileID: 7,
+	}
+
+	req, err := svc.buildUpstreamRequest(
+		c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false, routerMatch,
+	)
+	require.NoError(t, err)
+	require.Equal(t, canonicalUA, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", req.Header.Get("originator"))
+	require.Equal(t, "0.200.1", req.Header.Get("version"))
+}
+
+func TestOpenAIBuildUpstreamRequestPassthroughTLSProfileOnlyRouteKeepsTUIIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCanonicalUA(t, DefaultOpenAICodexUserAgent)
+
+	const tuiUA = "codex-tui/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.145.0)"
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", tuiUA)
+	c.Request.Header.Set("originator", "codex-tui")
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+	routerMatch := TLSFingerprintRouterMatchResult{
+		Matched:                 true,
+		RouterID:                9,
+		RuleName:                "Codex TUI TLS only",
+		TLSFingerprintProfileID: 8,
+	}
+
+	req, err := svc.buildUpstreamRequestOpenAIPassthrough(
+		c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", routerMatch,
+	)
+	require.NoError(t, err)
+	require.Equal(t, tuiUA, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", req.Header.Get("originator"))
+	require.Equal(t, "0.145.0", req.Header.Get("version"))
 }
 
 func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesAccountFallback(t *testing.T) {

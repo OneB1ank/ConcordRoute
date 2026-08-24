@@ -118,12 +118,43 @@ func TestShouldEnsureCodexFingerprintSeedForExtraUpdates(t *testing.T) {
 	}))
 }
 
+func TestPrepareCodexFingerprintSeedForCreate_OnlyExplicitModesGenerate(t *testing.T) {
+	for _, extra := range []map[string]any{
+		nil,
+		{},
+		{codexFingerprintModeExtraKey: ""},
+		{codexFingerprintModeExtraKey: "off"},
+		{codexFingerprintModeExtraKey: "invalid"},
+		{CodexFingerprintSeedExtraKey: uuid.NewString()},
+	} {
+		account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: extra}
+
+		require.Empty(t, PrepareCodexFingerprintSeedForCreate(account))
+		require.NotContains(t, account.Extra, CodexFingerprintSeedExtraKey)
+	}
+
+	for _, mode := range []string{"device", "session", "cockpit", "full"} {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra:    map[string]any{codexFingerprintModeExtraKey: mode},
+		}
+
+		seed := PrepareCodexFingerprintSeedForCreate(account)
+		require.NoError(t, uuid.Validate(seed), mode)
+		require.Equal(t, seed, account.Extra[CodexFingerprintSeedExtraKey], mode)
+	}
+}
+
 func TestPrepareCodexFingerprintSeedForCreate_RootRotatesIncomingShadowPreservesParent(t *testing.T) {
 	incoming := uuid.NewString()
 	root := &Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
-		Extra:    map[string]any{CodexFingerprintSeedExtraKey: incoming},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: "session",
+			CodexFingerprintSeedExtraKey: incoming,
+		},
 	}
 	parentID := int64(7)
 	shadow := &Account{
@@ -141,6 +172,19 @@ func TestPrepareCodexFingerprintSeedForCreate_RootRotatesIncomingShadowPreserves
 	assert.Equal(t, incoming, shadowSeed, "影子账号必须继承父账号种子")
 }
 
+func TestPrepareCodexFingerprintSeedForCreate_ShadowWithoutParentSeedStaysEmptyWhenOff(t *testing.T) {
+	parentID := int64(7)
+	shadow := &Account{
+		Platform:        PlatformOpenAI,
+		Type:            AccountTypeOAuth,
+		ParentAccountID: &parentID,
+		Extra:           map[string]any{CodexFingerprintSeedExtraKey: ""},
+	}
+
+	require.Empty(t, PrepareCodexFingerprintSeedForCreate(shadow))
+	require.NotContains(t, shadow.Extra, CodexFingerprintSeedExtraKey)
+}
+
 // --- GetCodexFingerprintMode ---
 
 func TestGetCodexFingerprintMode(t *testing.T) {
@@ -151,9 +195,9 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}{
 		{"nil 账号", nil, codexFingerprintOff},
 		{"非 OAuth 账号", &Account{Platform: PlatformOpenAI, Type: "api_key"}, codexFingerprintOff},
-		{"无 extra 默认 cockpit", newTestOAuthAccount(1, nil), codexFingerprintCockpit},
-		{"空值默认 cockpit", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintCockpit},
-		{"非法值默认 cockpit", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintCockpit},
+		{"无 extra 默认 off", newTestOAuthAccount(1, nil), codexFingerprintOff},
+		{"空值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintOff},
+		{"非法值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintOff},
 		{"显式 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), codexFingerprintOff},
 		{"device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), codexFingerprintDevice},
 		{"session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"}), codexFingerprintSession},
@@ -250,13 +294,10 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsCockpit(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
-	require.NotNil(t, ids, "无 extra 默认 cockpit 模式，应返回非 nil")
-	assert.Equal(t, codexFingerprintCockpit, ids.mode)
-	assert.NotEmpty(t, ids.sessionID)
-	assert.NotEmpty(t, ids.turnID)
+	assert.Nil(t, ids, "无 extra 时不应改写客户端身份")
 }
 
 // --- applyCodexFingerprintHeaders: off 模式 ---

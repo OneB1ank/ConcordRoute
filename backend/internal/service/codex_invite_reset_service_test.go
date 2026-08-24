@@ -36,13 +36,21 @@ type codexInviteResetHTTPUpstreamStub struct {
 	accountIDs    []int64
 	concurrencies []int
 	profiles      []*tlsfingerprint.Profile
+	standardCalls int
+	tlsCalls      int
 }
 
 func (s *codexInviteResetHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return s.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+	s.standardCalls++
+	return s.record(req, proxyURL, accountID, accountConcurrency, nil)
 }
 
 func (s *codexInviteResetHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	s.tlsCalls++
+	return s.record(req, proxyURL, accountID, accountConcurrency, profile)
+}
+
+func (s *codexInviteResetHTTPUpstreamStub) record(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	body := ""
 	if req.Body != nil {
 		payload, _ := io.ReadAll(req.Body)
@@ -275,7 +283,7 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetUserAgent(t *testing.T) 
 		9: {
 			ID:                        9,
 			Enabled:                   true,
-			CodexInviteResetUserAgent: " Codex Desktop/0.135.0-alpha.1 (Windows 10.0.26200; x86_64) ",
+			CodexInviteResetUserAgent: " codex-tui/0.150.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.150.0) ",
 		},
 	}}
 	svc := NewCodexInviteResetService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, nil, routerReader)
@@ -283,7 +291,8 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetUserAgent(t *testing.T) 
 	_, err := svc.GetStatus(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 3)
-	require.Equal(t, "Codex Desktop/0.135.0-alpha.1 (Windows 10.0.26200; x86_64)", upstream.requests[0].Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.150.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.150.0)", upstream.requests[0].Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", upstream.requests[0].Header.Get("originator"))
 }
 
 func TestCodexInviteResetServiceDoesNotReuseTokenUserAgent(t *testing.T) {
@@ -339,12 +348,18 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile(t *testing.T)
 			ID:                                      9,
 			Enabled:                                 true,
 			CodexInviteResetTLSFingerprintProfileID: &inviteResetProfileID,
+			Rules: []model.TLSFingerprintRouterRule{{
+				Enabled:                 true,
+				Pattern:                 "codex-cli/",
+				TLSFingerprintProfileID: 21,
+			}},
 		},
 	}}
 	profileService := &TLSFingerprintProfileService{
 		localCache: map[int64]*model.TLSFingerprintProfile{
 			10: {ID: 10, Name: "account-fixed"},
 			20: {ID: 20, Name: "router-token"},
+			21: {ID: 21, Name: "router-rule"},
 		},
 	}
 	svc := NewCodexInviteResetService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
@@ -354,6 +369,137 @@ func TestCodexInviteResetServiceUsesTLSRouterInviteResetTLSProfile(t *testing.T)
 	require.Len(t, upstream.profiles, 3)
 	require.NotNil(t, upstream.profiles[0])
 	require.Equal(t, "router-token", upstream.profiles[0].Name)
+	require.Equal(t, 0, upstream.standardCalls)
+	require.Equal(t, 3, upstream.tlsCalls)
+}
+
+func TestCodexInviteResetServiceFallsBackToAccountTLSWithoutExplicitInviteResetProfile(t *testing.T) {
+	missingProfileID := int64(99)
+	tests := []struct {
+		name      string
+		profileID *int64
+	}{
+		{name: "not configured"},
+		{name: "configured profile missing", profileID: &missingProfileID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				ID:       44,
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"access_token": "oauth-token",
+				},
+				Extra: map[string]any{
+					"enable_tls_fingerprint":     true,
+					"tls_fingerprint_profile_id": int64(10),
+					"tls_fingerprint_router_id":  int64(9),
+				},
+			}
+			upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
+				codexInviteResetJSONResponse(`{"requires_explicit_confirmation":true}`),
+				codexInviteResetJSONResponse(`{"rules":[]}`),
+				codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
+			}}
+			routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+				9: {
+					ID:                                      9,
+					Enabled:                                 true,
+					CodexInviteResetTLSFingerprintProfileID: tt.profileID,
+				},
+			}}
+			profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+				10: {ID: 10, Name: "inference-only"},
+			}}
+			svc := NewCodexInviteResetService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
+
+			_, err := svc.GetStatus(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.Equal(t, 0, upstream.standardCalls)
+			require.Equal(t, 3, upstream.tlsCalls)
+			require.Len(t, upstream.profiles, 3)
+			for _, profile := range upstream.profiles {
+				require.NotNil(t, profile)
+				require.Equal(t, "inference-only", profile.Name)
+			}
+		})
+	}
+}
+
+func TestCodexInviteResetServiceIgnoresInferenceRuleAndUsesAccountTLS(t *testing.T) {
+	account := &Account{
+		ID:          46,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "oauth-token", "user_agent": "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)"},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":     true,
+			"tls_fingerprint_profile_id": int64(10),
+			"tls_fingerprint_router_id":  int64(9),
+		},
+	}
+	upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
+		codexInviteResetJSONResponse(`{"requires_explicit_confirmation":true}`),
+		codexInviteResetJSONResponse(`{"rules":[]}`),
+		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
+	}}
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		9: {
+			ID:      9,
+			Enabled: true,
+			Rules: []model.TLSFingerprintRouterRule{{
+				Enabled:                 true,
+				Pattern:                 "codex_cli_rs/",
+				TLSFingerprintProfileID: 21,
+			}},
+		},
+	}}
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		10: {ID: 10, Name: "account-fixed"},
+		21: {ID: 21, Name: "router-rule"},
+	}}
+	svc := NewCodexInviteResetService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
+
+	_, err := svc.GetStatus(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 3, upstream.tlsCalls)
+	require.Equal(t, 0, upstream.standardCalls)
+	for _, profile := range upstream.profiles {
+		require.NotNil(t, profile)
+		require.Equal(t, "account-fixed", profile.Name)
+	}
+}
+
+func TestCodexInviteResetServiceUsesStandardTLSWhenAccountTLSIsDisabled(t *testing.T) {
+	account := &Account{
+		ID:          47,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "oauth-token"},
+		Extra: map[string]any{
+			"tls_fingerprint_profile_id": int64(10),
+			"tls_fingerprint_router_id":  int64(9),
+		},
+	}
+	upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
+		codexInviteResetJSONResponse(`{"requires_explicit_confirmation":true}`),
+		codexInviteResetJSONResponse(`{"rules":[]}`),
+		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
+	}}
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		9: {ID: 9, Enabled: true},
+	}}
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		10: {ID: 10, Name: "account-fixed"},
+	}}
+	svc := NewCodexInviteResetService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
+
+	_, err := svc.GetStatus(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 3, upstream.standardCalls)
+	require.Equal(t, 0, upstream.tlsCalls)
 }
 
 func TestNormalizeCodexInviteEmailsRejectsInvalidAndTooMany(t *testing.T) {

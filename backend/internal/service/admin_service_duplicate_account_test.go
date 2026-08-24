@@ -112,7 +112,7 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 			"config":                                  map[string]any{"region": "us-east-1"},
 			"items":                                   []any{map[string]any{"enabled": true}},
 			CodexQuotaOverdraftEnabledExtraKey:        true,
-			CodexQuotaOverdraftProbeExtraKey:          map[string]any{"status": codexQuotaOverdraftProbePassed},
+			CodexQuotaOverdraftLegacyProbeExtraKey:    map[string]any{"status": "passed"},
 			"quota_limit":                             1000,
 			"quota_used":                              450,
 			"quota_daily_used":                        25,

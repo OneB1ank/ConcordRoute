@@ -25,17 +25,25 @@ import (
 )
 
 type agentIdentityRegistrationUpstream struct {
-	req       *http.Request
-	proxyURL  string
-	accountID int64
-	profile   *tlsfingerprint.Profile
+	req             *http.Request
+	proxyURL        string
+	accountID       int64
+	profile         *tlsfingerprint.Profile
+	calledDo        bool
+	calledDoWithTLS bool
 }
 
 func (r *agentIdentityRegistrationUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return r.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+	r.calledDo = true
+	return r.record(req, proxyURL, accountID, nil)
 }
 
 func (r *agentIdentityRegistrationUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	r.calledDoWithTLS = true
+	return r.record(req, proxyURL, accountID, profile)
+}
+
+func (r *agentIdentityRegistrationUpstream) record(req *http.Request, proxyURL string, accountID int64, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	r.req = req
 	r.proxyURL = proxyURL
 	r.accountID = accountID
@@ -158,8 +166,12 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 	withCodexCanonicalUA(t, macUA)
 	key, privateKey := newTestAgentIdentityKey(t)
 	profileID := int64(72)
+	routerProfileID := int64(74)
+	accountProfileID := int64(75)
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
-		profileID: {ID: profileID, Name: "macOS auth TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+		profileID:        {ID: profileID, Name: "macOS auth TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+		routerProfileID:  {ID: routerProfileID, Name: "router TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+		accountProfileID: {ID: accountProfileID, Name: "account TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
 	}}
 	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
 		ID:                                       10,
@@ -167,6 +179,13 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 		Enabled:                                  true,
 		ChatGPTOAuthTokenUserAgent:               macUA,
 		ChatGPTOAuthTokenTLSFingerprintProfileID: &profileID,
+		Rules: []model.TLSFingerprintRouterRule{{
+			Name:                    "normal router fallback",
+			Enabled:                 true,
+			MatchType:               "prefix",
+			Pattern:                 "codex-tui/",
+			TLSFingerprintProfileID: routerProfileID,
+		}},
 	})
 	upstream := &agentIdentityRegistrationUpstream{}
 	gateway := &OpenAIGatewayService{
@@ -187,7 +206,11 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 			"agent_runtime_id":  key.runtimeID,
 			"agent_private_key": privateKey,
 		},
-		Extra: map[string]any{"tls_fingerprint_router_id": int64(10)},
+		Extra: map[string]any{
+			"tls_fingerprint_router_id":  int64(10),
+			"enable_tls_fingerprint":     true,
+			"tls_fingerprint_profile_id": accountProfileID,
+		},
 	}
 
 	taskID, err := registerAgentIdentityTask(t.Context(), account, gateway)
@@ -197,24 +220,28 @@ func TestRegisterAgentIdentityTaskUsesAuthRouterTLSUAAndAccountProxy(t *testing.
 	require.Equal(t, account.ID, upstream.accountID)
 	require.NotNil(t, upstream.profile)
 	require.Equal(t, "macOS auth TLS", upstream.profile.Name)
+	require.False(t, upstream.calledDo)
+	require.True(t, upstream.calledDoWithTLS)
 	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.req.Header.Get("Originator"))
 	require.Empty(t, upstream.req.Header.Get("Version"))
 }
 
-func TestRegisterAgentIdentityTaskFallsBackToAccountTLSProfile(t *testing.T) {
+func TestRegisterAgentIdentityTaskInvalidExplicitAuthProfileUsesStandardTLS(t *testing.T) {
 	const canonicalUA = "codex-tui/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
 	const accountUA = "codex-tui/9.9.9 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 9.9.9)"
 	withCodexCanonicalUA(t, canonicalUA)
 	key, privateKey := newTestAgentIdentityKey(t)
 	profileID := int64(73)
 	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
-		profileID: {ID: profileID, Name: "account macOS TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+		profileID: {ID: profileID, Name: "inference-only", ALPNProtocols: []string{"h2", "http/1.1"}},
 	}}
+	missingAuthProfileID := int64(404)
 	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
-		ID:      12,
-		Name:    "Codex auth fallback",
-		Enabled: true,
+		ID:                                       12,
+		Name:                                     "Codex auth fallback",
+		Enabled:                                  true,
+		ChatGPTOAuthTokenTLSFingerprintProfileID: &missingAuthProfileID,
 	})
 	upstream := &agentIdentityRegistrationUpstream{}
 	gateway := &OpenAIGatewayService{
@@ -243,10 +270,120 @@ func TestRegisterAgentIdentityTaskFallsBackToAccountTLSProfile(t *testing.T) {
 	taskID, err := registerAgentIdentityTask(t.Context(), account, gateway)
 	require.NoError(t, err)
 	require.Equal(t, "task-routed", taskID)
-	require.NotNil(t, upstream.profile)
-	require.Equal(t, "account macOS TLS", upstream.profile.Name)
-	expectedUA, _ := CodexAuthIdentityForUserAgent(accountUA)
+	require.Nil(t, upstream.profile)
+	require.True(t, upstream.calledDo)
+	require.False(t, upstream.calledDoWithTLS)
+	expectedUA, expectedOriginator := CodexAuthIdentityForUserAgent(canonicalUA)
 	require.Equal(t, expectedUA, upstream.req.Header.Get("User-Agent"))
+	require.Equal(t, expectedOriginator, upstream.req.Header.Get("Originator"))
+}
+
+func TestRegisterAgentIdentityTaskRouterRuleDoesNotAffectAuthEndpoint(t *testing.T) {
+	const canonicalUA = "codex-tui/0.200.1 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.200.1)"
+	const accountUA = "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)"
+	withCodexCanonicalUA(t, canonicalUA)
+	key, privateKey := newTestAgentIdentityKey(t)
+	routerProfileID := int64(76)
+	accountProfileID := int64(77)
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		routerProfileID:  {ID: routerProfileID, Name: "router inference TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+		accountProfileID: {ID: accountProfileID, Name: "account inference TLS", ALPNProtocols: []string{"h2", "http/1.1"}},
+	}}
+	routerService := newTLSFingerprintRouterTestService(&model.TLSFingerprintRouter{
+		ID:      13,
+		Name:    "Codex auth router isolation",
+		Enabled: true,
+		Rules: []model.TLSFingerprintRouterRule{{
+			Name:                    "windows cli",
+			Enabled:                 true,
+			MatchType:               "prefix",
+			Pattern:                 "codex_cli_rs/",
+			TLSFingerprintProfileID: routerProfileID,
+		}},
+	})
+	upstream := &agentIdentityRegistrationUpstream{}
+	gateway := &OpenAIGatewayService{
+		httpUpstream:        upstream,
+		tlsFPProfileService: profileService,
+		tlsFPRouterService:  routerService,
+	}
+	account := &Account{
+		ID:          93,
+		Type:        AccountTypeOAuth,
+		Platform:    PlatformOpenAI,
+		Concurrency: 2,
+		Credentials: map[string]any{
+			"auth_mode":         OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":  key.runtimeID,
+			"agent_private_key": privateKey,
+			"user_agent":        accountUA,
+		},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":     true,
+			"tls_fingerprint_profile_id": accountProfileID,
+			"tls_fingerprint_router_id":  int64(13),
+		},
+	}
+
+	taskID, err := registerAgentIdentityTask(t.Context(), account, gateway)
+	require.NoError(t, err)
+	require.Equal(t, "task-routed", taskID)
+	require.Nil(t, upstream.profile)
+	require.True(t, upstream.calledDo)
+	require.False(t, upstream.calledDoWithTLS)
+	expectedUA, expectedOriginator := CodexAuthIdentityForUserAgent(canonicalUA)
+	require.Equal(t, expectedUA, upstream.req.Header.Get("User-Agent"))
+	require.Equal(t, expectedOriginator, upstream.req.Header.Get("Originator"))
+}
+
+func TestRegisterAgentIdentityTaskWithoutTLSConfigurationUsesStandardTLS(t *testing.T) {
+	const canonicalUA = "Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)"
+	const accountUA = "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)"
+	withCodexCanonicalUA(t, canonicalUA)
+	key, privateKey := newTestAgentIdentityKey(t)
+	upstream := &agentIdentityRegistrationUpstream{}
+	gateway := &OpenAIGatewayService{httpUpstream: upstream}
+	account := &Account{
+		ID:          94,
+		Type:        AccountTypeOAuth,
+		Platform:    PlatformOpenAI,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"auth_mode":         OpenAIAuthModeAgentIdentity,
+			"agent_runtime_id":  key.runtimeID,
+			"agent_private_key": privateKey,
+			"user_agent":        accountUA,
+		},
+	}
+
+	taskID, err := registerAgentIdentityTask(t.Context(), account, gateway)
+	require.NoError(t, err)
+	require.Equal(t, "task-routed", taskID)
+	require.Nil(t, upstream.profile)
+	require.True(t, upstream.calledDo)
+	require.False(t, upstream.calledDoWithTLS)
+	expectedUA, expectedOriginator := CodexAuthIdentityForUserAgent(canonicalUA)
+	require.Equal(t, expectedUA, upstream.req.Header.Get("User-Agent"))
+	require.Equal(t, expectedOriginator, upstream.req.Header.Get("Originator"))
+}
+
+func TestExecuteAgentIdentityTaskRegistrationRejectsMissingInputs(t *testing.T) {
+	upstream := &agentIdentityRegistrationUpstream{}
+	gateway := &OpenAIGatewayService{httpUpstream: upstream}
+	req, err := http.NewRequest(http.MethodPost, "https://example.test/task", nil)
+	require.NoError(t, err)
+
+	resp, handled, err := gateway.executeAgentIdentityTaskRegistration(t.Context(), nil, req)
+	require.NoError(t, err)
+	require.Nil(t, resp)
+	require.False(t, handled)
+
+	resp, handled, err = gateway.executeAgentIdentityTaskRegistration(t.Context(), &Account{ID: 1}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resp)
+	require.False(t, handled)
+	require.False(t, upstream.calledDo)
+	require.False(t, upstream.calledDoWithTLS)
 }
 
 func TestEnsureAgentIdentityTaskPersistsAndRedactsCredentials(t *testing.T) {

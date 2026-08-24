@@ -163,27 +163,4 @@ describe('UsageProgressBar', () => {
     expect(label.classes()).not.toContain('w-[32px]')
   })
 
-  it('显示透支窗口的请求、Token 与费用统计', () => {
-    const wrapper = mount(UsageProgressBar, {
-      props: {
-        label: '5h',
-        utilization: 100,
-        color: 'indigo',
-        overdraftActive: true,
-        overdraftRecoverAt: '2026-03-17T02:30:00Z',
-        overdraftStats: {
-          requests: 12,
-          tokens: 3456,
-          cost: 1.23,
-          standard_cost: 1.23,
-          user_cost: 1.23
-        }
-      }
-    })
-
-    expect(wrapper.text()).toContain('usage.overdraftActive')
-    expect(wrapper.text()).toContain('12 req')
-    expect(wrapper.text()).toContain('$1.23')
-    expect(wrapper.get('[title*="usage.overdraftRecoverAt"]').attributes('title')).toContain('2026')
-  })
 })

@@ -1013,7 +1013,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		s.bindHTTPResponseAccount(ctx, c, account, responseID)
 
-		s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, originalModel, resp.Header)
+		s.ObserveCodexUsageHeaders(ctx, account, resp.Header)
 
 		if usage == nil {
 			usage = &OpenAIUsage{}
@@ -1052,7 +1052,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, routerMatch ...TLSFingerprintRouterMatchResult) (*http.Request, error) {
-	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -1155,7 +1154,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 终态收口：originator 必须与最终 User-Agent 首段配套且为官方身份，否则上游 404（issue #3901）。
 	if account.Type == AccountTypeOAuth {
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, routerMatch...))
+		s.enforceCodexOutboundIdentityHeaders(req.Header, account, routerMatch...)
 	}
 
 	// Ensure required headers exist

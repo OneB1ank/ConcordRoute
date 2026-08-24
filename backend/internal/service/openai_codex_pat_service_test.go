@@ -20,13 +20,21 @@ type codexPATHTTPUpstreamRecorder struct {
 	accountID          int64
 	accountConcurrency int
 	profile            *tlsfingerprint.Profile
+	calledDo           bool
+	calledDoWithTLS    bool
 }
 
 func (r *codexPATHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return r.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+	r.calledDo = true
+	return r.record(req, proxyURL, accountID, accountConcurrency, nil)
 }
 
 func (r *codexPATHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	r.calledDoWithTLS = true
+	return r.record(req, proxyURL, accountID, accountConcurrency, profile)
+}
+
+func (r *codexPATHTTPUpstreamRecorder) record(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	r.req = req
 	r.proxyURL = proxyURL
 	r.accountID = accountID
@@ -131,9 +139,46 @@ func TestOpenAIOAuthService_ValidateCodexPersonalAccessTokenUsesTokenRouterIdent
 	require.Equal(t, "http://127.0.0.1:18080", upstream.proxyURL)
 	require.Equal(t, account.ID, upstream.accountID)
 	require.Equal(t, account.Concurrency, upstream.accountConcurrency)
+	require.False(t, upstream.calledDo)
+	require.True(t, upstream.calledDoWithTLS)
 	require.Equal(t, macUA, upstream.req.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", upstream.req.Header.Get("Originator"))
 	require.Empty(t, upstream.req.Header.Get("Version"))
+}
+
+func TestOpenAIOAuthService_ValidateCodexPersonalAccessTokenWithoutExplicitAuthProfileUsesStandardTLS(t *testing.T) {
+	const canonicalUA = "codex-tui/0.200.1 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonicalUA)
+	upstream := &codexPATHTTPUpstreamRecorder{}
+	svc := NewOpenAIOAuthService(nil, nil)
+	svc.SetHTTPUpstream(upstream)
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		9: {ID: 9, Enabled: true},
+	}}, &openAIOAuthTokenProfileResolverStub{})
+	t.Cleanup(svc.Stop)
+	account := &Account{
+		ID:          89,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 2,
+		Credentials: map[string]any{
+			"user_agent": "codex_cli_rs/9.9.9 (Mac OS X 15.6; arm64)",
+		},
+		Extra: map[string]any{
+			"enable_tls_fingerprint":     true,
+			"tls_fingerprint_profile_id": int64(99),
+			"tls_fingerprint_router_id":  int64(9),
+		},
+	}
+
+	_, err := svc.ValidateCodexPersonalAccessToken(t.Context(), "at-test-token", "", OpenAICodexPATValidationOptions{Account: account})
+	require.NoError(t, err)
+	require.True(t, upstream.calledDo)
+	require.False(t, upstream.calledDoWithTLS)
+	require.Nil(t, upstream.profile)
+	expectedUA, expectedOriginator := CodexAuthIdentityForUserAgent(canonicalUA)
+	require.Equal(t, expectedUA, upstream.req.Header.Get("User-Agent"))
+	require.Equal(t, expectedOriginator, upstream.req.Header.Get("Originator"))
 }
 
 func TestOpenAIOAuthService_BuildAccountCredentialsForPAT(t *testing.T) {

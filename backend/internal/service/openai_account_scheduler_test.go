@@ -3593,7 +3593,7 @@ func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	snapshot := svc.SnapshotOpenAIAccountSchedulerMetrics()
 	require.Equal(t, OpenAIAccountSchedulerMetricsSnapshot{}, snapshot)
 	require.Equal(t, 7, svc.openAIWSLBTopK())
-	require.Equal(t, openaiStickySessionTTL, svc.openAIWSSessionStickyTTL())
+	require.Equal(t, openAIStickySessionDefaultTTL, svc.openAIStickySessionTTL())
 
 	defaultWeights := svc.openAIWSSchedulerWeights()
 	require.Equal(t, 1.0, defaultWeights.Priority)
@@ -3602,6 +3602,7 @@ func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	require.Equal(t, 0.8, defaultWeights.ErrorRate)
 	require.Equal(t, 0.5, defaultWeights.TTFT)
 	require.Equal(t, 0.0, defaultWeights.Reset)
+	require.False(t, svc.openAIStickyEscapeConfig().enabled)
 
 	cfg := &config.Config{}
 	cfg.Gateway.AdvancedScheduler.LBTopK = 9
@@ -3615,7 +3616,7 @@ func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	svcWithCfg := &OpenAIGatewayService{cfg: cfg}
 
 	require.Equal(t, 9, svcWithCfg.openAIWSLBTopK())
-	require.Equal(t, 180*time.Second, svcWithCfg.openAIWSSessionStickyTTL())
+	require.Equal(t, 180*time.Second, svcWithCfg.openAIStickySessionTTL())
 	customWeights := svcWithCfg.openAIWSSchedulerWeights()
 	require.Equal(t, 0.2, customWeights.Priority)
 	require.Equal(t, 0.3, customWeights.Load)
@@ -3623,6 +3624,10 @@ func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	require.Equal(t, 0.5, customWeights.ErrorRate)
 	require.Equal(t, 0.6, customWeights.TTFT)
 	require.Equal(t, 0.7, customWeights.Reset)
+	require.False(t, svcWithCfg.openAIStickyEscapeConfig().enabled)
+
+	cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled = true
+	require.True(t, svcWithCfg.openAIStickyEscapeConfig().enabled)
 }
 
 func TestDefaultOpenAIAccountScheduler_IsAccountTransportCompatible_Branches(t *testing.T) {

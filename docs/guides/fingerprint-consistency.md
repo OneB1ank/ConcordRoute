@@ -30,14 +30,14 @@ ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理�
 | 自定义 TLS 配置到握手才报错 | 保存时检查数值范围、TLS 版本、ALPN、重复扩展和必要扩展关系 |
 | 自定义扩展后 GREASE 设置失效 | 根据 profile 设置补齐 GREASE，而不是只在内置模板中生效 |
 | 同一账号的出口地址频繁变化 | Clash/mihomo 支持账号绑定节点与策略，推荐稳定 `select` 或受控 `fallback` |
-| 额度探针制造无效模型请求 | 使用兼容的探针模型，并统一探针 UA、TLS 和账号路由配置 |
+| 后台额度检查改变业务请求形态 | 使用 `/backend-api/wham/usage` 元数据刷新，并从真实业务响应被动记录用量 |
 | 最终请求参数与 Usage Log 不一致 | 记录最终上游模型、reasoning effort、session、TTFT 和缓存命中数据 |
 
 这里处理的是可观测的一致性问题：相同账号长期呈现稳定设备、会话、协议和出口，不同账号彼此隔离。它不是一套固定的通用指纹，也不意味着复制某份公开抓包就适合所有客户端。
 
-## Cockpit 身份模型
+## 可选 Cockpit 身份模型
 
-默认 Cockpit 模式使用以下拓扑：
+身份收敛默认关闭。管理员显式启用 Cockpit 后使用以下拓扑：
 
 ```text
 账号
@@ -48,7 +48,7 @@ ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理�
       └─ 对话 C → 稳定 thread/window/cache key → 多个 turn
 ```
 
-所有稳定值都在账号作用域内派生。同一个客户端对话切换到另一个上游账号时，新账号获得自己的 installation、session、thread 和缓存键，不直接复用旧账号的上游身份。
+所有稳定值都在账号作用域内派生。同一个客户端对话切换到另一个上游账号时，新账号获得自己的 installation、session、thread 和缓存键，不直接复用旧账号的上游身份。由于这也会切换上游缓存域，只有确实需要兼容旧 Cockpit 行为时才应启用。
 
 ## TLS、UA 与 HTTP 协议
 

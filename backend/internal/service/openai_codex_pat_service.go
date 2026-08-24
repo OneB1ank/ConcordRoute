@@ -65,7 +65,11 @@ func (s *OpenAIOAuthService) ValidateCodexPersonalAccessToken(ctx context.Contex
 
 	var resp *http.Response
 	if s != nil && s.httpUpstream != nil {
-		resp, err = s.httpUpstream.DoWithTLS(req, proxyURL, requestOption.AccountID, requestOption.AccountConcurrency, requestOption.TLSProfile)
+		if requestOption.TLSProfile != nil {
+			resp, err = s.httpUpstream.DoWithTLS(req, proxyURL, requestOption.AccountID, requestOption.AccountConcurrency, requestOption.TLSProfile)
+		} else {
+			resp, err = s.httpUpstream.Do(req, proxyURL, requestOption.AccountID, requestOption.AccountConcurrency)
+		}
 	} else {
 		var client *http.Client
 		client, err = httpclient.GetClient(httpclient.Options{

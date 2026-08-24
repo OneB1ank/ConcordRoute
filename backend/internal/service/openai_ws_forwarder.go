@@ -349,7 +349,7 @@ func (s *OpenAIGatewayService) openAIWSResponseStickyTTL() time.Duration {
 			return time.Duration(seconds) * time.Second
 		}
 	}
-	return time.Hour
+	return openAIStickyResponseDefaultTTL
 }
 
 func (s *OpenAIGatewayService) openAIWSIngressPreviousResponseRecoveryEnabled() bool {

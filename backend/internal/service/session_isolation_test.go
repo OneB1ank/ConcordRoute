@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -131,6 +132,38 @@ func TestEnsureSessionIsolation_SameOwnerRefreshesTTL(t *testing.T) {
 	require.Equal(t, int64(11), cache.ownerGroupID(7, SessionIsolationSourceGateway, "session-a"))
 	require.Equal(t, refreshTTL, cache.ownerTTL(7, SessionIsolationSourceGateway, "session-a"))
 	require.Equal(t, 1, cache.refreshCalls)
+}
+
+func TestOpenAIGatewayService_EnsureSessionIsolationUsesConfiguredTTL(t *testing.T) {
+	cache := &sessionIsolationCacheStub{}
+	svc := &OpenAIGatewayService{
+		cache: cache,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIWS: config.GatewayOpenAIWSConfig{StickySessionTTLSeconds: 6 * 3600},
+		}},
+	}
+	apiKey := sessionIsolationAPIKey(11, true)
+
+	require.NoError(t, svc.EnsureSessionIsolation(context.Background(), apiKey, 7, SessionIsolationSourceOpenAI, "session-a"))
+	require.Equal(t, 6*time.Hour, cache.ownerTTL(7, SessionIsolationSourceOpenAI, "session-a"))
+
+	require.NoError(t, svc.EnsureSessionIsolation(context.Background(), apiKey, 7, SessionIsolationSourceOpenAI, "session-a"))
+	require.Equal(t, 6*time.Hour, cache.ownerTTL(7, SessionIsolationSourceOpenAI, "session-a"))
+	require.Equal(t, 1, cache.refreshCalls)
+}
+
+func TestOpenAIGatewayService_EnsureSessionIsolationNilReceiverIsNoop(t *testing.T) {
+	var svc *OpenAIGatewayService
+
+	err := svc.EnsureSessionIsolation(
+		context.Background(),
+		sessionIsolationAPIKey(11, true),
+		7,
+		SessionIsolationSourceOpenAI,
+		"session-a",
+	)
+
+	require.NoError(t, err)
 }
 
 func TestEnsureSessionIsolation_NonIsolatedTargetAllowsDifferentOwner(t *testing.T) {

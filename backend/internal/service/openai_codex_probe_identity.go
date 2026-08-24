@@ -8,16 +8,14 @@ import (
 type codexProbePurpose string
 
 const (
-	codexProbePurposeUsageSnapshot      codexProbePurpose = "usage-snapshot"
 	codexProbePurposeAccountTest        codexProbePurpose = "account-test"
 	codexProbePurposeNativeCompactionV2 codexProbePurpose = "native-compaction-v2"
 	codexProbePurposeImageAccountTest   codexProbePurpose = "image-account-test"
-	codexProbePurposeQuotaOverdraft     codexProbePurpose = "quota-overdraft"
 )
 
 const codexProbeFingerprintSourceVersion = "codex-background-probe:v1"
 
-// resolveCodexProbeFingerprintIDs 为后台额度与账号探测生成账号级身份。
+// resolveCodexProbeFingerprintIDs 为显式账号测试生成账号级身份。
 // installation/session 继续复用账号持久化种子，thread/cache key 按探测用途和
 // 模型稳定隔离，turn 每次请求重新生成，避免探测混入真实用户对话。
 func resolveCodexProbeFingerprintIDs(account *Account, purpose codexProbePurpose, model string) *codexFingerprintIDs {

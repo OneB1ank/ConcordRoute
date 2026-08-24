@@ -6,17 +6,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultOpenAIOAuthImportDefaultsUsesCockpitFingerprint(t *testing.T) {
+func TestDefaultOpenAIOAuthImportDefaultsLeavesFingerprintOff(t *testing.T) {
 	defaults := DefaultOpenAIOAuthImportDefaults()
-	require.Equal(t, "cockpit", defaults.Extra[codexFingerprintModeExtraKey])
+	require.NotContains(t, defaults.Extra, codexFingerprintModeExtraKey)
 }
 
-func TestFillOpenAIOAuthImportDefaultsMergesCockpitWithoutOverwritingExplicitMode(t *testing.T) {
+func TestFillOpenAIOAuthImportDefaultsPreservesExplicitFingerprintMode(t *testing.T) {
 	missing := fillOpenAIOAuthImportDefaults(&OpenAIOAuthImportDefaults{})
-	require.Equal(t, "cockpit", missing.Extra[codexFingerprintModeExtraKey])
+	require.NotContains(t, missing.Extra, codexFingerprintModeExtraKey)
 
 	explicit := fillOpenAIOAuthImportDefaults(&OpenAIOAuthImportDefaults{
-		Extra: map[string]any{codexFingerprintModeExtraKey: "session"},
+		Extra: map[string]any{codexFingerprintModeExtraKey: "cockpit"},
 	})
-	require.Equal(t, "session", explicit.Extra[codexFingerprintModeExtraKey])
+	require.Equal(t, "cockpit", explicit.Extra[codexFingerprintModeExtraKey])
+}
+
+func TestMergeMissingOpenAIOAuthImportDefaultsKeepsGenericExtraMerging(t *testing.T) {
+	target := map[string]any{
+		"explicit": "saved",
+	}
+	mergeMissingOpenAIOAuthImportDefaults(&target, map[string]any{
+		"explicit":       "default",
+		"future_default": true,
+	})
+
+	require.Equal(t, "saved", target["explicit"])
+	require.Equal(t, true, target["future_default"])
 }

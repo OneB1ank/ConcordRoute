@@ -249,6 +249,64 @@ func TestAccountRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttemp
 	require.Equal(t, &proxyID, exec.execArgs[0][5])
 }
 
+func TestAccountRepository_MarkOpenAIOAuth401RefreshRequiredIfUnchanged_UsesExactStateAndAtomicOutbox(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+	proxyID := int64(31)
+	expiredAt := time.Date(2026, 8, 24, 1, 2, 3, 0, time.UTC)
+	until := expiredAt.Add(10 * time.Minute)
+
+	applied, err := repo.MarkOpenAIOAuth401RefreshRequiredIfUnchanged(
+		context.Background(),
+		42,
+		map[string]any{
+			"access_token":   "observed-access",
+			"refresh_token":  "observed-refresh",
+			"expires_at":     "2026-08-24T03:00:00Z",
+			"_token_version": int64(9),
+		},
+		&proxyID,
+		expiredAt,
+		10,
+		until,
+		"OAuth 401: unauthorized",
+	)
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Len(t, exec.execQueries, 1)
+	normalized := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, normalized, "WITH updated AS")
+	require.Contains(t, normalized, "jsonb_set(COALESCE(a.credentials, '{}'::jsonb), '{expires_at}'")
+	require.Contains(t, normalized, "'{_token_version}'")
+	require.Contains(t, normalized, "temp_unschedulable_until = CASE")
+	require.Contains(t, normalized, "a.credentials = $9::jsonb")
+	require.Contains(t, normalized, "a.proxy_id IS NOT DISTINCT FROM $10")
+	require.Contains(t, normalized, "a.status = $8")
+	require.Contains(t, normalized, "a.schedulable IS TRUE")
+	require.Contains(t, normalized, "INSERT INTO scheduler_outbox")
+	require.Len(t, exec.execArgs[0], 11)
+	require.Equal(t, expiredAt.Format(time.RFC3339Nano), exec.execArgs[0][0])
+	require.Equal(t, int64(10), exec.execArgs[0][1])
+	require.Equal(t, &proxyID, exec.execArgs[0][9])
+	require.Contains(t, exec.execArgs[0][8], `"_token_version":9`)
+	require.Equal(t, service.SchedulerOutboxEventAccountChanged, exec.execArgs[0][10])
+}
+
+func TestAccountRepository_MarkOpenAIOAuth401RefreshRequiredIfUnchanged_CASMiss(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+	applied, err := repo.MarkOpenAIOAuth401RefreshRequiredIfUnchanged(
+		context.Background(), 42, map[string]any{"access_token": "stale"}, nil,
+		time.Now(), 1, time.Now().Add(10*time.Minute), "OAuth 401",
+	)
+
+	require.NoError(t, err)
+	require.False(t, applied)
+	require.Len(t, exec.execQueries, 1)
+}
+
 func TestAccountRepository_ListOAuthRefreshCandidatePage_SQLFilter(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)

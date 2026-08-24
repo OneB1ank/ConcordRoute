@@ -131,7 +131,7 @@ func TestUpdateAccountDiscardsIncomingCodexFingerprintSeedWhenLegacyAccountHasNo
 	require.Equal(t, "value", updated.Extra["custom"])
 }
 
-func TestUpdateAccountDisablingCodexQuotaOverdraftClearsProbeState(t *testing.T) {
+func TestUpdateAccountDiscardsLegacyCodexQuotaOverdraftProbeState(t *testing.T) {
 	accountID := int64(115)
 	repo := &accountServiceTestRepo{accounts: map[int64]*Account{
 		accountID: {
@@ -140,11 +140,8 @@ func TestUpdateAccountDisablingCodexQuotaOverdraftClearsProbeState(t *testing.T)
 			Type:     AccountTypeOAuth,
 			Status:   StatusActive,
 			Extra: map[string]any{
-				CodexQuotaOverdraftEnabledExtraKey: true,
-				CodexQuotaOverdraftProbeExtraKey: map[string]any{
-					"status":    codexQuotaOverdraftProbePassed,
-					"cycle_key": "5h:1787166000",
-				},
+				CodexQuotaOverdraftEnabledExtraKey:     true,
+				CodexQuotaOverdraftLegacyProbeExtraKey: map[string]any{"status": "passed"},
 			},
 		},
 	}}
@@ -158,7 +155,7 @@ func TestUpdateAccountDisablingCodexQuotaOverdraftClearsProbeState(t *testing.T)
 
 	require.NoError(t, err)
 	require.Equal(t, false, updated.Extra[CodexQuotaOverdraftEnabledExtraKey])
-	require.NotContains(t, updated.Extra, CodexQuotaOverdraftProbeExtraKey)
+	require.NotContains(t, updated.Extra, CodexQuotaOverdraftLegacyProbeExtraKey)
 	require.Equal(t, "value", updated.Extra["custom"])
 }
 
@@ -212,6 +209,32 @@ func TestUpdateAccountEnablingCodexQuotaOverdraftPreservesNewerRuntimeBlock(t *t
 
 	require.NoError(t, err)
 	require.True(t, gateway.isOpenAIAccountRuntimeBlocked(updated), "开启透支不得清除并发产生的认证阻断")
+}
+
+func TestUpdateAccountEnablingCodexQuotaOverdraftClearsLegacyProbeRuntimeBlock(t *testing.T) {
+	accountID := int64(118)
+	resetAt := time.Now().UTC().Add(time.Hour)
+	account := &Account{
+		ID:                      accountID,
+		Platform:                PlatformOpenAI,
+		Type:                    AccountTypeOAuth,
+		Status:                  StatusActive,
+		Schedulable:             true,
+		TempUnschedulableUntil:  &resetAt,
+		TempUnschedulableReason: BuildTempUnschedReasonPayload(codexQuotaOverdraftLegacyPauseSource, "legacy probe pause"),
+		Extra:                   map[string]any{},
+	}
+	repo := &accountServiceTestRepo{accounts: map[int64]*Account{accountID: account}}
+	gateway := &OpenAIGatewayService{}
+	gateway.BlockAccountScheduling(account, resetAt, codexQuotaOverdraftLegacyPauseSource)
+
+	updated, err := (&adminServiceImpl{accountRepo: repo, runtimeBlocker: gateway}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Extra: map[string]any{CodexQuotaOverdraftEnabledExtraKey: true},
+	})
+
+	require.NoError(t, err)
+	require.True(t, updated.IsCodexQuotaOverdraftEnabled())
+	require.False(t, gateway.isOpenAIAccountRuntimeBlocked(updated))
 }
 
 func TestBulkUpdateAccountsDiscardsCodexFingerprintSeed(t *testing.T) {

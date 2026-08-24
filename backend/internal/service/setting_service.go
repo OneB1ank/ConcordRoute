@@ -728,29 +728,24 @@ func fillOpenAIOAuthImportDefaults(settings *OpenAIOAuthImportDefaults) *OpenAIO
 	}
 
 	defaults := DefaultOpenAIOAuthImportDefaults()
-	if len(defaults.Credentials) > 0 {
-		if settings.Credentials == nil {
-			settings.Credentials = map[string]any{}
-		}
-		for key, value := range defaults.Credentials {
-			// 已显式保存的键保持原样；空数组可用于表达“不限制模型”。
-			if _, exists := settings.Credentials[key]; !exists {
-				settings.Credentials[key] = value
-			}
-		}
-	}
-	if len(defaults.Extra) > 0 {
-		if settings.Extra == nil {
-			settings.Extra = map[string]any{}
-		}
-		for key, value := range defaults.Extra {
-			// 旧模板缺少指纹字段时补齐 Cockpit；显式选择继续保持。
-			if _, exists := settings.Extra[key]; !exists {
-				settings.Extra[key] = value
-			}
-		}
-	}
+	mergeMissingOpenAIOAuthImportDefaults(&settings.Credentials, defaults.Credentials)
+	mergeMissingOpenAIOAuthImportDefaults(&settings.Extra, defaults.Extra)
 	return settings
+}
+
+func mergeMissingOpenAIOAuthImportDefaults(target *map[string]any, defaults map[string]any) {
+	if target == nil || len(defaults) == 0 {
+		return
+	}
+	if *target == nil {
+		*target = map[string]any{}
+	}
+	for key, value := range defaults {
+		// 已显式保存的键保持原样；空数组也属于显式值。
+		if _, exists := (*target)[key]; !exists {
+			(*target)[key] = value
+		}
+	}
 }
 
 func findForbiddenImportField(fields map[string]any, forbidden map[string]struct{}) (string, bool) {

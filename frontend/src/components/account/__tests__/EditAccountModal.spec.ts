@@ -731,6 +731,25 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_fingerprint_mode).toBe('session')
   })
 
+  it('defaults a missing OpenAI OAuth fingerprint mode to off', async () => {
+    const account = buildOpenAIOAuthAccount()
+    account.extra = {}
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const modeSelect = wrapper.get<HTMLSelectElement>(
+      '[data-testid="edit-codex-fingerprint-mode-select"]'
+    )
+
+    expect(modeSelect.element.value).toBe('off')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
+      'codex_fingerprint_mode'
+    )
+  })
+
   it('does not show the plan type override for OpenAI API-key accounts', () => {
     const wrapper = mountModal(buildAccount())
 

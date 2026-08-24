@@ -26,22 +26,9 @@ type OpenAIOAuthTLSRouterReader interface {
 	GetRuntimeRouter(routerID int64) *model.TLSFingerprintRouter
 }
 
-// OpenAIOAuthTLSRouterMatcher 为 OAuth 后台请求复用普通 Codex UA 路由规则。
-// 单独配置 auth 模板时仍以专用模板为最高优先级。
-type OpenAIOAuthTLSRouterMatcher interface {
-	MatchUserAgent(routerID int64, userAgent string) TLSFingerprintRouterMatchResult
-}
-
 // OpenAIOAuthTokenProfileResolver 解析 ChatGPT OAuth token 请求专用的 TLS 模板。
 type OpenAIOAuthTokenProfileResolver interface {
 	ResolveTokenTLSProfileByID(id int64) (*tlsfingerprint.Profile, bool)
-}
-
-// OpenAIOAuthAccountProfileResolver 在 auth 专用模板缺省时回退账号普通 TLS 配置，
-// 避免 token、PAT、Agent Identity 与推理请求使用不同的 TLS 身份。
-type OpenAIOAuthAccountProfileResolver interface {
-	ResolveTLSProfile(account *Account) *tlsfingerprint.Profile
-	ResolveRoutableTLSProfileByID(account *Account, id int64) (*tlsfingerprint.Profile, bool)
 }
 
 // OpenAIOAuthClient interface for OpenAI OAuth operations

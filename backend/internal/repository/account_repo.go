@@ -66,12 +66,14 @@ const (
 	deprecatedUpstreamBillingProbeExtraKey        = "upstream_billing_probe"
 	deprecatedUpstreamBillingProbeEnabledExtraKey = "upstream_billing_probe_enabled"
 	deprecatedOpenAILongContextBillingExtraKey    = "openai_long_context_billing_enabled"
+	deprecatedCodexQuotaOverdraftProbeExtraKey    = "codex_quota_overdraft_probe"
 )
 
 func discardDeprecatedAccountExtra(extra map[string]any) {
 	delete(extra, deprecatedUpstreamBillingProbeExtraKey)
 	delete(extra, deprecatedUpstreamBillingProbeEnabledExtraKey)
 	delete(extra, deprecatedOpenAILongContextBillingExtraKey)
+	delete(extra, deprecatedCodexQuotaOverdraftProbeExtraKey)
 }
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
@@ -153,7 +155,7 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account == nil {
 		return service.ErrAccountNilInput
 	}
-	// 新账号在首次落库前生成随机指纹种子，后续所有稳定身份均以该持久化值派生。
+	// 仅在显式启用指纹收敛时准备种子；默认关闭的账号不写入无用身份状态。
 	service.PrepareCodexFingerprintSeedForCreate(account)
 	discardDeprecatedAccountExtra(account.Extra)
 
@@ -754,7 +756,8 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 				THEN (COALESCE(extra, '{}'::jsonb)
 						- 'upstream_billing_probe'
 						- 'upstream_billing_probe_enabled'
-						- 'openai_long_context_billing_enabled')
+						- 'openai_long_context_billing_enabled'
+						- 'codex_quota_overdraft_probe')
 					- 'ollama_cloud_usage_session'
 					- 'ollama_cloud_usage_auto_refresh'
 					- 'ollama_cloud_usage_snapshot'
@@ -762,6 +765,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					- 'upstream_billing_probe'
 					- 'upstream_billing_probe_enabled'
 					- 'openai_long_context_billing_enabled'
+					- 'codex_quota_overdraft_probe'
 			END,
 			updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
@@ -788,6 +792,81 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 		r.syncSchedulerAccountSnapshot(baseCtx, id)
 	}
 	return nil
+}
+
+// MarkOpenAIOAuth401RefreshRequiredIfUnchanged 原子处理一次可恢复的 OpenAI OAuth 401。
+// 完整凭据和代理必须仍与失败请求观察值一致；命中后局部更新 token 到期/版本，
+// 同时写入临时不可调度状态和 scheduler outbox。
+func (r *accountRepository) MarkOpenAIOAuth401RefreshRequiredIfUnchanged(
+	ctx context.Context,
+	id int64,
+	expectedCredentials map[string]any,
+	expectedProxyID *int64,
+	expiredAt time.Time,
+	tokenVersion int64,
+	until time.Time,
+	reason string,
+) (bool, error) {
+	if r == nil || r.sql == nil {
+		return false, errors.New("account repository SQL executor is not configured")
+	}
+	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	if err != nil {
+		return false, err
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		WITH updated AS (
+			UPDATE accounts AS a
+			SET credentials = jsonb_set(
+					jsonb_set(COALESCE(a.credentials, '{}'::jsonb), '{expires_at}', to_jsonb($1::text), true),
+					'{_token_version}', to_jsonb($2::bigint), true
+				),
+				temp_unschedulable_until = CASE
+					WHEN a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until < $3 THEN $3
+					ELSE a.temp_unschedulable_until
+				END,
+				temp_unschedulable_reason = CASE
+					WHEN a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until < $3 THEN $4
+					ELSE a.temp_unschedulable_reason
+				END,
+				updated_at = NOW()
+			WHERE a.id = $5
+				AND a.deleted_at IS NULL
+				AND a.platform = $6
+				AND a.type = $7
+				AND a.status = $8
+				AND a.schedulable IS TRUE
+				AND a.credentials = $9::jsonb
+				AND a.proxy_id IS NOT DISTINCT FROM $10
+			RETURNING a.id
+		)
+		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+		SELECT $11, updated.id, NULL, NULL FROM updated
+	`,
+		expiredAt.UTC().Format(time.RFC3339Nano),
+		tokenVersion,
+		until,
+		reason,
+		id,
+		service.PlatformOpenAI,
+		service.AccountTypeOAuth,
+		service.StatusActive,
+		string(expectedJSON),
+		expectedProxyID,
+		service.SchedulerOutboxEventAccountChanged,
+	)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rowsAffected == 0 {
+		return false, nil
+	}
+	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	return true, nil
 }
 
 func (r *accountRepository) Delete(ctx context.Context, id int64) error {
@@ -2277,205 +2356,6 @@ func (r *accountRepository) ClearRateLimit(ctx context.Context, id int64) error 
 	return nil
 }
 
-// ClearCodexQuotaOverdraftRateLimit 仅清除探测开始时观察到的同一限流代次，
-// 避免旧探测误删随后由新 429 写入的限流状态。
-func (r *accountRepository) ClearCodexQuotaOverdraftRateLimit(ctx context.Context, id int64, observedResetAt *time.Time) (bool, error) {
-	if observedResetAt == nil {
-		return false, nil
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET rate_limited_at = NULL,
-			rate_limit_reset_at = NULL,
-			overload_until = NULL,
-			updated_at = NOW()
-		WHERE id = $1
-			AND deleted_at IS NULL
-			AND platform = $2
-			AND type = $3
-			AND rate_limit_reset_at = $4
-	`, id, service.PlatformOpenAI, service.AccountTypeOAuth, observedResetAt.UTC())
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil || affected == 0 {
-		r.syncSchedulerAccountSnapshot(ctx, id)
-		return false, err
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft rate-limit clear failed: account=%d err=%v", id, err)
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return true, nil
-}
-
-// ClaimCodexQuotaOverdraftProbe 原子占用一个额度周期，防止多实例重复发起真实探测。
-func (r *accountRepository) ClaimCodexQuotaOverdraftProbe(
-	ctx context.Context,
-	id int64,
-	state *service.CodexQuotaOverdraftProbeState,
-) (bool, error) {
-	if state == nil || strings.TrimSpace(state.CycleKey) == "" {
-		return false, nil
-	}
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return false, err
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
-			updated_at = NOW()
-		WHERE id = $3
-			AND deleted_at IS NULL
-			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
-			AND (
-				COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $5
-				OR (
-					extra #>> '{codex_quota_overdraft_probe,status}' = 'inconclusive'
-					AND COALESCE(NULLIF(extra #>> '{codex_quota_overdraft_probe,retry_at}', '')::timestamptz, '1970-01-01'::timestamptz) <= NOW()
-				)
-				OR (
-					extra #>> '{codex_quota_overdraft_probe,status}' = 'pending'
-					AND COALESCE(NULLIF(extra #>> '{codex_quota_overdraft_probe,started_at}', '')::timestamptz, '1970-01-01'::timestamptz) <= NOW() - INTERVAL '2 minutes'
-				)
-				OR (
-					extra #>> '{codex_quota_overdraft_probe,status}' = 'passed'
-					AND COALESCE(NULLIF(extra #>> '{codex_quota_overdraft_probe,tested_at}', '')::timestamptz, '1970-01-01'::timestamptz) <= NOW() - ($6 * INTERVAL '1 second')
-				)
-			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftPassedRecheckSeconds)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil || affected == 0 {
-		return false, err
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return true, nil
-}
-
-// UpdateCodexQuotaOverdraftProbeState 只更新当前仍属于同一额度周期的探测状态。
-// 旧协程、已关闭透支的账号或已被新周期占用的账号均不会被覆盖。
-func (r *accountRepository) UpdateCodexQuotaOverdraftProbeState(
-	ctx context.Context,
-	id int64,
-	state *service.CodexQuotaOverdraftProbeState,
-) (bool, error) {
-	if state == nil || strings.TrimSpace(state.CycleKey) == "" {
-		return false, nil
-	}
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return false, err
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
-			updated_at = NOW()
-		WHERE id = $3
-			AND deleted_at IS NULL
-			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
-			AND extra #>> '{codex_quota_overdraft_probe,cycle_key}' = $5
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil || affected == 0 {
-		return false, err
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft state update failed: account=%d err=%v", id, err)
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return true, nil
-}
-
-// PersistCodexQuotaOverdraftProbeUnlessFailed 写入非失败状态时只保留同周期真实业务确认的失败终态。
-// 旧版合成探针失败允许被真实业务成功纠正，同时防止并发探针覆盖业务 429 结论。
-func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
-	ctx context.Context,
-	id int64,
-	state *service.CodexQuotaOverdraftProbeState,
-) (bool, error) {
-	if state == nil || strings.TrimSpace(state.CycleKey) == "" || state.Status == "failed" {
-		return false, nil
-	}
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return false, err
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
-			updated_at = NOW()
-		WHERE id = $3
-			AND deleted_at IS NULL
-			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
-			AND (
-				COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $5
-				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,status}', '') <> 'failed'
-				OR COALESCE(extra #>> '{codex_quota_overdraft_probe,reason_code}', '') <> $6
-				OR $7 = 'recovered'
-			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftBusinessQuotaLimitedReason, state.Status)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil || affected == 0 {
-		return false, err
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft non-failed state update failed: account=%d err=%v", id, err)
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return true, nil
-}
-
-// FinalizeCodexQuotaOverdraftProbeFailed 写入探针失败终态，同时保护真实业务额度 429 终态。
-func (r *accountRepository) FinalizeCodexQuotaOverdraftProbeFailed(
-	ctx context.Context,
-	id int64,
-	state *service.CodexQuotaOverdraftProbeState,
-) (bool, error) {
-	if state == nil || strings.TrimSpace(state.CycleKey) == "" || state.Status != "failed" {
-		return false, nil
-	}
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return false, err
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts
-		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
-			updated_at = NOW()
-		WHERE id = $3
-			AND deleted_at IS NULL
-			AND LOWER(BTRIM(COALESCE(extra ->> $4, ''))) IN ('1', 't', 'true')
-			AND extra #>> '{codex_quota_overdraft_probe,cycle_key}' = $5
-			AND NOT (
-				extra #>> '{codex_quota_overdraft_probe,status}' = 'failed'
-				AND extra #>> '{codex_quota_overdraft_probe,reason_code}' = $6
-			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, service.CodexQuotaOverdraftEnabledExtraKey, state.CycleKey, service.CodexQuotaOverdraftBusinessQuotaLimitedReason)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil || affected == 0 {
-		return false, err
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue overdraft failed finalizer failed: account=%d err=%v", id, err)
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return true, nil
-}
-
 func (r *accountRepository) ClearAntigravityQuotaScopes(ctx context.Context, id int64) error {
 	client := clientFromContext(ctx, r.client)
 	result, err := client.ExecContext(
@@ -2652,7 +2532,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 			client = tx.Client()
 		}
 	}
-	extraExpression := "(COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled') || $1::jsonb"
+	extraExpression := "(COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled' - 'codex_quota_overdraft_probe') || $1::jsonb"
 	if ensureCodexFingerprintSeed {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 	}
@@ -2849,7 +2729,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	}
 
 	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
-		extraExpression := "COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled'"
+		extraExpression := "COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled' - 'codex_quota_overdraft_probe'"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
 			if err != nil {
@@ -3104,27 +2984,16 @@ func tempUnschedulablePredicate(ctx context.Context) dbpredicate.Account {
 				b.Arg(service.CodexQuotaOverdraftEnabledExtraKey)
 				b.WriteString(", ''))) IN ('1', 't', 'true')")
 			})
-			probationaryFailedExpr := entsql.P(func(b *entsql.Builder) {
-				// 旧版探针失败账号需要重新进入候选池，由真实业务请求给出最终结论。
-				b.WriteString("COALESCE(")
-				b.WriteString(extraCol)
-				b.WriteString(" #>> '{codex_quota_overdraft_probe,status}', '') = 'failed' AND COALESCE(")
-				b.WriteString(extraCol)
-				b.WriteString(" #>> '{codex_quota_overdraft_probe,reason_code}', '') <> ")
-				b.Arg(service.CodexQuotaOverdraftBusinessQuotaLimitedReason)
-			})
+			bypassableReasonExpr := entsql.Or(
+				entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
+				entsql.Contains(reasonCol, `"source":"codex_quota_overdraft"`),
+			)
 			predicates = append(predicates, entsql.And(
 				entsql.EQ(s.C("platform"), service.PlatformOpenAI),
 				entsql.EQ(s.C("type"), service.AccountTypeOAuth),
 				entsql.IsNull(s.C("parent_account_id")),
 				enabledExpr,
-				entsql.Or(
-					entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
-					entsql.And(
-						entsql.Contains(reasonCol, `"source":"codex_quota_overdraft"`),
-						probationaryFailedExpr,
-					),
-				),
+				bypassableReasonExpr,
 			))
 		}
 		s.Where(entsql.Or(predicates...))

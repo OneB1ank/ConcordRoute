@@ -35,7 +35,10 @@ const (
 	// OpenAI Platform API for API Key accounts (fallback)
 	openaiPlatformAPIURL            = "https://api.openai.com/v1/responses"
 	openaiPlatformAPIInputTokensURL = "https://api.openai.com/v1/responses/input_tokens"
-	openaiStickySessionTTL          = time.Hour // 粘性会话TTL
+	// OpenAI 粘性会话与 response_id 的服务层兜底统一为 6 小时，
+	// 避免缺少配置对象的路径把已建立的长 TTL 重新缩短到 1 小时。
+	openAIStickySessionDefaultTTL  = 6 * time.Hour
+	openAIStickyResponseDefaultTTL = 6 * time.Hour
 	// 后台额度请求复用最近一次真实请求的 UA 路由结果，避免同一账号的
 	// 正常推理与探测在 TLS Router 上落入不同设备模板。
 	openAIOutboundIdentitySnapshotTTL = 6 * time.Hour
@@ -405,7 +408,6 @@ type OpenAIGatewayService struct {
 	billingService        *BillingService
 	usageBillingNow       func() time.Time // 用量计费时钟，测试可注入固定时间以覆盖峰值倍率。
 	rateLimitService      *RateLimitService
-	codexQuotaOverdraft   *CodexQuotaOverdraftCoordinator
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
@@ -512,35 +514,15 @@ func invalidateAllOpenAIOutboundIdentities() {
 	}
 }
 
-// SetCodexQuotaOverdraftCoordinator 注入账号级透支协调器，避免网关构造阶段形成循环依赖。
-func (s *OpenAIGatewayService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
-	if s != nil {
-		s.codexQuotaOverdraft = coordinator
-	}
-}
-
-// ObserveCodexQuotaOverdraftBusinessSuccess 统一接收 HTTP/WS 出站成功证据。
-// 有额度响应头时先合并最新快照，再用同一条异步链判定业务成功；没有响应头时
-// 才直接使用当前账号快照，避免调用方重复触发成功观察。
-func (s *OpenAIGatewayService) ObserveCodexQuotaOverdraftBusinessSuccess(
-	ctx context.Context,
-	account *Account,
-	model string,
-	headers http.Header,
-) {
-	if s == nil || account == nil {
+// ObserveCodexUsageHeaders 统一接收 HTTP/WS 的额度响应头。
+// 该链路只更新被动快照；不会发起额外模型请求或改写业务请求。
+func (s *OpenAIGatewayService) ObserveCodexUsageHeaders(ctx context.Context, account *Account, headers http.Header) {
+	if s == nil || account == nil || account.Type != AccountTypeOAuth || account.IsShadow() {
 		return
 	}
-	if account.Type == AccountTypeOAuth && !account.IsShadow() {
-		if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
-			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
-			return
-		}
+	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
+		s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 	}
-	if s.codexQuotaOverdraft == nil || !codexQuotaOverdraftWasInjected(ctx, account.ID) {
-		return
-	}
-	s.codexQuotaOverdraft.ObserveBusinessSuccess(account, model)
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -1449,6 +1431,30 @@ func (s *OpenAIGatewayService) codexIdentityOverrideUA(account *Account, routerM
 		return ""
 	}
 	return strings.TrimSpace(account.GetOpenAIUserAgent())
+}
+
+// codexIdentityEnforcementUA 返回最终身份收口使用的 UA 候选。
+// 显式 Router/账号 UA 仍优先；仅当 TLS Router 已命中但只配置了 Profile 时，
+// 才复用当前已经过上游 UA 选择的官方身份，避免 Profile 与全局 Desktop 身份错配。
+// 非 Router 请求继续由空候选回退全局规范身份。
+func (s *OpenAIGatewayService) codexIdentityEnforcementUA(
+	headers http.Header,
+	account *Account,
+	routerMatch ...TLSFingerprintRouterMatchResult,
+) string {
+	overrideUA := s.codexIdentityOverrideUA(account, routerMatch...)
+	if overrideUA != "" || len(routerMatch) == 0 || !routerMatch[0].Matched || headers == nil {
+		return overrideUA
+	}
+	return strings.TrimSpace(headers.Get("user-agent"))
+}
+
+func (s *OpenAIGatewayService) enforceCodexOutboundIdentityHeaders(
+	headers http.Header,
+	account *Account,
+	routerMatch ...TLSFingerprintRouterMatchResult,
+) {
+	enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityEnforcementUA(headers, account, routerMatch...))
 }
 
 // applyOpenAIUpstreamUserAgentHeader 在 WebSocket 握手头上复用 HTTP 上游 UA 规则。

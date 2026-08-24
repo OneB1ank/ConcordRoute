@@ -3068,7 +3068,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
-const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
+const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexQuotaOverdraftEnabled = ref(false)
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
@@ -3599,7 +3599,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
-  codexFingerprintMode.value = 'cockpit'
+  codexFingerprintMode.value = 'off'
   codexQuotaOverdraftEnabled.value = false
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
@@ -3647,7 +3647,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
       codexFingerprintMode.value = (['off', 'device', 'session', 'cockpit', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
-        : 'cockpit')
+        : 'off')
       codexQuotaOverdraftEnabled.value = extra?.codex_quota_overdraft_enabled === true
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
@@ -5118,9 +5118,9 @@ const handleSubmit = async () => {
         }
       }
 
-      // 指纹收敛模式：默认 cockpit，不写入；其它模式显式写入。
+      // 指纹收敛模式默认关闭；启用时必须显式写入。
       if (props.account.type === 'oauth') {
-        if (codexFingerprintMode.value !== 'cockpit') {
+        if (codexFingerprintMode.value !== 'off') {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {
           delete newExtra.codex_fingerprint_mode

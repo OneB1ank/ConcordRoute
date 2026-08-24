@@ -1744,7 +1744,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// 首轮账号选择也要遵守显式生图请求的模型级限流。
 		initialSchedulingCtx = service.WithOpenAIImageGenerationIntent(initialSchedulingCtx)
 	} else {
-		// WS v2 与 HTTP Responses 共用透支调度上下文，确保首帧和后续 turn 都能注入。
+		// WS v2 与 HTTP Responses 共用透支调度上下文；它只影响账号选择，不改写请求体。
 		initialSchedulingCtx = service.WithCodexQuotaOverdraftScheduling(initialSchedulingCtx)
 		ctx = initialSchedulingCtx
 		c.Request = c.Request.WithContext(ctx)
@@ -2193,12 +2193,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if result == nil {
 					return
 				}
-				if turnErr == nil && openAIForwardSucceededForScheduling(result) {
-					h.gatewayService.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, result.Model, result.ResponseHeaders)
-				} else if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
-					// 失败终态仍保存握手阶段返回的额度头，但不作为透支成功证据。
-					h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, result.ResponseHeaders)
-				}
+				h.gatewayService.ObserveCodexUsageHeaders(ctx, account, result.ResponseHeaders)
 				scheduleModel := strings.TrimSpace(result.UpstreamModel)
 				if scheduleModel == "" {
 					scheduleModel = account.GetMappedModel(turnChannelMapping.MappedModel)

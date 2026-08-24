@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -54,6 +55,57 @@ func TestOpenAIQuotaServiceQueryUsageUsesCodexHeaders(t *testing.T) {
 		require.Equal(t, "1", req.Header.Get("X-OpenAI-Attach-Auth"))
 		require.Equal(t, "1", req.Header.Get("X-OpenAI-Attach-Integrity-State"))
 		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+	}
+}
+
+func TestOpenAIQuotaServiceApplyHeadersPairsConfiguredCodexIdentity(t *testing.T) {
+	withCodexCanonicalUA(t, DefaultOpenAICodexUserAgent)
+
+	tests := []struct {
+		name       string
+		userAgent  string
+		originator string
+	}{
+		{
+			name:       "exec",
+			userAgent:  "codex_exec/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_exec; 0.145.0)",
+			originator: "codex_exec",
+		},
+		{
+			name:       "tui",
+			userAgent:  "codex-tui/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.145.0)",
+			originator: "codex-tui",
+		},
+		{
+			name:       "cli rs",
+			userAgent:  "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)",
+			originator: "codex_cli_rs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", nil)
+			svc := &OpenAIQuotaService{}
+			accountCtx := &openAIQuotaAccountContext{
+				account: &Account{
+					ID:       42,
+					Platform: PlatformOpenAI,
+					Type:     AccountTypeOAuth,
+					Credentials: map[string]any{
+						"chatgpt_account_id": "chatgpt-acc",
+					},
+				},
+				token:     "oauth-token",
+				userAgent: tt.userAgent,
+			}
+
+			_, err := svc.applyHeaders(req, accountCtx)
+			require.NoError(t, err)
+			require.Equal(t, tt.userAgent, req.Header.Get("User-Agent"))
+			require.Equal(t, tt.originator, req.Header.Get("originator"))
+			require.Empty(t, req.Header.Get("version"))
+		})
 	}
 }
 
@@ -187,14 +239,20 @@ func TestOpenAIQuotaServiceQueryAndResetUseSameAccountEgressAndTLSRouterSettings
 		9: {
 			ID:                                      9,
 			Enabled:                                 true,
-			CodexInviteResetUserAgent:               " Codex Desktop/0.135.0-alpha.1 (Windows 10.0.26200; x86_64) ",
+			CodexInviteResetUserAgent:               " codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0) ",
 			CodexInviteResetTLSFingerprintProfileID: &quotaProfileID,
+			Rules: []model.TLSFingerprintRouterRule{{
+				Enabled:                 true,
+				Pattern:                 "codex_cli_rs/",
+				TLSFingerprintProfileID: 21,
+			}},
 		},
 	}}
 	profileService := &TLSFingerprintProfileService{
 		localCache: map[int64]*model.TLSFingerprintProfile{
 			10: {ID: 10, Name: "account-fixed"},
 			20: {ID: 20, Name: "router-token"},
+			21: {ID: 21, Name: "router-rule"},
 		},
 	}
 	svc := NewOpenAIQuotaService(codexInviteResetAdminServiceStub{account: account, proxy: proxy}, upstream, nil, profileService, routerReader)
@@ -206,14 +264,110 @@ func TestOpenAIQuotaServiceQueryAndResetUseSameAccountEgressAndTLSRouterSettings
 	require.Len(t, upstream.requests, 3)
 	require.Len(t, upstream.profiles, 3)
 	for i := range upstream.requests {
-		require.Equal(t, "Codex Desktop/0.135.0-alpha.1 (Windows 10.0.26200; x86_64)", upstream.requests[i].Header.Get("User-Agent"))
+		require.Equal(t, "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)", upstream.requests[i].Header.Get("User-Agent"))
+		require.Equal(t, "codex_cli_rs", upstream.requests[i].Header.Get("originator"))
 		require.Equal(t, "http://proxy.example.test:3128", upstream.proxyURLs[i])
 		require.Equal(t, account.ID, upstream.accountIDs[i])
 		require.Equal(t, account.Concurrency, upstream.concurrencies[i])
 		require.NotNil(t, upstream.profiles[i])
 		require.Equal(t, "router-token", upstream.profiles[i].Name)
 	}
+	require.Equal(t, 0, upstream.standardCalls)
+	require.Equal(t, 3, upstream.tlsCalls)
 	require.Equal(t, "/backend-api/wham/rate-limit-reset-credits/consume", upstream.requests[2].URL.Path)
+}
+
+func TestOpenAIQuotaServiceFallsBackToAccountTLSWithoutExplicitQuotaProfile(t *testing.T) {
+	missingProfileID := int64(99)
+	tests := []struct {
+		name      string
+		profileID *int64
+	}{
+		{name: "not configured"},
+		{name: "configured profile missing", profileID: &missingProfileID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				ID:       44,
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"access_token":       "oauth-token",
+					"chatgpt_account_id": "chatgpt-acc",
+				},
+				Extra: map[string]any{
+					"enable_tls_fingerprint":     true,
+					"tls_fingerprint_profile_id": int64(10),
+					"tls_fingerprint_router_id":  int64(9),
+				},
+			}
+			upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
+				codexInviteResetJSONResponse(`{"rate_limit_reset_credits":{"available_count":0}}`),
+				codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
+			}}
+			routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+				9: {
+					ID:                                      9,
+					Enabled:                                 true,
+					CodexInviteResetTLSFingerprintProfileID: tt.profileID,
+					Rules: []model.TLSFingerprintRouterRule{{
+						Enabled:                 true,
+						Pattern:                 "codex_cli_rs/",
+						TLSFingerprintProfileID: 11,
+					}},
+				},
+			}}
+			profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+				10: {ID: 10, Name: "inference-only"},
+				11: {ID: 11, Name: "router-inference-only"},
+			}}
+			svc := NewOpenAIQuotaService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
+
+			_, err := svc.QueryUsage(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.Equal(t, 0, upstream.standardCalls)
+			require.Equal(t, 2, upstream.tlsCalls)
+			require.Len(t, upstream.profiles, 2)
+			for _, profile := range upstream.profiles {
+				require.NotNil(t, profile)
+				require.Equal(t, "inference-only", profile.Name)
+			}
+		})
+	}
+}
+
+func TestOpenAIQuotaServiceUsesStandardTLSWhenAccountTLSIsDisabled(t *testing.T) {
+	account := &Account{
+		ID:       45,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra: map[string]any{
+			"tls_fingerprint_profile_id": int64(10),
+			"tls_fingerprint_router_id":  int64(9),
+		},
+	}
+	upstream := &codexInviteResetHTTPUpstreamStub{responses: []*http.Response{
+		codexInviteResetJSONResponse(`{"rate_limit_reset_credits":{"available_count":0}}`),
+		codexInviteResetJSONResponse(`{"available_count":0,"credits":[]}`),
+	}}
+	routerReader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		9: {ID: 9, Enabled: true},
+	}}
+	profileService := &TLSFingerprintProfileService{localCache: map[int64]*model.TLSFingerprintProfile{
+		10: {ID: 10, Name: "inference-only"},
+	}}
+	svc := NewOpenAIQuotaService(codexInviteResetAdminServiceStub{account: account}, upstream, nil, profileService, routerReader)
+
+	_, err := svc.QueryUsage(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, upstream.standardCalls)
+	require.Equal(t, 0, upstream.tlsCalls)
 }
 
 func TestOpenAIQuotaServiceRejectsUnsupportedAccount(t *testing.T) {

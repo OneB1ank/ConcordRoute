@@ -248,6 +248,9 @@ func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *t
 			"access_token":       "parent-token",
 			"chatgpt_account_id": "org-parent",
 		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
+		},
 	}
 	EnsureCodexFingerprintSeed(parent)
 	shadow := &Account{

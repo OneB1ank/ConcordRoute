@@ -210,7 +210,7 @@ func ProvideOpenAIQuotaService(
 	return service
 }
 
-// ProvideAccountUsageService 为后台配额探针注入 Agent Identity task 恢复所需的连接失效器。
+// ProvideAccountUsageService 注入只读取元数据的账号用量依赖。
 func ProvideAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
@@ -225,8 +225,6 @@ func ProvideAccountUsageService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	httpUpstream HTTPUpstream,
 	quotaAutoPauseSettings OpenAIQuotaAutoPauseSettingsReader,
-	openAIGatewayService *OpenAIGatewayService,
-	codexQuotaOverdraft *CodexQuotaOverdraftCoordinator,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -243,34 +241,7 @@ func ProvideAccountUsageService(
 		httpUpstream,
 		quotaAutoPauseSettings,
 	)
-	service.agentIdentityWS = openAIGatewayService
-	service.openAIGatewayService = openAIGatewayService
-	service.SetCodexQuotaOverdraftCoordinator(codexQuotaOverdraft)
 	return service
-}
-
-// ProvideCodexQuotaOverdraftCoordinator 建立账号级透支协调器，并回注到网关，
-// 使正常请求、429 处理、后台探测共用同一实例。
-func ProvideCodexQuotaOverdraftCoordinator(
-	accountRepo AccountRepository,
-	httpUpstream HTTPUpstream,
-	openAITokenProvider *OpenAITokenProvider,
-	tempUnschedCache TempUnschedCache,
-	runtimeBlocker AccountRuntimeBlocker,
-	rateLimitService *RateLimitService,
-) *CodexQuotaOverdraftCoordinator {
-	coordinator := NewCodexQuotaOverdraftCoordinator(
-		accountRepo,
-		httpUpstream,
-		openAITokenProvider,
-		tempUnschedCache,
-		runtimeBlocker,
-		rateLimitService,
-	)
-	if gateway, ok := runtimeBlocker.(*OpenAIGatewayService); ok {
-		gateway.SetCodexQuotaOverdraftCoordinator(coordinator)
-	}
-	return coordinator
 }
 
 // ProvideAccountTestService 为管理端账号测试复用网关的 Agent Identity 连接失效能力。
@@ -889,7 +860,6 @@ var ProviderSet = wire.NewSet(
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
-	ProvideCodexQuotaOverdraftCoordinator,
 	ProvideAccountUsageService,
 	ProvideAccountTestService,
 	ProvideOllamaCloudUsageService,

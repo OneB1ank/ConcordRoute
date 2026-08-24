@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	httppool "github.com/TokenFlux/TokenRouter/internal/pkg/httpclient"
-	openaipkg "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/qoder"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
@@ -115,27 +113,28 @@ type qoderUsageCache struct {
 }
 
 const (
-	apiCacheTTL         = 3 * time.Minute
-	apiErrorCacheTTL    = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
-	antigravityErrorTTL = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
-	apiQueryMaxJitter   = 800 * time.Millisecond // 用量查询最大随机延迟
-	windowStatsCacheTTL = 1 * time.Minute
-	openAIProbeCacheTTL = 10 * time.Minute
-	grokProbeRetryTTL   = 1 * time.Minute
-	grokFreeQuotaWindow = 24 * time.Hour
+	apiCacheTTL              = 3 * time.Minute
+	apiErrorCacheTTL         = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
+	antigravityErrorTTL      = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
+	apiQueryMaxJitter        = 800 * time.Millisecond // 用量查询最大随机延迟
+	windowStatsCacheTTL      = 1 * time.Minute
+	openAIUsageQueryCacheTTL = 10 * time.Minute
+	grokBillingCacheTTL      = 10 * time.Minute
+	grokProbeRetryTTL        = 1 * time.Minute
+	grokFreeQuotaWindow      = 24 * time.Hour
 )
 
 // UsageCache 封装账户使用量相关的缓存
 type UsageCache struct {
-	apiCache          sync.Map           // accountID -> *apiUsageCache
-	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
-	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
-	qoderCache        sync.Map           // accountID -> *qoderUsageCache
-	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
-	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
-	qoderFlight       singleflight.Group // 防止同一 Qoder 账号的并发请求击穿缓存
-	openAIProbeCache  sync.Map           // accountID -> time.Time
-	grokProbeCache    sync.Map           // accountID -> 最近一次 billing 探测时间
+	apiCache              sync.Map           // accountID -> *apiUsageCache
+	windowStatsCache      sync.Map           // accountID -> *windowStatsCache
+	antigravityCache      sync.Map           // accountID -> *antigravityUsageCache
+	qoderCache            sync.Map           // accountID -> *qoderUsageCache
+	apiFlight             singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
+	antigravityFlight     singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	qoderFlight           singleflight.Group // 防止同一 Qoder 账号的并发请求击穿缓存
+	openAIUsageQueryCache sync.Map           // accountID -> time.Time
+	grokProbeCache        sync.Map           // accountID -> 最近一次 billing 探测时间
 }
 
 // NewUsageCache 创建 UsageCache 实例
@@ -158,17 +157,12 @@ type WindowStats struct {
 
 // UsageProgress 使用量进度
 type UsageProgress struct {
-	Utilization         float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
-	ResetsAt            *time.Time   `json:"resets_at"`              // 重置时间
-	RemainingSeconds    int          `json:"remaining_seconds"`      // 距重置剩余秒数
-	WindowStats         *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
-	UsedRequests        int64        `json:"used_requests,omitempty"`
-	LimitRequests       int64        `json:"limit_requests,omitempty"`
-	OverdraftActive     bool         `json:"overdraft_active,omitempty"`
-	OverdraftTerminated bool         `json:"overdraft_terminated,omitempty"`
-	OverdraftStats      *WindowStats `json:"overdraft_stats,omitempty"`
-	OverdraftStarted    *time.Time   `json:"overdraft_started_at,omitempty"`
-	OverdraftRecover    *time.Time   `json:"overdraft_recover_at,omitempty"`
+	Utilization      float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
+	ResetsAt         *time.Time   `json:"resets_at"`              // 重置时间
+	RemainingSeconds int          `json:"remaining_seconds"`      // 距重置剩余秒数
+	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
+	UsedRequests     int64        `json:"used_requests,omitempty"`
+	LimitRequests    int64        `json:"limit_requests,omitempty"`
 }
 
 // AntigravityModelQuota Antigravity 单个模型的配额信息
@@ -242,9 +236,6 @@ type UsageInfo struct {
 
 	// QuotaAutoPaused 表示 OpenAI 账号当前因 5h/7d 配额阈值被自动暂停调度。
 	QuotaAutoPaused bool `json:"quota_auto_paused"`
-
-	// CodexQuotaOverdraft 暴露当前账号的透支探测状态，供管理页面展示。
-	CodexQuotaOverdraft *CodexQuotaOverdraftProbeState `json:"codex_quota_overdraft,omitempty"`
 
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
@@ -358,17 +349,7 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	httpUpstream            HTTPUpstream
 	quotaAutoPauseSettings  OpenAIQuotaAutoPauseSettingsReader
-	openAIGatewayService    *OpenAIGatewayService
-	codexQuotaOverdraft     *CodexQuotaOverdraftCoordinator
-	agentIdentityTaskMu     sync.Mutex
-	agentIdentityWS         agentIdentityWSConnectionInvalidator
 	qoderSessionProvider    *QoderTokenProvider
-}
-
-func (s *AccountUsageService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
-	if s != nil {
-		s.codexQuotaOverdraft = coordinator
-	}
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -776,9 +757,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
-	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
-
-	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
+	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldQueryOpenAICodexUsage(account.ID, now, force) {
 		if account.IsShadow() {
 			// Spark shadow accounts fetch usage from /wham/usage (bengalfox channel)
 			// via the shared OpenAIQuotaService, which resolves credentials from the
@@ -788,7 +767,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 				if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
 					if updates := buildCodexSparkWindowExtraUpdates(quotaUsage, now); len(updates) > 0 {
 						mergeAccountExtra(account, updates)
-						s.persistOpenAICodexProbeSnapshot(account.ID, updates)
+						s.persistOpenAICodexUsageSnapshot(account.ID, updates)
 						if usage.UpdatedAt == nil {
 							usage.UpdatedAt = &now
 						}
@@ -796,21 +775,18 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 					}
 				}
 			}
-		} else {
-			if updates, err := s.probeOpenAICodexSnapshot(ctx, account); err == nil && len(updates) > 0 {
-				mergeAccountExtra(account, updates)
-				if usage.UpdatedAt == nil {
-					usage.UpdatedAt = &now
+		} else if s.openAIQuotaService != nil {
+			// 普通 OAuth 账号只调用元数据接口 /wham/usage 刷新额度，
+			// 不得为刷新额度构造额外的 /responses 模型请求。
+			if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
+				if updates := buildCodexRateLimitWindowExtraUpdates(quotaUsage.RateLimit, now); len(updates) > 0 {
+					mergeAccountExtra(account, updates)
+					s.persistOpenAICodexUsageSnapshot(account.ID, updates)
+					applyExtraToUsage(usage, account.Extra, now)
 				}
-				applyExtraToUsage(usage, account.Extra, now)
 			}
 		}
 	}
-
-	if s.codexQuotaOverdraft != nil {
-		s.codexQuotaOverdraft.ObserveAccount(account, "")
-	}
-	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
 
 	if s.usageLogRepo == nil {
 		return usage, nil
@@ -829,8 +805,6 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
-
-	applyCodexQuotaOverdraftUsage(ctx, s.usageLogRepo, account, usage, now)
 
 	return usage, nil
 }
@@ -855,13 +829,8 @@ func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
 	if account == nil || !account.IsOpenAIOAuth() {
 		return false
 	}
-	// 普通账号的 codex 刷新走 probe(/responses 头),要求 WSv2;但 spark 影子走 QueryUsage
-	// (/wham/usage body 的 codex_bengalfox),与 WSv2 无关——不能用 WSv2 门控其 staleness,否则首刷后
-	// codex_5h/7d 已存在→staleness 恒 false→spark 窗口永久冻结(外审第9轮 P1)。影子改按
-	// codex_usage_updated_at TTL 判定;实际查询频率仍由 shouldProbeOpenAICodexSnapshot 的缓存 TTL 节流。
-	if !account.IsShadow() && !account.IsOpenAIResponsesWebSocketV2Enabled() {
-		return false
-	}
+	// 普通账号与影子账号都只通过元数据接口刷新额度，
+	// 与 Responses WebSocket 传输开关无关。
 	if account.Extra == nil {
 		return true
 	}
@@ -873,117 +842,23 @@ func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
 	if err != nil {
 		return true
 	}
-	return now.Sub(ts) >= openAIProbeCacheTTL
+	return now.Sub(ts) >= openAIUsageQueryCacheTTL
 }
 
-func (s *AccountUsageService) shouldProbeOpenAICodexSnapshot(accountID int64, now time.Time, force ...bool) bool {
+func (s *AccountUsageService) shouldQueryOpenAICodexUsage(accountID int64, now time.Time, force ...bool) bool {
 	if s == nil || s.cache == nil || accountID <= 0 {
 		return true
 	}
 	forceProbe := len(force) > 0 && force[0]
 	if !forceProbe {
-		if cached, ok := s.cache.openAIProbeCache.Load(accountID); ok {
-			if ts, ok := cached.(time.Time); ok && now.Sub(ts) < openAIProbeCacheTTL {
+		if cached, ok := s.cache.openAIUsageQueryCache.Load(accountID); ok {
+			if ts, ok := cached.(time.Time); ok && now.Sub(ts) < openAIUsageQueryCacheTTL {
 				return false
 			}
 		}
 	}
-	s.cache.openAIProbeCache.Store(accountID, now)
+	s.cache.openAIUsageQueryCache.Store(accountID, now)
 	return true
-}
-
-func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, account *Account) (map[string]any, error) {
-	if account == nil || !account.IsOAuth() {
-		return nil, nil
-	}
-	accessToken := ""
-	if !account.IsOpenAIAgentIdentity() {
-		accessToken = account.GetOpenAIAccessToken()
-	}
-	if accessToken == "" && !account.IsOpenAIAgentIdentity() {
-		return nil, fmt.Errorf("no access token available")
-	}
-	modelID := openaipkg.CodexUsageProbeModel
-	payload := createOpenAITestPayload(modelID, "", true)
-	fingerprintIDs := resolveCodexProbeFingerprintIDs(account, codexProbePurposeUsageSnapshot, modelID)
-	applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
-	}
-
-	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, chatgptCodexURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("create openai probe request: %w", err)
-	}
-	req.Host = "chatgpt.com"
-	req.Header.Set("Content-Type", "application/json")
-	if account.IsOpenAIAgentIdentity() {
-		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
-		if authErr != nil {
-			return nil, fmt.Errorf("build Agent Identity authentication: %w", authErr)
-		}
-		for key, values := range authHeaders {
-			for _, value := range values {
-				req.Header.Add(key, value)
-			}
-		}
-	} else {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	identityUA := strings.TrimSpace(account.GetOpenAIUserAgent())
-	routerMatch := TLSFingerprintRouterMatchResult{}
-	if s.openAIGatewayService != nil {
-		identityUA, routerMatch = s.openAIGatewayService.resolveOpenAIBackgroundIdentity(account)
-	}
-	canonical := resolveCodexOutboundIdentity(identityUA)
-	req.Header.Set("Originator", canonical.originator)
-	req.Header.Set("Version", canonical.version)
-	req.Header.Set("User-Agent", canonical.userAgent)
-	// Claude identityCache 保存的是 Anthropic/Claude CLI 指纹，不属于 Codex 身份来源。
-	// 探针与真实 OpenAI 转发保持一致：只使用账号显式 UA 或全局规范 Codex UA，
-	// 并让 originator、version 与最终 User-Agent 成套收敛。
-	enforceCodexIdentityHeadersWithUA(req.Header, identityUA)
-	setOpenAIChatGPTAccountHeaders(req.Header, account)
-	applyCodexProbeFingerprintHeaders(req.Header, fingerprintIDs)
-
-	proxyURL := resolveAccountProxyURL(account)
-	resp, err := s.doOpenAICodexProbeRequest(req, account, proxyURL, routerMatch)
-	if err != nil {
-		return nil, fmt.Errorf("openai codex probe request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	updates, err := extractOpenAICodexProbeUpdates(resp)
-	if err != nil {
-		return nil, err
-	}
-	if len(updates) > 0 {
-		s.persistOpenAICodexProbeSnapshot(account.ID, updates)
-		return updates, nil
-	}
-	return nil, nil
-}
-
-func (s *AccountUsageService) doOpenAICodexProbeRequest(req *http.Request, account *Account, proxyURL string, routerMatch TLSFingerprintRouterMatchResult) (*http.Response, error) {
-	if s != nil && s.httpUpstream != nil {
-		// Codex 后台快照探测也要复用网关上游链路，确保代理、OpenAI HTTP/2 策略和 TLS 指纹与用户请求一致。
-		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-		return s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.resolveOpenAICodexProbeTLSProfile(account, routerMatch))
-	}
-	client, err := httppool.GetClient(httppool.Options{
-		ProxyURL:              proxyURL,
-		Timeout:               15 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build openai probe client: %w", err)
-	}
-	return client.Do(req)
 }
 
 func (s *AccountUsageService) resolveTLSProfile(account *Account) *tlsfingerprint.Profile {
@@ -993,17 +868,7 @@ func (s *AccountUsageService) resolveTLSProfile(account *Account) *tlsfingerprin
 	return s.tlsFPProfileService.ResolveTLSProfile(account)
 }
 
-// resolveOpenAICodexProbeTLSProfile 让后台 Codex 探针与正常推理复用同一条
-// UA -> TLS Router -> TLS Profile 决策链。探针没有入站请求，因此使用最终出站
-// UA 作为路由输入；未注入网关或未命中路由时保持原有账号固定模板兜底。
-func (s *AccountUsageService) resolveOpenAICodexProbeTLSProfile(account *Account, match TLSFingerprintRouterMatchResult) *tlsfingerprint.Profile {
-	if s == nil || s.openAIGatewayService == nil {
-		return s.resolveTLSProfile(account)
-	}
-	return s.openAIGatewayService.resolveOpenAITLSProfile(account, match)
-}
-
-func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {
+func (s *AccountUsageService) persistOpenAICodexUsageSnapshot(accountID int64, updates map[string]any) {
 	if s == nil || s.accountRepo == nil || accountID <= 0 {
 		return
 	}
@@ -1016,19 +881,6 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, u
 		defer updateCancel()
 		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
 	}()
-}
-
-func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
-	if resp == nil {
-		return nil, nil
-	}
-	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-		return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("openai codex probe returned status %d", resp.StatusCode)
-	}
-	return nil, nil
 }
 
 func mergeAccountExtra(account *Account, updates map[string]any) {
@@ -1903,7 +1755,7 @@ func grokBillingSnapshotNeedsRefresh(account *Account, now time.Time) bool {
 		stamp = strings.TrimSpace(billing.FetchedAt)
 	}
 	updatedAt, err := parseTime(stamp)
-	return err != nil || now.Sub(updatedAt) >= openAIProbeCacheTTL
+	return err != nil || now.Sub(updatedAt) >= grokBillingCacheTTL
 }
 
 func (s *AccountUsageService) shouldProbeGrokBilling(accountID int64, now time.Time, force bool) bool {

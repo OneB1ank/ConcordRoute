@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	dbent "github.com/TokenFlux/TokenRouter/ent"
@@ -110,11 +109,23 @@ func TestSchedulableAccountQueryScopesCodexQuotaOverdraftToMarkedContext(t *test
 	require.Contains(t, overdraftSQL, `"parent_account_id" IS NULL`)
 	require.Contains(t, overdraftSQL, `"extra"`)
 	require.Contains(t, overdraftSQL, `"extra" ->> $4`)
-	require.Contains(t, overdraftSQL, `codex_quota_overdraft_probe,status`)
-	require.Contains(t, overdraftSQL, `codex_quota_overdraft_probe,reason_code`)
-	require.Contains(t, overdraftSQL, `codex_quota_overdraft`)
+	require.Equal(t, 2, strings.Count(overdraftSQL, `"temp_unschedulable_reason" LIKE`), "threshold and legacy probe pause sources must both be eligible")
+	require.NotContains(t, overdraftSQL, `codex_quota_overdraft_probe,status`)
+	require.NotContains(t, overdraftSQL, `codex_quota_overdraft_probe,reason_code`)
 	require.NotContains(t, overdraftSQL, `?`, "PostgreSQL query must not retain Ent's generic placeholder")
 	require.NotContains(t, overdraftSQL, `::boolean`, "畸形历史值不得让可调度查询因布尔强转失败")
+}
+
+func TestDiscardDeprecatedAccountExtraRemovesLegacyCodexOverdraftProbe(t *testing.T) {
+	extra := map[string]any{
+		deprecatedCodexQuotaOverdraftProbeExtraKey: map[string]any{"status": "passed"},
+		"custom": "value",
+	}
+
+	discardDeprecatedAccountExtra(extra)
+
+	require.NotContains(t, extra, deprecatedCodexQuotaOverdraftProbeExtraKey)
+	require.Equal(t, "value", extra["custom"])
 }
 
 func TestListSchedulableByGroupIDAndPlatformUsesPostgresOverdraftPlaceholder(t *testing.T) {
@@ -143,139 +154,4 @@ func TestListSchedulableByGroupIDAndPlatformUsesPostgresOverdraftPlaceholder(t *
 	require.Contains(t, normalized, `"temp_unschedulable_reason" LIKE`)
 	require.Regexp(t, `"extra" ->> \$[0-9]+`, normalized)
 	require.NotContains(t, normalized, `?`, "snapshot rebuild SQL must be valid PostgreSQL")
-}
-
-func TestClaimCodexQuotaOverdraftProbeAllowsCooledPassedCycleRecheck(t *testing.T) {
-	var capturedSQL string
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	driver := entsql.OpenDB(dialect.Postgres, db)
-	client := dbent.NewClient(dbent.Driver(driver))
-	t.Cleanup(func() { _ = client.Close() })
-	repo := newAccountRepositoryWithSQL(client, db, nil)
-
-	mock.ExpectExec("claim overdraft probe").WillReturnResult(sqlmock.NewResult(0, 0))
-	claimed, err := repo.ClaimCodexQuotaOverdraftProbe(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
-		Status:    "pending",
-		CycleKey:  "5h:1787166000",
-		StartedAt: time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	require.False(t, claimed)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	normalized := normalizeSQLWhitespace(capturedSQL)
-	require.Contains(t, normalized, "status}' = 'passed'")
-	require.Contains(t, normalized, "tested_at")
-	require.Contains(t, normalized, "$6 * INTERVAL '1 second'")
-}
-
-func TestUpdateCodexQuotaOverdraftProbeStateUsesCycleCAS(t *testing.T) {
-	var capturedSQL string
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	driver := entsql.OpenDB(dialect.Postgres, db)
-	client := dbent.NewClient(dbent.Driver(driver))
-	t.Cleanup(func() { _ = client.Close() })
-	repo := newAccountRepositoryWithSQL(client, db, nil)
-
-	mock.ExpectExec("update overdraft state").WillReturnResult(sqlmock.NewResult(0, 0))
-	updated, err := repo.UpdateCodexQuotaOverdraftProbeState(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
-		Status:    "passed",
-		CycleKey:  "5h:1787166000",
-		StartedAt: time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	require.False(t, updated)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	normalized := normalizeSQLWhitespace(capturedSQL)
-	require.Contains(t, normalized, "extra ->> $4")
-	require.Contains(t, normalized, "cycle_key}' = $5")
-}
-
-func TestPersistCodexQuotaOverdraftProbeUnlessFailedKeepsFailedTerminal(t *testing.T) {
-	var capturedSQL string
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	driver := entsql.OpenDB(dialect.Postgres, db)
-	client := dbent.NewClient(dbent.Driver(driver))
-	t.Cleanup(func() { _ = client.Close() })
-	repo := newAccountRepositoryWithSQL(client, db, nil)
-
-	mock.ExpectExec("persist non-failed overdraft state").WillReturnResult(sqlmock.NewResult(0, 0))
-	persisted, err := repo.PersistCodexQuotaOverdraftProbeUnlessFailed(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
-		Status:    "passed",
-		CycleKey:  "5h:1787166000",
-		StartedAt: time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	require.False(t, persisted)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	normalized := normalizeSQLWhitespace(capturedSQL)
-	require.Contains(t, normalized, "cycle_key}', '') <> $5")
-	require.Contains(t, normalized, "status}', '') <> 'failed'")
-	require.Contains(t, normalized, "reason_code}', '') <> $6")
-	require.Contains(t, normalized, "$7 = 'recovered'")
-	require.NotContains(t, normalized, "?", "PostgreSQL 条件更新不能残留通用占位符")
-}
-
-func TestPersistCodexQuotaOverdraftProbeUnlessFailedAllowsRecoveredState(t *testing.T) {
-	var capturedSQL string
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	driver := entsql.OpenDB(dialect.Postgres, db)
-	client := dbent.NewClient(dbent.Driver(driver))
-	t.Cleanup(func() { _ = client.Close() })
-	repo := newAccountRepositoryWithSQL(client, db, nil)
-
-	mock.ExpectExec("persist recovered overdraft state").WillReturnResult(sqlmock.NewResult(0, 1))
-	persisted, err := repo.PersistCodexQuotaOverdraftProbeUnlessFailed(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
-		Status:    "recovered",
-		CycleKey:  "5h:1787166000",
-		StartedAt: time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	require.True(t, persisted)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	normalized := normalizeSQLWhitespace(capturedSQL)
-	require.Contains(t, normalized, "$7 = 'recovered'", "额度窗口恢复后必须允许 recovered 覆盖旧的业务失败终态")
-}
-
-func TestFinalizeCodexQuotaOverdraftProbeFailedProtectsBusinessTerminal(t *testing.T) {
-	var capturedSQL string
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-
-	driver := entsql.OpenDB(dialect.Postgres, db)
-	client := dbent.NewClient(dbent.Driver(driver))
-	t.Cleanup(func() { _ = client.Close() })
-	repo := newAccountRepositoryWithSQL(client, db, nil)
-
-	mock.ExpectExec("finalize failed overdraft state").WillReturnResult(sqlmock.NewResult(0, 0))
-	finalized, err := repo.FinalizeCodexQuotaOverdraftProbeFailed(context.Background(), 77, &service.CodexQuotaOverdraftProbeState{
-		Status:     "failed",
-		CycleKey:   "5h:1787166000",
-		ReasonCode: "quota_limited",
-	})
-	require.NoError(t, err)
-	require.False(t, finalized)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	normalized := normalizeSQLWhitespace(capturedSQL)
-	require.Contains(t, normalized, "status}' = 'failed'")
-	require.Contains(t, normalized, "reason_code}' = $6")
-	require.Contains(t, normalized, "NOT (")
-	require.NotContains(t, normalized, "?", "PostgreSQL 终态保护条件不能残留通用占位符")
 }

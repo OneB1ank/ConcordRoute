@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,22 +48,8 @@ func (s *openAIOAuthTLSRouterReaderStub) GetRuntimeRouter(routerID int64) *model
 	return s.routers[routerID]
 }
 
-func (s *openAIOAuthTLSRouterReaderStub) MatchUserAgent(routerID int64, userAgent string) TLSFingerprintRouterMatchResult {
-	router := s.GetRuntimeRouter(routerID)
-	if router == nil || !router.Enabled {
-		return TLSFingerprintRouterMatchResult{}
-	}
-	for _, rule := range router.Rules {
-		if rule.Enabled && strings.Contains(userAgent, rule.Pattern) {
-			return TLSFingerprintRouterMatchResult{Matched: true, RouterID: routerID, TLSFingerprintProfileID: rule.TLSFingerprintProfileID}
-		}
-	}
-	return TLSFingerprintRouterMatchResult{RouterID: routerID}
-}
-
 type openAIOAuthTokenProfileResolverStub struct {
-	profiles       map[int64]*tlsfingerprint.Profile
-	accountProfile *tlsfingerprint.Profile
+	profiles map[int64]*tlsfingerprint.Profile
 }
 
 func (s *openAIOAuthTokenProfileResolverStub) ResolveTokenTLSProfileByID(id int64) (*tlsfingerprint.Profile, bool) {
@@ -73,20 +58,6 @@ func (s *openAIOAuthTokenProfileResolverStub) ResolveTokenTLSProfileByID(id int6
 	}
 	profile, ok := s.profiles[id]
 	return profile, ok
-}
-
-func (s *openAIOAuthTokenProfileResolverStub) ResolveTLSProfile(account *Account) *tlsfingerprint.Profile {
-	if s == nil || account == nil || !account.IsTLSFingerprintEnabled() {
-		return nil
-	}
-	return s.accountProfile
-}
-
-func (s *openAIOAuthTokenProfileResolverStub) ResolveRoutableTLSProfileByID(account *Account, id int64) (*tlsfingerprint.Profile, bool) {
-	if account == nil || !account.IsTLSFingerprintEnabled() {
-		return nil, false
-	}
-	return s.ResolveTokenTLSProfileByID(id)
 }
 
 type openAIOAuthSettingRepoStub struct {
@@ -258,17 +229,12 @@ func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountTLSRouterConfig(t *te
 	require.Equal(t, 3, client.lastOptions[0].AccountConcurrency)
 }
 
-func TestOpenAIOAuthService_RefreshAccountToken_EmptyRouterTokenConfigFallsBackToAccountTLS(t *testing.T) {
+func TestOpenAIOAuthService_RefreshAccountToken_EmptyRouterTokenConfigUsesClientDefaults(t *testing.T) {
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
-	accountProfile := &tlsfingerprint.Profile{Name: "account-macOS"}
 	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
-		9: {
-			ID:      9,
-			Enabled: true,
-		},
-	}}, &openAIOAuthTokenProfileResolverStub{accountProfile: accountProfile})
-
+		9: {ID: 9, Enabled: true},
+	}}, &openAIOAuthTokenProfileResolverStub{})
 	account := &Account{
 		ID:       77,
 		Platform: PlatformOpenAI,
@@ -285,14 +251,12 @@ func TestOpenAIOAuthService_RefreshAccountToken_EmptyRouterTokenConfigFallsBackT
 
 	_, err := svc.RefreshAccountToken(context.Background(), account)
 	require.NoError(t, err)
-	require.Len(t, client.lastOptions, 1)
-	require.Same(t, accountProfile, client.lastOptions[0].TLSProfile)
+	require.Empty(t, client.lastOptions)
 }
 
-func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountUAForNormalRouterFallback(t *testing.T) {
+func TestOpenAIOAuthService_RefreshAccountToken_RouterRulesDoNotAffectTokenEndpoint(t *testing.T) {
 	const accountUA = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
 	profileID := int64(57)
-	routedProfile := &tlsfingerprint.Profile{Name: "account-routed-macOS"}
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
 	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
@@ -305,12 +269,13 @@ func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountUAForNormalRouterFall
 				TLSFingerprintProfileID: profileID,
 			}},
 		},
-	}}, &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{profileID: routedProfile}})
+	}}, &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{
+		profileID: {Name: "inference-only"},
+	}})
 	account := &Account{
-		ID:          78,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Concurrency: 2,
+		ID:       78,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
 			"refresh_token": "old-rt",
 			"client_id":     "client-id",
@@ -324,15 +289,11 @@ func TestOpenAIOAuthService_RefreshAccountToken_UsesAccountUAForNormalRouterFall
 
 	_, err := svc.RefreshAccountToken(t.Context(), account)
 	require.NoError(t, err)
-	require.Len(t, client.lastOptions, 1)
-	expectedUA, _ := CodexAuthIdentityForUserAgent(accountUA)
-	require.Equal(t, expectedUA, client.lastOptions[0].UserAgent)
-	require.Same(t, routedProfile, client.lastOptions[0].TLSProfile)
+	require.Empty(t, client.lastOptions)
 }
 
-func TestOpenAIOAuthService_ExchangeAuthProfileFallsBackToRouterUARule(t *testing.T) {
+func TestOpenAIOAuthService_TokenUserAgentWithoutDedicatedProfileUsesStandardTLS(t *testing.T) {
 	profileID := int64(56)
-	routedProfile := &tlsfingerprint.Profile{Name: "routed-macOS"}
 	router := &model.TLSFingerprintRouter{
 		ID:                         11,
 		Enabled:                    true,
@@ -344,7 +305,9 @@ func TestOpenAIOAuthService_ExchangeAuthProfileFallsBackToRouterUARule(t *testin
 		}},
 	}
 	reader := &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{11: router}}
-	resolver := &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{profileID: routedProfile}}
+	resolver := &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{
+		profileID: {Name: "inference-only"},
+	}}
 	svc := NewOpenAIOAuthService(nil, &openaiOAuthClientRefreshStub{})
 	svc.SetTokenTLSRouterDeps(nil, reader, resolver)
 
@@ -352,7 +315,53 @@ func TestOpenAIOAuthService_ExchangeAuthProfileFallsBackToRouterUARule(t *testin
 	require.Len(t, options, 1)
 	expectedRouterUA, _ := CodexAuthIdentityForUserAgent(router.ChatGPTOAuthTokenUserAgent)
 	require.Equal(t, expectedRouterUA, options[0].UserAgent)
-	require.Same(t, routedProfile, options[0].TLSProfile)
+	require.Nil(t, options[0].TLSProfile)
+}
+
+func TestOpenAIOAuthService_InvalidExplicitAuthProfileDoesNotUseInferenceRule(t *testing.T) {
+	missingProfileID := int64(404)
+	routedProfileID := int64(58)
+	client := &openaiOAuthClientRefreshStub{}
+	svc := NewOpenAIOAuthService(nil, client)
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		12: {
+			ID:                                       12,
+			Enabled:                                  true,
+			ChatGPTOAuthTokenUserAgent:               "codex-tui/0.200.1 (Windows 10.0.26200; x86_64)",
+			ChatGPTOAuthTokenTLSFingerprintProfileID: &missingProfileID,
+			Rules: []model.TLSFingerprintRouterRule{{
+				Enabled:                 true,
+				Pattern:                 "codex-tui/",
+				TLSFingerprintProfileID: routedProfileID,
+			}},
+		},
+	}}, &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{
+		routedProfileID: {Name: "inference-only"},
+	}})
+
+	routerID := int64(12)
+	_, err := svc.RefreshTokenWithClientIDAndRouter(t.Context(), "rt", "", "client-id", &routerID)
+	require.NoError(t, err)
+	require.Len(t, client.lastOptions, 1)
+	require.Nil(t, client.lastOptions[0].TLSProfile)
+}
+
+func TestOpenAIOAuthService_InvalidExplicitAuthProfileWithoutFallbackUsesStandardTLS(t *testing.T) {
+	missingProfileID := int64(404)
+	client := &openaiOAuthClientRefreshStub{}
+	svc := NewOpenAIOAuthService(nil, client)
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		12: {
+			ID:                                       12,
+			Enabled:                                  true,
+			ChatGPTOAuthTokenTLSFingerprintProfileID: &missingProfileID,
+		},
+	}}, &openAIOAuthTokenProfileResolverStub{})
+
+	routerID := int64(12)
+	_, err := svc.RefreshTokenWithClientIDAndRouter(t.Context(), "rt", "", "client-id", &routerID)
+	require.NoError(t, err)
+	require.Empty(t, client.lastOptions)
 }
 
 func TestOpenAIOAuthService_RefreshTokenWithClientIDAndRouter_UsesCodexUAFallbackWhenTLSProfileConfigured(t *testing.T) {

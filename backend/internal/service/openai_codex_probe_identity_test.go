@@ -15,9 +15,9 @@ func TestResolveCodexProbeFingerprintIDsStableConversationRotatingTurn(t *testin
 		codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
 	})
 
-	first := resolveCodexProbeFingerprintIDs(account, codexProbePurposeUsageSnapshot, "GPT-5.4")
-	second := resolveCodexProbeFingerprintIDs(account, codexProbePurposeUsageSnapshot, "gpt-5.4")
-	other := resolveCodexProbeFingerprintIDs(account, codexProbePurposeAccountTest, "gpt-5.4")
+	first := resolveCodexProbeFingerprintIDs(account, codexProbePurposeAccountTest, "GPT-5.4")
+	second := resolveCodexProbeFingerprintIDs(account, codexProbePurposeAccountTest, "gpt-5.4")
+	other := resolveCodexProbeFingerprintIDs(account, codexProbePurposeNativeCompactionV2, "gpt-5.4")
 
 	require.NotNil(t, first)
 	require.NotNil(t, second)
@@ -84,7 +84,7 @@ func TestResolveCodexProbeFingerprintIDsRespectsModes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(string(tt.mode), func(t *testing.T) {
 			account := newTestOAuthAccount(703, map[string]any{codexFingerprintModeExtraKey: string(tt.mode)})
-			ids := resolveCodexProbeFingerprintIDs(account, codexProbePurposeUsageSnapshot, "gpt-5.4")
+			ids := resolveCodexProbeFingerprintIDs(account, codexProbePurposeAccountTest, "gpt-5.4")
 			if !tt.wantIDs {
 				require.Nil(t, ids)
 				return

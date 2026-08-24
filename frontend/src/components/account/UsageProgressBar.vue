@@ -25,19 +25,6 @@
       </div>
     </div>
 
-    <div
-      v-if="overdraftActive || overdraftTerminated"
-      class="mb-0.5 flex items-center gap-1.5 text-[9px] text-red-600 dark:text-red-400"
-      :title="overdraftTitle"
-    >
-      <span class="rounded bg-red-50 px-1.5 py-0.5 font-medium dark:bg-red-950/40">
-        {{ t(overdraftTerminated ? 'usage.overdraftTerminated' : 'usage.overdraftActive') }}
-      </span>
-      <span v-if="overdraftStats" class="text-gray-500 dark:text-gray-400">
-        {{ formatOverdraftRequests }} req · {{ formatOverdraftTokens }} · {{ formatOverdraftCost }}
-      </span>
-    </div>
-
     <!-- 进度条行 -->
     <div class="flex items-center gap-1">
       <!-- 标签保持固定宽度，让同一单元格内的多行进度条对齐。 -->
@@ -89,11 +76,6 @@ const props = defineProps<{
   showNowWhenIdle?: boolean
   remainingCapacity?: boolean
   wideLabel?: boolean
-  overdraftActive?: boolean
-  overdraftTerminated?: boolean
-  overdraftStats?: WindowStats | null
-  overdraftStartedAt?: string | null
-  overdraftRecoverAt?: string | null
 }>()
 
 const { t } = useI18n()
@@ -243,27 +225,6 @@ const formatUserCost = computed(() => {
     return formatBalanceAmount(0, { fractionDigits: 2 })
   }
   return formatBalanceAmount(props.windowStats.user_cost, { fractionDigits: 2 })
-})
-
-const formatOverdraftRequests = computed(() => {
-  if (!props.overdraftStats) return ''
-  return formatCompactNumber(props.overdraftStats.requests, { allowBillions: false })
-})
-
-const formatOverdraftTokens = computed(() => {
-  if (!props.overdraftStats) return ''
-  return formatCompactNumber(props.overdraftStats.tokens)
-})
-
-const formatOverdraftCost = computed(() => {
-  if (!props.overdraftStats) return formatUsdAmount(0, { fractionDigits: 2 })
-  return formatUsdAmount(props.overdraftStats.cost, { fractionDigits: 2 })
-})
-
-const overdraftTitle = computed(() => {
-  const label = props.overdraftTerminated ? t('usage.overdraftTerminated') : t('usage.overdraftActive')
-  if (!props.overdraftRecoverAt) return label
-  return `${label} · ${t('usage.overdraftRecoverAt')}: ${new Date(props.overdraftRecoverAt).toLocaleString()}`
 })
 
 </script>

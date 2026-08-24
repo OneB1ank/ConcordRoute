@@ -191,13 +191,21 @@ func startPassthroughLifecycleServer(
 }
 
 func dialPassthroughLifecycleClient(t *testing.T, server *httptest.Server) *coderws.Conn {
+	return dialPassthroughLifecycleClientWithFirstMessage(
+		t,
+		server,
+		[]byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`),
+	)
+}
+
+func dialPassthroughLifecycleClientWithFirstMessage(t *testing.T, server *httptest.Server, firstMessage []byte) *coderws.Conn {
 	t.Helper()
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
 	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	cancelDial()
 	require.NoError(t, err)
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, firstMessage)
 	cancelWrite()
 	require.NoError(t, err)
 	return clientConn
@@ -257,6 +265,65 @@ func TestOpenAIWSPassthroughTurnLifecycle_SerializesTerminalCommitAndNextTurn(t 
 		t.Error("failed terminal write must not commit idle state")
 	})
 	require.False(t, <-admitted, "failed terminal write must keep the current turn in flight")
+}
+
+func TestOpenAIWSPassthroughPreservesOverdraftBusinessFrames(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	baseCtx := WithCodexQuotaOverdraftScheduling(context.Background())
+	controlCtx, cancelControl := context.WithCancelCause(baseCtx)
+	defer cancelControl(context.Canceled)
+
+	cfg := passthroughLifecycleConfig()
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	account := &Account{
+		ID:          902,
+		Name:        "passthrough-overdraft-body",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-test",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough,
+			CodexQuotaOverdraftEnabledExtraKey:          true,
+			"codex_7d_used_percent":                     99.0,
+		},
+	}
+	upstream := newStagedPassthroughConn()
+	upstream.Send(`{"type":"response.completed","response":{"id":"resp_body_first","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`)
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, newPassthroughLifecycleService(cfg, upstream), account)
+	defer server.Close()
+
+	firstFrame := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"preserve first frame"}]}],"stream":false}`)
+	clientConn := dialPassthroughLifecycleClientWithFirstMessage(t, server, firstFrame)
+	defer func() { _ = clientConn.CloseNow() }()
+	require.Equal(t, firstFrame, requirePassthroughUpstreamWrite(t, upstream, 3*time.Second))
+
+	completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "resp_body_first", gjson.GetBytes(completed, "response.id").String())
+
+	secondFrame := []byte(`{"type":"response.create","model":"gpt-5.4","previous_response_id":"resp_body_first","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"preserve second frame"}]}]}`)
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, secondFrame)
+	cancelWrite()
+	require.NoError(t, err)
+	require.Equal(t, secondFrame, requirePassthroughUpstreamWrite(t, upstream, 3*time.Second))
+
+	upstream.Send(`{"type":"response.completed","response":{"id":"resp_body_second","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`)
+	completed, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "resp_body_second", gjson.GetBytes(completed, "response.id").String())
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+	select {
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough body preservation test did not exit")
+	}
 }
 
 func TestPassthroughLifecycle_LeaseLossSendsRetryClose(t *testing.T) {

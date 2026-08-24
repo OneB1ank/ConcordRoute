@@ -396,7 +396,7 @@ const defaultModelMappings = ref<ModelMapping[]>([])
 const credentialsJson = ref('{}')
 const extraJson = ref('{}')
 const openaiPassthrough = ref(false)
-const codexFingerprintMode = ref<CodexFingerprintMode>('cockpit')
+const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 const codexCLIOnlyAllowClaudeCode = ref(false)
@@ -624,9 +624,9 @@ const normalizeOpenAIOAuthClientPolicy = (
 }
 
 const normalizeCodexFingerprintMode = (mode: unknown): CodexFingerprintMode => {
-  return mode === 'off' || mode === 'device' || mode === 'session' || mode === 'full'
+  return mode === 'off' || mode === 'device' || mode === 'session' || mode === 'cockpit' || mode === 'full'
     ? mode
-    : 'cockpit'
+    : 'off'
 }
 
 const hydrate = (defaults: OpenAIOAuthImportDefaults) => {

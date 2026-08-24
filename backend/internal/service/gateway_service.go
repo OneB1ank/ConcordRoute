@@ -535,11 +535,6 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 	if account == nil {
 		return false
 	}
-	// 真实业务额度 429 是当前周期终态，即使调度快照尚未同步临时暂停，
-	// 粘性会话也必须立即解绑，避免下一次请求再次命中已耗尽账号。
-	if state, ok := codexQuotaOverdraftStateFromAccount(account); ok && codexQuotaOverdraftTerminalBusinessFailure(state) {
-		return true
-	}
 	if !account.IsSchedulable() {
 		return true
 	}

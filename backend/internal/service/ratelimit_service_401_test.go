@@ -16,17 +16,50 @@ import (
 
 type rateLimitAccountRepoStub struct {
 	mockAccountRepoForGemini
-	setErrorCalls          int
-	tempCalls              int
-	updateCredentialsCalls int
-	updateExtraCalls       int
-	lastCredentials        map[string]any
-	lastExtraUpdates       map[string]any
-	lastErrorMsg           string
-	lastTempUntil          time.Time
-	lastTempReason         string
-	lastErrorID            int64
-	lastTempID             int64
+	setErrorCalls           int
+	tempCalls               int
+	updateCredentialsCalls  int
+	updateExtraCalls        int
+	oauth401MutationCalls   int
+	oauth401Applied         *bool
+	oauth401Err             error
+	lastExpectedCredentials map[string]any
+	lastExpectedProxyID     *int64
+	lastForcedExpiry        time.Time
+	lastForcedTokenVersion  int64
+	lastCredentials         map[string]any
+	lastExtraUpdates        map[string]any
+	lastErrorMsg            string
+	lastTempUntil           time.Time
+	lastTempReason          string
+	lastErrorID             int64
+	lastTempID              int64
+}
+
+func (r *rateLimitAccountRepoStub) MarkOpenAIOAuth401RefreshRequiredIfUnchanged(
+	_ context.Context,
+	_ int64,
+	expectedCredentials map[string]any,
+	expectedProxyID *int64,
+	expiredAt time.Time,
+	tokenVersion int64,
+	until time.Time,
+	reason string,
+) (bool, error) {
+	r.oauth401MutationCalls++
+	r.lastExpectedCredentials = shallowCopyMap(expectedCredentials)
+	r.lastExpectedProxyID = expectedProxyID
+	r.lastForcedExpiry = expiredAt
+	r.lastForcedTokenVersion = tokenVersion
+	r.lastTempUntil = until
+	r.lastTempReason = reason
+	if r.oauth401Err != nil {
+		return false, r.oauth401Err
+	}
+	if r.oauth401Applied != nil {
+		return *r.oauth401Applied, nil
+	}
+	return true, nil
 }
 
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
@@ -186,8 +219,8 @@ func TestRateLimitService_HandleUpstreamError_SparkShadow401RedirectsToParent(t 
 
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls, "spark shadow must not be permanently disabled on a parent-token 401")
-	require.Equal(t, 1, repo.tempCalls)
-	require.Equal(t, parentID, repo.lastTempID, "temp-unschedulable must target the credential owner (parent)")
+	require.Zero(t, repo.tempCalls)
+	require.Equal(t, 1, repo.oauth401MutationCalls, "atomic refresh marker must target the credential owner")
 	require.Len(t, invalidator.accounts, 1)
 	require.Equal(t, parentID, invalidator.accounts[0].ID, "token cache invalidation must target the parent")
 }
@@ -215,7 +248,8 @@ func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testin
 
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Zero(t, repo.tempCalls)
+	require.Equal(t, 1, repo.oauth401MutationCalls)
 	require.Equal(t, 0, repo.updateCredentialsCalls)
 	require.Len(t, invalidator.accounts, 1)
 }
@@ -261,11 +295,12 @@ func TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredential
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.updateCredentialsCalls, "401 handler must not write credentials back from the request-start snapshot")
 	require.Equal(t, 0, repo.updateExtraCalls, "OpenAI 401 must not set Antigravity force-refresh marker")
-	require.Equal(t, 1, repo.tempCalls, "401 handler should still set temp-unschedulable cooldown")
+	require.Zero(t, repo.tempCalls, "OpenAI 401 cooldown is written inside the atomic CAS")
+	require.Equal(t, 1, repo.oauth401MutationCalls)
 	require.Nil(t, repo.lastCredentials, "no credentials should have been persisted")
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIProxy401UsesShortCooldownWithoutTokenInvalidation(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_ProxiedGeneric401StillRefreshesToken(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	invalidator := &tokenCacheInvalidatorRecorder{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -282,7 +317,6 @@ func TestRateLimitService_HandleUpstreamError_OpenAIProxy401UsesShortCooldownWit
 		},
 	}
 
-	before := time.Now()
 	shouldDisable := service.HandleUpstreamError(
 		context.Background(),
 		account,
@@ -292,12 +326,12 @@ func TestRateLimitService_HandleUpstreamError_OpenAIProxy401UsesShortCooldownWit
 	)
 
 	require.True(t, shouldDisable)
-	require.Zero(t, repo.setErrorCalls, "代理节点通用 401 不得永久禁用 OAuth 账号")
-	require.Equal(t, 1, repo.tempCalls)
-	require.Equal(t, account.ID, repo.lastTempID)
-	require.WithinDuration(t, before.Add(time.Minute), repo.lastTempUntil, 2*time.Second)
-	require.Contains(t, repo.lastTempReason, "Proxy returned 401")
-	require.Empty(t, invalidator.accounts, "代理链路 401 不得清理有效 Token 缓存")
+	require.Zero(t, repo.setErrorCalls)
+	require.Zero(t, repo.tempCalls, "OpenAI OAuth 401 冷却应由凭据代际 CAS 原子写入")
+	require.Equal(t, 1, repo.oauth401MutationCalls)
+	require.NotNil(t, repo.lastExpectedProxyID)
+	require.Equal(t, proxyID, *repo.lastExpectedProxyID)
+	require.Len(t, invalidator.accounts, 1)
 }
 
 func TestRateLimitService_HandleUpstreamError_DirectOpenAIOAuth401StillRefreshesToken(t *testing.T) {
@@ -325,8 +359,71 @@ func TestRateLimitService_HandleUpstreamError_DirectOpenAIOAuth401StillRefreshes
 
 	require.True(t, shouldDisable)
 	require.Zero(t, repo.setErrorCalls)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Zero(t, repo.tempCalls)
+	require.Equal(t, 1, repo.oauth401MutationCalls)
 	require.Len(t, invalidator.accounts, 1, "直连 OAuth 401 仍应触发凭据刷新")
+}
+
+func TestRateLimitService_HandleUpstreamError_StaleOpenAIOAuth401DoesNotPolluteNewToken(t *testing.T) {
+	applied := false
+	repo := &rateLimitAccountRepoStub{oauth401Applied: &applied}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	account := &Account{
+		ID:       1044,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":   "at-observed-old",
+			"refresh_token":  "rt-observed-old",
+			"expires_at":     future,
+			"_token_version": int64(41),
+		},
+	}
+
+	decision := service.ApplyUpstreamError(
+		context.Background(), account, http.StatusUnauthorized, http.Header{}, []byte(`{"detail":"Unauthorized"}`),
+	)
+
+	require.False(t, decision.StopScheduling, "the concurrently refreshed credential generation must remain schedulable")
+	require.True(t, decision.ShouldFailover(account, http.StatusUnauthorized, true), "the failed in-flight request must still fail over")
+	require.Equal(t, 1, repo.oauth401MutationCalls)
+	require.Equal(t, int64(42), repo.lastForcedTokenVersion)
+	require.Equal(t, "at-observed-old", repo.lastExpectedCredentials["access_token"])
+	require.Empty(t, invalidator.accounts, "CAS miss must not delete the concurrently refreshed token cache")
+	require.Zero(t, repo.tempCalls, "CAS miss must not pause the new credential generation")
+	require.Equal(t, future, account.GetCredential("expires_at"), "stale response must not mutate its credential snapshot")
+	require.Equal(t, int64(41), account.GetCredentialAsInt64("_token_version"))
+}
+
+func TestRateLimitService_HandleUpstreamError_OpenAIOAuth401CASErrorDoesNotPublishStaleState(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{oauth401Err: errors.New("db unavailable")}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	account := &Account{
+		ID:       1045,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":  "at-observed",
+			"refresh_token": "rt-observed",
+			"expires_at":    future,
+		},
+	}
+
+	decision := service.ApplyUpstreamError(
+		context.Background(), account, http.StatusUnauthorized, http.Header{}, []byte(`{"detail":"Unauthorized"}`),
+	)
+
+	require.True(t, decision.StopScheduling, "state persistence failure keeps the current account out of this request")
+	require.Equal(t, 1, repo.oauth401MutationCalls)
+	require.Empty(t, invalidator.accounts)
+	require.Zero(t, repo.tempCalls)
+	require.Equal(t, future, account.GetCredential("expires_at"))
 }
 
 func TestRateLimitService_HandleUpstreamError_OpenAIOAuthRevokedTokenRemainsPermanent(t *testing.T) {

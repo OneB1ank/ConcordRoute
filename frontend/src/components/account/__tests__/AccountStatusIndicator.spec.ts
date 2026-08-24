@@ -103,14 +103,14 @@ describe('AccountStatusIndicator', () => {
 		expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
 	})
 
-	it('Codex 额度 429 与派生暂停合并为一个限流状态', () => {
+	it('标准 429 与派生暂停合并为一个限流状态', () => {
 		const wrapper = mount(AccountStatusIndicator, {
 			props: {
 				account: makeAccount({
 					platform: 'openai',
 					rate_limit_reset_at: '2099-07-11T13:00:00Z',
 					temp_unschedulable_until: '2099-07-11T13:30:00Z',
-					temp_unschedulable_reason: '{"source":"codex_quota_overdraft"}'
+					temp_unschedulable_reason: '{"status_code":429}'
 				})
 			},
 			global: {

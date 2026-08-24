@@ -93,8 +93,8 @@ func normalizeCodexFingerprintSeed(raw string) (string, bool) {
 	return parsed.String(), true
 }
 
-// CanonicalCodexFingerprintSeed exposes the persistence validator to repository
-// code that must preserve seed ownership while holding the account row lock.
+// CanonicalCodexFingerprintSeed 向仓储层暴露持久化校验，
+// 供持有账号行锁时保持种子归属关系。
 func CanonicalCodexFingerprintSeed(raw string) (string, bool) {
 	return normalizeCodexFingerprintSeed(raw)
 }
@@ -118,17 +118,22 @@ func ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates map[string]any) boo
 }
 
 // GetCodexFingerprintMode 从账号 extra JSON 读取指纹收敛模式。
-// 未设置、空值或非法值使用 Cockpit，统一收敛设备、会话和对话缓存键。
+// 未设置、空值或非法值保持关闭；身份改写只能由管理员显式开启。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	if a == nil || !a.IsOpenAIOAuth() {
 		return codexFingerprintOff
 	}
-	raw := strings.TrimSpace(a.GetExtraString(codexFingerprintModeExtraKey))
+	var raw string
+	if a.Extra != nil {
+		// Go 调用方可能写入命名类型 codexFingerprintMode，
+		// 而从 JSON 加载的值仍为普通字符串。
+		raw = strings.TrimSpace(fmt.Sprint(a.Extra[codexFingerprintModeExtraKey]))
+	}
 	switch codexFingerprintMode(raw) {
 	case codexFingerprintOff, codexFingerprintDevice, codexFingerprintSession, codexFingerprintCockpit, codexFingerprintFull:
 		return codexFingerprintMode(raw)
 	default:
-		return codexFingerprintCockpit
+		return codexFingerprintOff
 	}
 }
 
@@ -168,10 +173,21 @@ func EnsureCodexFingerprintSeed(account *Account) string {
 	return seed
 }
 
-// PrepareCodexFingerprintSeedForCreate 在新建根账号时强制生成独立种子，
-// 防止导入或复制请求通过 Extra 复用另一账号的身份。影子账号则保留父账号种子。
+// PrepareCodexFingerprintSeedForCreate 只为显式启用收敛的新账号准备种子。
+// 根账号始终轮换外来种子，防止导入或复制复用另一账号身份；影子账号优先
+// 保留父账号种子。关闭收敛的账号不持久化无用种子。
 func PrepareCodexFingerprintSeedForCreate(account *Account) string {
 	if account == nil || !account.IsOpenAIOAuth() {
+		return ""
+	}
+	if account.ParentAccountID != nil {
+		if seed, ok := normalizeCodexFingerprintSeed(account.GetExtraString(CodexFingerprintSeedExtraKey)); ok {
+			account.Extra[CodexFingerprintSeedExtraKey] = seed
+			return seed
+		}
+	}
+	if !ShouldEnsureCodexFingerprintSeedForExtraUpdates(account.Extra) {
+		delete(account.Extra, CodexFingerprintSeedExtraKey)
 		return ""
 	}
 	if account.ParentAccountID != nil {
