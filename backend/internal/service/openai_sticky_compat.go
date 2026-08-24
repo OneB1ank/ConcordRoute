@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -133,13 +134,20 @@ func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, gr
 	if err == nil && accountID > 0 {
 		return accountID, nil
 	}
+	if err != nil && !errors.Is(err, ErrGatewayCacheMiss) {
+		return 0, err
+	}
+	primaryErr := err
+	if primaryErr == nil {
+		primaryErr = ErrGatewayCacheMiss
+	}
 	if !s.openAISessionHashReadOldFallbackEnabled() {
-		return accountID, err
+		return 0, primaryErr
 	}
 
 	legacyKey := s.openAILegacySessionCacheKey(ctx, sessionHash)
 	if legacyKey == "" {
-		return accountID, err
+		return 0, primaryErr
 	}
 
 	openAIStickyLegacyReadFallbackTotal.Add(1)
@@ -148,7 +156,10 @@ func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, gr
 		openAIStickyLegacyReadFallbackHit.Add(1)
 		return legacyAccountID, nil
 	}
-	return accountID, err
+	if legacyErr != nil && !errors.Is(legacyErr, ErrGatewayCacheMiss) {
+		return 0, legacyErr
+	}
+	return 0, primaryErr
 }
 
 func (s *OpenAIGatewayService) setStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string, accountID int64, ttl time.Duration) error {

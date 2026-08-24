@@ -759,7 +759,6 @@ func TestOpenAIGatewayService_Forward_WSv2StreamEarlyCloseFallbackHTTP(t *testin
 		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
 		toolCorrector:    NewCodexToolCorrector(),
 	}
-
 	account := &Account{
 		ID:          88,
 		Name:        "openai-apikey",
@@ -1113,6 +1112,8 @@ func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundRecoversByDrop
 		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
 		toolCorrector:    NewCodexToolCorrector(),
 	}
+	stateStore := NewOpenAIWSStateStore(nil)
+	svc.openaiWSStateStore = stateStore
 
 	account := &Account{
 		ID:          91,
@@ -1130,6 +1131,8 @@ func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundRecoversByDrop
 	}
 
 	body := []byte(`{"model":"gpt-5.3-codex","stream":false,"previous_response_id":"resp_prev_missing","input":[{"type":"input_text","text":"hello"}]}`)
+	require.NoError(t, stateStore.BindResponseAccount(context.Background(), 0, "resp_prev_missing", account.ID, time.Hour))
+	stateStore.BindResponseConn("resp_prev_missing", "conn_stale", time.Hour)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1145,6 +1148,11 @@ func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundRecoversByDrop
 	require.Len(t, requests, 2)
 	require.True(t, gjson.GetBytes(requests[0], "previous_response_id").Exists(), "首轮请求应保留 previous_response_id")
 	require.False(t, gjson.GetBytes(requests[1], "previous_response_id").Exists(), "恢复重试应移除 previous_response_id")
+	boundAccountID, getErr := stateStore.GetResponseAccount(context.Background(), 0, "resp_prev_missing")
+	require.NoError(t, getErr)
+	require.Zero(t, boundAccountID, "upstream previous_response_not_found must clear the old account binding")
+	_, connBound := stateStore.GetResponseConn("resp_prev_missing")
+	require.False(t, connBound, "upstream previous_response_not_found must clear the old connection binding")
 }
 
 func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundSkipsRecoveryForFunctionCallOutput(t *testing.T) {

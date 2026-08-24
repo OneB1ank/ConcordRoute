@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,6 +123,32 @@ func TestOpenAIWSStateStore_GetResponseAccount_NoStaleAfterCacheMiss(t *testing.
 	require.Zero(t, accountID, "上游缓存失效后不应继续命中本地陈旧映射")
 }
 
+func TestOpenAIWSStateStore_SharedCacheDeleteInvalidatesOtherStoreLocalBinding(t *testing.T) {
+	cache := &stubGatewayCache{sessionBindings: map[string]int64{}}
+	writerStore := NewOpenAIWSStateStore(cache)
+	deleterStore := NewOpenAIWSStateStore(cache)
+	ctx := context.Background()
+	groupID := int64(18)
+	responseID := "resp_cross_instance_delete"
+
+	require.NoError(t, writerStore.BindResponseAccount(ctx, groupID, responseID, 601, time.Minute))
+	accountID, err := writerStore.GetResponseAccount(ctx, groupID, responseID)
+	require.NoError(t, err)
+	require.Equal(t, int64(601), accountID)
+
+	require.NoError(t, deleterStore.DeleteResponseAccount(ctx, groupID, responseID))
+	accountID, err = writerStore.GetResponseAccount(ctx, groupID, responseID)
+	require.NoError(t, err)
+	require.Zero(t, accountID, "共享缓存删除后其它实例不得继续返回本地陈旧绑定")
+
+	rawWriterStore, ok := writerStore.(*defaultOpenAIWSStateStore)
+	require.True(t, ok)
+	rawWriterStore.responseToAccountMu.RLock()
+	_, localExists := rawWriterStore.responseToAccount[openAIWSResponseAccountMapKey(groupID, responseID)]
+	rawWriterStore.responseToAccountMu.RUnlock()
+	require.False(t, localExists, "共享缓存 miss 后应清理本地陈旧镜像")
+}
+
 func TestOpenAIWSStateStore_MaybeCleanupRemovesExpiredIncrementally(t *testing.T) {
 	raw := NewOpenAIWSStateStore(nil)
 	store, ok := raw.(*defaultOpenAIWSStateStore)
@@ -188,12 +218,20 @@ type openAIWSStateStoreTimeoutProbeCache struct {
 	setDeadlineDelta  time.Duration
 	getDeadlineDelta  time.Duration
 	delDeadlineDelta  time.Duration
+	getAccountID      int64
+	getErr            error
 }
 
 func (c *openAIWSStateStoreTimeoutProbeCache) GetSessionAccountID(ctx context.Context, _ int64, _ string) (int64, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		c.getHasDeadline = true
 		c.getDeadlineDelta = time.Until(deadline)
+	}
+	if c.getErr != nil {
+		return 0, c.getErr
+	}
+	if c.getAccountID > 0 {
+		return c.getAccountID, nil
 	}
 	return 123, nil
 }
@@ -241,15 +279,17 @@ func TestOpenAIWSStateStore_RedisOpsUseShortTimeout(t *testing.T) {
 
 	accountID, getErr := store.GetResponseAccount(ctx, groupID, "resp_timeout_probe")
 	require.NoError(t, getErr)
-	require.Equal(t, int64(11), accountID, "本地缓存命中应优先返回已绑定账号")
+	require.Equal(t, int64(123), accountID, "配置共享缓存后应以缓存读取结果为准")
 
 	require.NoError(t, store.DeleteResponseAccount(ctx, groupID, "resp_timeout_probe"))
 
 	require.True(t, probe.setHasDeadline, "SetSessionAccountID 应携带独立超时上下文")
+	require.True(t, probe.getHasDeadline, "GetSessionAccountID 应携带独立超时上下文")
 	require.True(t, probe.deleteHasDeadline, "DeleteSessionAccountID 应携带独立超时上下文")
-	require.False(t, probe.getHasDeadline, "GetSessionAccountID 本用例应由本地缓存命中，不触发 Redis 读取")
 	require.Greater(t, probe.setDeadlineDelta, 2*time.Second)
 	require.LessOrEqual(t, probe.setDeadlineDelta, 3*time.Second)
+	require.Greater(t, probe.getDeadlineDelta, 2*time.Second)
+	require.LessOrEqual(t, probe.getDeadlineDelta, 3*time.Second)
 	require.Greater(t, probe.delDeadlineDelta, 2*time.Second)
 	require.LessOrEqual(t, probe.delDeadlineDelta, 3*time.Second)
 
@@ -269,4 +309,74 @@ func TestWithOpenAIWSStateStoreRedisTimeout_WithParentContext(t *testing.T) {
 	require.NotNil(t, ctx)
 	_, ok := ctx.Deadline()
 	require.True(t, ok, "应附加短超时")
+}
+
+func TestOpenAIWSStateStore_GetResponseAccountDistinguishesMissFromFailure(t *testing.T) {
+	t.Run("cache miss", func(t *testing.T) {
+		store := NewOpenAIWSStateStore(&openAIWSStateStoreTimeoutProbeCache{getErr: ErrGatewayCacheMiss})
+		accountID, err := store.GetResponseAccount(context.Background(), 7, "resp_missing")
+		require.NoError(t, err)
+		require.Zero(t, accountID)
+	})
+
+	t.Run("infrastructure failure", func(t *testing.T) {
+		cacheErr := errors.New("redis transport failed")
+		store := NewOpenAIWSStateStore(&openAIWSStateStoreTimeoutProbeCache{getErr: cacheErr})
+		accountID, err := store.GetResponseAccount(context.Background(), 7, "resp_unknown")
+		require.Zero(t, accountID)
+		require.ErrorIs(t, err, cacheErr)
+	})
+}
+
+func TestOpenAIWSStateStore_LocalResponseBindingDoesNotMaskCacheFailure(t *testing.T) {
+	cacheErr := errors.New("redis unavailable")
+	cache := &openAIWSStateStoreTimeoutProbeCache{getErr: cacheErr}
+	store := NewOpenAIWSStateStore(cache)
+	rawStore, ok := store.(*defaultOpenAIWSStateStore)
+	require.True(t, ok)
+	rawStore.responseToAccount[openAIWSResponseAccountMapKey(8, "resp_hot")] = openAIWSAccountBinding{
+		accountID: 88,
+		expiresAt: time.Now().Add(time.Minute),
+	}
+
+	accountID, err := store.GetResponseAccount(context.Background(), 8, "resp_hot")
+	require.Zero(t, accountID)
+	require.ErrorIs(t, err, cacheErr)
+	require.True(t, cache.getHasDeadline, "共享缓存基础设施错误不得由潜在陈旧的本地绑定掩盖")
+}
+
+func TestClearOpenAIPreviousResponseBindingsUsesFinalResolvedGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	originalGroupID := int64(71)
+	fallbackGroupID := int64(72)
+	store := NewOpenAIWSStateStore(nil)
+	require.NoError(t, store.BindResponseAccount(context.Background(), originalGroupID, "resp_final_group", 701, time.Hour))
+	require.NoError(t, store.BindResponseAccount(context.Background(), fallbackGroupID, "resp_final_group", 702, time.Hour))
+	store.BindResponseConn("resp_final_group", "conn_final_group", time.Hour)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	request := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	request = request.WithContext(context.WithValue(request.Context(), ctxkey.Group, &Group{
+		ID:              originalGroupID,
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		Hydrated:        true,
+		ClaudeCodeOnly:  true,
+		FallbackGroupID: &fallbackGroupID,
+	}))
+	c.Request = request
+	c.Set("api_key", &APIKey{GroupID: &originalGroupID})
+
+	svc := &OpenAIGatewayService{openaiWSStateStore: store}
+	require.NoError(t, svc.clearOpenAIPreviousResponseBindings(context.Background(), c, "resp_final_group"))
+
+	fallbackBinding, err := store.GetResponseAccount(context.Background(), fallbackGroupID, "resp_final_group")
+	require.NoError(t, err)
+	require.Zero(t, fallbackBinding)
+	originalBinding, err := store.GetResponseAccount(context.Background(), originalGroupID, "resp_final_group")
+	require.NoError(t, err)
+	require.Equal(t, int64(701), originalBinding, "cleanup must not delete the original pre-fallback group binding")
+	_, connBound := store.GetResponseConn("resp_final_group")
+	require.False(t, connBound)
 }

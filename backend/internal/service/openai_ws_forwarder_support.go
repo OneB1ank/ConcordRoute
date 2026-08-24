@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -467,6 +469,101 @@ func getOpenAIGroupIDFromContext(c *gin.Context) int64 {
 	return *apiKey.GroupID
 }
 
+// resolveOpenAIResponseBindingGroupID returns the group that actually owns the
+// selected OpenAI account after Claude-Code-only fallback resolution. Response
+// bindings must use the same scope for both reads and writes; otherwise a
+// request selected from a fallback group writes its response ID into the API
+// key's original group and the next turn misses the binding.
+func (s *OpenAIGatewayService) resolveOpenAIResponseBindingGroupID(ctx context.Context, c *gin.Context) (int64, bool) {
+	// The scheduler records the final scope on the request context. Prefer it
+	// over re-reading the fallback chain so a concurrent group edit cannot move
+	// this response binding to a different namespace mid-request.
+	if finalGroupID, ok := OpenAIFinalGroupIDFromContext(ctx); ok {
+		return finalGroupID, true
+	}
+	if c != nil && c.Request != nil {
+		if finalGroupID, ok := OpenAIFinalGroupIDFromContext(c.Request.Context()); ok {
+			return finalGroupID, true
+		}
+	}
+	groupID := getOpenAIGroupIDFromContext(c)
+	if groupID <= 0 || s == nil {
+		return groupID, true
+	}
+
+	resolveCtx := ctx
+	if c != nil && c.Request != nil {
+		requestCtx := c.Request.Context()
+		if resolveCtx == nil {
+			resolveCtx = requestCtx
+		} else {
+			if _, ok := resolveCtx.Value(ctxkey.Group).(*Group); !ok {
+				if requestGroup, requestOK := requestCtx.Value(ctxkey.Group).(*Group); requestOK {
+					resolveCtx = context.WithValue(resolveCtx, ctxkey.Group, requestGroup)
+				}
+			}
+			if _, ok := resolveCtx.Value(ctxkey.ForcePlatform).(string); !ok {
+				if forcePlatform, requestOK := requestCtx.Value(ctxkey.ForcePlatform).(string); requestOK {
+					resolveCtx = context.WithValue(resolveCtx, ctxkey.ForcePlatform, forcePlatform)
+				}
+			}
+			if _, ok := resolveCtx.Value(ctxkey.IsClaudeCodeClient).(bool); !ok {
+				if isClaudeCode, requestOK := requestCtx.Value(ctxkey.IsClaudeCodeClient).(bool); requestOK {
+					resolveCtx = context.WithValue(resolveCtx, ctxkey.IsClaudeCodeClient, isClaudeCode)
+				}
+			}
+		}
+	}
+	if resolveCtx == nil {
+		resolveCtx = context.Background()
+	}
+
+	_, resolvedGroupID, err := s.resolveOpenAISchedulerGroup(resolveCtx, &groupID)
+	if err != nil || resolvedGroupID == nil || *resolvedGroupID <= 0 {
+		logOpenAIWSModeInfo(
+			"response_binding_group_resolve_failed original_group_id=%d error=%v",
+			groupID,
+			err,
+		)
+		return 0, false
+	}
+	return *resolvedGroupID, true
+}
+
+// clearOpenAIPreviousResponseBindings invalidates both routing and connection
+// affinity after the upstream confirms that a response ID no longer exists.
+// The account binding is scoped to the final scheduler group, matching writes
+// performed after Claude-Code-only fallback resolution.
+func (s *OpenAIGatewayService) clearOpenAIPreviousResponseBindings(ctx context.Context, c *gin.Context, responseID string) error {
+	responseID = strings.TrimSpace(responseID)
+	if s == nil || responseID == "" {
+		return nil
+	}
+	store := s.getOpenAIWSStateStore()
+	if store == nil {
+		return nil
+	}
+
+	// Connection affinity is process-local and not group-scoped, so clear it
+	// even when final group resolution fails.
+	store.DeleteResponseConn(responseID)
+	groupID, ok := s.resolveOpenAIResponseBindingGroupID(ctx, c)
+	if !ok {
+		return errors.New("resolve previous response binding group")
+	}
+	return store.DeleteResponseAccount(ctx, groupID, responseID)
+}
+
+func (s *OpenAIGatewayService) clearOpenAIPreviousResponseBindingsOnNotFound(ctx context.Context, c *gin.Context, responseID string) {
+	if err := s.clearOpenAIPreviousResponseBindings(ctx, c, responseID); err != nil {
+		logOpenAIWSModeInfo(
+			"previous_response_binding_clear_failed previous_response_id=%s cause=%s",
+			truncateOpenAIWSLogValue(strings.TrimSpace(responseID), openAIWSIDValueMaxLen),
+			truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen),
+		)
+	}
+}
+
 // SelectAccountByPreviousResponseID 按 previous_response_id 命中账号粘连。
 // 未命中或账号不可用时返回 (nil, nil)，由调用方继续走常规调度。
 func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
@@ -494,7 +591,7 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	if s == nil {
 		return nil, nil
 	}
-	accountID, account, responseID, store := s.resolveAccountByPreviousResponseIDForCapability(
+	accountID, account, responseID, store, err := s.resolveAccountByPreviousResponseIDForCapability(
 		ctx,
 		groupID,
 		previousResponseID,
@@ -503,6 +600,9 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 		requiredCapability,
 		requireCompact,
 	)
+	if err != nil {
+		return nil, err
+	}
 	if accountID <= 0 || account == nil || store == nil {
 		return nil, nil
 	}
@@ -546,8 +646,8 @@ func (s *OpenAIGatewayService) ResolveAccountIDByPreviousResponseIDForScheduler(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIEndpointCapability,
 	requireCompact bool,
-) int64 {
-	accountID, _, _, _ := s.resolveAccountByPreviousResponseIDForCapability(
+) (int64, error) {
+	accountID, _, _, _, err := s.resolveAccountByPreviousResponseIDForCapability(
 		ctx,
 		groupID,
 		previousResponseID,
@@ -556,7 +656,7 @@ func (s *OpenAIGatewayService) ResolveAccountIDByPreviousResponseIDForScheduler(
 		requiredCapability,
 		requireCompact,
 	)
-	return accountID
+	return accountID, err
 }
 
 // resolveAccountByPreviousResponseIDForCapability 校验响应链绑定账号的模型、能力和渠道限制。
@@ -568,97 +668,108 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIEndpointCapability,
 	requireCompact bool,
-) (int64, *Account, string, OpenAIWSStateStore) {
+) (int64, *Account, string, OpenAIWSStateStore, error) {
 	if s == nil {
-		return 0, nil, "", nil
+		return 0, nil, "", nil, nil
 	}
 	responseID := strings.TrimSpace(previousResponseID)
 	if responseID == "" {
-		return 0, nil, "", nil
+		return 0, nil, "", nil, nil
 	}
 	routingModel = strings.TrimSpace(routingModel)
 	store := s.getOpenAIWSStateStore()
 	if store == nil {
-		return 0, nil, "", nil
+		return 0, nil, "", nil, nil
 	}
 
 	accountID, err := store.GetResponseAccount(ctx, derefGroupID(groupID), responseID)
-	if err != nil || accountID <= 0 {
-		return 0, nil, "", nil
+	if err != nil {
+		return 0, nil, responseID, store, fmt.Errorf("resolve previous response binding: %w", err)
+	}
+	if accountID <= 0 {
+		return 0, nil, responseID, store, nil
 	}
 	if excludedIDs != nil {
 		if _, excluded := excludedIDs[accountID]; excluded {
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 	}
 
 	account, err := s.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
+	}
+	if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
+		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		return 0, nil, responseID, store, nil
 	}
 	// 非 WSv2 场景（如 force_http/全局关闭）不应使用 previous_response_id 粘连，
 	// 以保持“回滚到 HTTP”后的历史行为一致性。
 	if s.getOpenAIWSProtocolResolver().Resolve(account).Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	if shouldClearStickySession(account, routingModel) || !account.IsOpenAI() || !account.IsSchedulable() {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	if !openAIAccountSupportsRoutingModel(ctx, account, routingModel) {
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	// 配额自动暂停也必须拦截 previous_response_id 粘性路径；否则超出 5h/7d 阈值的账号
 	// 仍会继续服务同一响应链。暂停是临时状态，因此不删除绑定，直接回落到普通调度。
 	if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	if s.schedulerSnapshot != nil && s.accountRepo != nil {
 		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
 		if latestErr != nil || latest == nil {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 		if shouldClearStickySession(latest, routingModel) || !latest.IsOpenAI() || !latest.IsSchedulable() {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
+		}
+		if !s.openAIAccountMatchesSchedulingGroup(latest, groupID) {
+			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			return 0, nil, responseID, store, nil
 		}
 		if !parentHealthyForShadow(latest, s.parentAccountLookup(ctx)) {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 		if !openAIAccountSupportsRoutingModel(ctx, latest, routingModel) {
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 		if !latest.SupportsOpenAIEndpointCapability(requiredCapability) {
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, latest); paused {
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 		if s.isOpenAIAccountRequestRuntimeBlocked(ctx, latest, routingModel) {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
+			return 0, nil, responseID, store, nil
 		}
 		account = latest
 	}
 	if requireCompact && openAICompactSupportTier(account) == 0 {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
 	if groupID != nil && s.needsUpstreamChannelRestrictionCheck(ctx, groupID) &&
 		s.isUpstreamRoutingModelRestrictedByChannel(ctx, *groupID, account, routingModel, requireCompact) {
-		return 0, nil, "", nil
+		return 0, nil, responseID, store, nil
 	}
-	return accountID, account, responseID, store
+	return accountID, account, responseID, store, nil
 }
 
 func classifyOpenAIWSAcquireError(err error) string {

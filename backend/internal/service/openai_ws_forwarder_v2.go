@@ -112,7 +112,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 
 	stateStore := s.getOpenAIWSStateStore()
-	groupID := getOpenAIGroupIDFromContext(c)
+	groupID, groupResolved := s.resolveOpenAIResponseBindingGroupID(ctx, c)
+	if !groupResolved {
+		stateStore = nil
+	}
 	sessionHash := s.GenerateSessionHash(c, nil)
 	if sessionHash == "" {
 		var legacySessionHash string
@@ -670,6 +673,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				errMessage,
 			)
 			if fallbackReason == "previous_response_not_found" {
+				s.clearOpenAIPreviousResponseBindingsOnNotFound(ctx, c, previousResponseID)
 				logOpenAIWSModeInfo(
 					"previous_response_not_found_diag account_id=%d account_type=%s conn_id=%s previous_response_id=%s previous_response_id_kind=%s response_id=%s event_idx=%d req_stream=%v store_disabled=%v conn_reused=%v session_hash=%s header_session_id=%s header_conversation_id=%s session_id_source=%s conversation_id_source=%s has_turn_state=%v turn_state_len=%d has_prompt_cache_key=%v err_code=%s err_type=%s err_message=%s",
 					account.ID,
@@ -839,7 +843,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		flushStreamWriter(true)
 	}
 
-	if responseID != "" && stateStore != nil {
+	if responseID != "" && openAIWSTerminalEventMayBind(upstreamTerminalEvent) && stateStore != nil {
 		ttl := s.openAIWSResponseStickyTTL()
 		logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 		stateStore.BindResponseConn(responseID, lease.ConnID(), ttl)

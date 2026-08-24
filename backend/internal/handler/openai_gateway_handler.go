@@ -531,6 +531,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			false,
 			requestPlatform,
 		)
+		service.SetOpenAIFinalGroupFromSelection(c, selection, scheduleDecision)
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
@@ -1052,10 +1053,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 	c.Request = c.Request.WithContext(service.WithCodexQuotaOverdraftScheduling(c.Request.Context()))
-	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(sessionHash, promptCacheKey, reqModel, body)
+	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession(h.gatewayService, c, promptCacheKey, reqModel, body)
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
@@ -1099,6 +1099,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			false,
 			requestPlatform,
 		)
+		service.SetOpenAIFinalGroupFromSelection(c, selection, scheduleDecision)
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
@@ -1335,18 +1336,21 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 }
 
-func resolveOpenAIMessagesMetadataSession(sessionHash, promptCacheKey, reqModel string, body []byte) (string, string) {
+func resolveOpenAIMessagesMetadataSession(gatewayService *service.OpenAIGatewayService, c *gin.Context, promptCacheKey, reqModel string, body []byte) (string, string) {
 	// Anthropic metadata.user_id 只作为账号粘性信号。上游 GPT/Codex 缓存键
 	// 交给 ForwardAsAnthropic 从 cache_control 或完整消息 digest 派生，避免
 	// 固定 metadata key 压住后续 turn 的缓存滚动。
-	if sessionHash != "" {
-		return sessionHash, promptCacheKey
+	if gatewayService == nil {
+		return "", promptCacheKey
+	}
+	if promptCacheKey != "" {
+		return gatewayService.GenerateExplicitSessionHash(c, body), promptCacheKey
 	}
 	if userID := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String()); userID != "" {
 		seed := reqModel + "-" + userID
-		sessionHash = service.DeriveSessionHashFromSeed(seed)
+		return gatewayService.GenerateSessionHashWithFallback(c, nil, seed), promptCacheKey
 	}
-	return sessionHash, promptCacheKey
+	return gatewayService.GenerateSessionHash(c, body), promptCacheKey
 }
 
 // anthropicErrorResponse writes an error in Anthropic Messages API format.
@@ -1481,6 +1485,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		return nil, false
 	}
 
+	service.SetOpenAIFinalGroupID(c, selection.FinalGroupID)
 	ctx := c.Request.Context()
 	account := selection.Account
 	if selection.Acquired {
@@ -1909,11 +1914,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			previousResponseCanMove,
 			requestPlatform,
 		)
+		service.SetOpenAIFinalGroupFromSelection(c, selection, scheduleDecision)
+		if scheduleDecision.FinalGroupID > 0 {
+			ctx = service.WithOpenAIFinalGroupID(ctx, scheduleDecision.FinalGroupID)
+			initialSchedulingCtx = service.WithOpenAIFinalGroupID(initialSchedulingCtx, scheduleDecision.FinalGroupID)
+		}
 		if err != nil {
 			reqLog.Warn("openai.websocket_account_select_failed",
 				zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
+			if errors.Is(err, service.ErrOpenAIPreviousResponseAffinityUnavailable) {
+				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "previous response affinity unavailable; please restart the conversation")
+				return
+			}
 			if lastFailoverErr != nil {
 				closeOpenAIWSFailoverExhausted(wsConn, lastFailoverErr)
 			} else {

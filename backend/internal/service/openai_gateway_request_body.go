@@ -362,13 +362,11 @@ func resolveOpenAICompactSessionID(c *gin.Context) string {
 		if conversationID := strings.TrimSpace(c.GetHeader("conversation_id")); conversationID != "" {
 			return conversationID
 		}
-		if seed, ok := c.Get(openAICompactSessionSeedKey); ok {
-			if seedStr, ok := seed.(string); ok && strings.TrimSpace(seedStr) != "" {
-				return strings.TrimSpace(seedStr)
-			}
+		if seed := stagedOpenAICompactSessionSeed(c); seed != "" {
+			return seed
 		}
 	}
-	return uuid.NewString()
+	return ""
 }
 
 // openAIResponsesRequestPathSuffix 返回可拼接到上游 /responses URL 后面的子路径。

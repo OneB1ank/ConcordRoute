@@ -22,6 +22,10 @@ const (
 	openAIAccountScheduleLayerPreviousResponse = "previous_response_id"
 	openAIAccountScheduleLayerSessionSticky    = "session_hash"
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
+	// Negative account IDs are never valid. This sentinel tells the legacy
+	// selector that the caller already attempted the sticky-cache lookup and
+	// degraded after an infrastructure error, avoiding a second Redis timeout.
+	openAIStickyLookupDegradedAccountID int64 = -1
 )
 
 const (
@@ -86,9 +90,13 @@ func (r OpenAIAccountScheduleRequest) routingModel() string {
 }
 
 type OpenAIAccountScheduleDecision struct {
-	Layer               string
-	StickyPreviousHit   bool
-	StickySessionHit    bool
+	Layer             string
+	StickyPreviousHit bool
+	StickySessionHit  bool
+	// FinalGroupID is the group resolved for this scheduling attempt.  It is
+	// carried through the request context so later sticky/response bindings use
+	// the exact scope selected here instead of resolving the fallback chain again.
+	FinalGroupID        int64
 	CandidateCount      int
 	TopK                int
 	LatencyMs           int64
@@ -255,6 +263,24 @@ type advancedStickyEscapeConfig struct {
 	errorRate float64
 }
 
+func openAIPreviousResponseAffinityUnavailable(cause error) error {
+	if cause == nil {
+		return ErrOpenAIPreviousResponseAffinityUnavailable
+	}
+	return fmt.Errorf("%w: %w", ErrOpenAIPreviousResponseAffinityUnavailable, cause)
+}
+
+func logOpenAIAffinityCacheReadDegraded(kind string, groupID *int64, err error) {
+	if err == nil || errors.Is(err, ErrGatewayCacheMiss) {
+		return
+	}
+	slog.Warn("openai_affinity_cache_read_degraded",
+		"affinity", strings.TrimSpace(kind),
+		"group_id", derefGroupID(groupID),
+		"error", err,
+	)
+}
+
 func newDefaultOpenAIAccountScheduler(service *OpenAIGatewayService, stats *openAIAccountRuntimeStats) OpenAIAccountScheduler {
 	if stats == nil {
 		stats = newOpenAIAccountRuntimeStats()
@@ -269,7 +295,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	decision := OpenAIAccountScheduleDecision{}
+	decision := OpenAIAccountScheduleDecision{FinalGroupID: derefGroupID(req.GroupID)}
 	start := time.Now()
 	defer func() {
 		decision.LatencyMs = time.Since(start).Milliseconds()
@@ -289,7 +315,11 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			req.RequireCompact,
 		)
 		if err != nil {
-			return nil, decision, err
+			if !req.PreviousResponseCanMove {
+				return nil, decision, openAIPreviousResponseAffinityUnavailable(err)
+			}
+			logOpenAIAffinityCacheReadDegraded("previous_response", req.GroupID, err)
+			selection = nil
 		}
 		if selection != nil && selection.Account != nil {
 			if !s.isAccountTransportCompatible(selection.Account, req.RequiredTransport) {
@@ -305,9 +335,12 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
 			if req.SessionHash != "" {
-				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
+				_ = s.service.bindStickySessionResolved(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
 			}
 			return selection, decision, nil
+		}
+		if !req.PreviousResponseCanMove {
+			return nil, decision, ErrOpenAIPreviousResponseAffinityUnavailable
 		}
 	}
 
@@ -364,7 +397,14 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	if accountID <= 0 {
 		var err error
 		accountID, err = s.service.getStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		if err != nil || accountID <= 0 {
+		if err != nil {
+			if errors.Is(err, ErrGatewayCacheMiss) {
+				return nil, false, nil
+			}
+			logOpenAIAffinityCacheReadDegraded("session", req.GroupID, err)
+			return nil, false, nil
+		}
+		if accountID <= 0 {
 			return nil, false, nil
 		}
 	}
@@ -784,7 +824,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			}
 		}
 		if req.SessionHash != "" && !req.PreserveStickyBinding {
-			_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, fresh.ID)
+			_ = s.service.bindStickySessionResolved(ctx, req.GroupID, req.SessionHash, fresh.ID)
 		}
 		return &AccountSelectionResult{
 			Account:     fresh,
@@ -1623,11 +1663,22 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerForRouting(
 	}
 	ctx = resolvedCtx
 	groupID = resolvedGroupID
+	finalGroupID := derefGroupID(groupID)
+	if finalGroupID > 0 {
+		// Keep the resolved scope attached to the request context.  The pointer
+		// is intentionally an immutable scalar value, so retries and async
+		// response binding cannot observe a later fallback-chain change.
+		ctx = context.WithValue(ctx, ctxkey.OpenAIFinalGroupID, finalGroupID)
+	}
 	if derefGroupID(groupID) != originalGroupID {
 		// 回退后的分组可能有不同渠道映射，必须重新解析账号层模型。
 		routingModel = s.resolveChannelRoutingModel(ctx, groupID, requestedModel)
 	}
 	selection, decision, err := s.selectAccountWithSchedulerForRoutingOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, routingModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove)
+	decision.FinalGroupID = finalGroupID
+	if selection != nil {
+		selection.FinalGroupID = finalGroupID
+	}
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
 		return selection, decision, err
 	}
@@ -1643,7 +1694,12 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerForRouting(
 		return selection, decision, err
 	}
 	s.logOpenAIProxyStreamQuarantineFailOpen(requestedModel, blocked)
-	return s.selectAccountWithSchedulerForRoutingOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, routingModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove)
+	retrySelection, retryDecision, retryErr := s.selectAccountWithSchedulerForRoutingOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, routingModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove)
+	retryDecision.FinalGroupID = finalGroupID
+	if retrySelection != nil {
+		retrySelection.FinalGroupID = finalGroupID
+	}
+	return retrySelection, retryDecision, retryErr
 }
 
 // resolveOpenAISchedulerGroup 解析 OpenAI 路径最终实际使用的分组。
@@ -1709,6 +1765,47 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerForRoutingOnce(
 	decision := OpenAIAccountScheduleDecision{}
 	scheduler := s.getOpenAIAccountScheduler(ctx, groupID)
 	if scheduler == nil {
+		previousResponseID = strings.TrimSpace(previousResponseID)
+		if previousResponseID != "" && platform == PlatformOpenAI {
+			selection, selectErr := s.selectAccountByPreviousResponseIDForCapability(
+				ctx,
+				groupID,
+				previousResponseID,
+				routingModel,
+				excludedIDs,
+				requiredCapability,
+				requireCompact,
+			)
+			if selectErr != nil {
+				if !previousResponseCanMove {
+					return nil, decision, openAIPreviousResponseAffinityUnavailable(selectErr)
+				}
+				logOpenAIAffinityCacheReadDegraded("previous_response", groupID, selectErr)
+				selection = nil
+			}
+			if selection != nil && selection.Account != nil &&
+				(!s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport) ||
+					!selection.Account.SupportsOpenAIImageCapability(requiredImageCapability)) {
+				if selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				selection = nil
+			}
+			if selection != nil && selection.Account != nil {
+				decision.Layer = openAIAccountScheduleLayerPreviousResponse
+				decision.StickyPreviousHit = true
+				decision.SelectedAccountID = selection.Account.ID
+				decision.SelectedAccountType = selection.Account.Type
+				if sessionHash != "" {
+					_ = s.bindStickySessionResolved(ctx, groupID, sessionHash, selection.Account.ID)
+				}
+				return selection, decision, nil
+			}
+			if !previousResponseCanMove {
+				return nil, decision, ErrOpenAIPreviousResponseAffinityUnavailable
+			}
+		}
+
 		decision.Layer = openAIAccountScheduleLayerLoadBalance
 		if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 			effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
@@ -1769,18 +1866,27 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerForRoutingOnce(
 		return nil, decision, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
+	effectiveSettings := s.advancedSchedulerEffectiveSettingsForRequest(ctx, groupID)
+	stickyWeighted := effectiveSettings.stickyWeightedEnabled
 	var stickyAccountID int64
-	if sessionHash != "" && s.cache != nil {
-		if accountID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash); err == nil && accountID > 0 {
+	if stickyWeighted && sessionHash != "" && s.cache != nil {
+		accountID, stickyErr := s.getStickySessionAccountID(ctx, groupID, sessionHash)
+		if stickyErr != nil && !errors.Is(stickyErr, ErrGatewayCacheMiss) {
+			logOpenAIAffinityCacheReadDegraded("session", groupID, stickyErr)
+		}
+		if stickyErr == nil && accountID > 0 {
 			stickyAccountID = accountID
 		}
 	}
-	effectiveSettings := s.advancedSchedulerEffectiveSettingsForRequest(ctx, groupID)
-	stickyWeighted := effectiveSettings.stickyWeightedEnabled
 	subscriptionPriority := effectiveSettings.subscriptionPriorityEnabled
 	stickyPreviousAccountID := int64(0)
 	if stickyWeighted && previousResponseCanMove && strings.TrimSpace(previousResponseID) != "" && platform == PlatformOpenAI {
-		stickyPreviousAccountID = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, routingModel, excludedIDs, requiredCapability, requireCompact)
+		var previousResolveErr error
+		stickyPreviousAccountID, previousResolveErr = s.ResolveAccountIDByPreviousResponseIDForScheduler(ctx, groupID, previousResponseID, routingModel, excludedIDs, requiredCapability, requireCompact)
+		if previousResolveErr != nil {
+			logOpenAIAffinityCacheReadDegraded("previous_response", groupID, previousResolveErr)
+			stickyPreviousAccountID = 0
+		}
 	}
 
 	selection, decision, selectErr := scheduler.Select(ctx, OpenAIAccountScheduleRequest{

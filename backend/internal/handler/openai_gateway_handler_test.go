@@ -234,20 +234,57 @@ func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 
 func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
+	c := newOpenAIMessagesSessionTestContext()
+	svc := &service.OpenAIGatewayService{}
 
-	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession("", "", "claude-sonnet-4-5", body)
+	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession(svc, c, "", "claude-sonnet-4-5", body)
 
-	require.NotEmpty(t, sessionHash)
+	require.Equal(t, service.DeriveSessionHashFromSeed("claude-sonnet-4-5-claude-code-session"), sessionHash)
 	require.Empty(t, promptCacheKey)
 }
 
 func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t *testing.T) {
 	body := []byte(`{"metadata":{"user_id":"claude-code-session"}}`)
+	c := newOpenAIMessagesSessionTestContext()
+	c.Request.Header.Set("session_id", "explicit-cache")
+	svc := &service.OpenAIGatewayService{}
 
-	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession("", "explicit-cache", "claude-sonnet-4-5", body)
+	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession(svc, c, "explicit-cache", "claude-sonnet-4-5", body)
 
-	require.NotEmpty(t, sessionHash)
+	require.Equal(t, service.DeriveSessionHashFromSeed("explicit-cache"), sessionHash)
 	require.Equal(t, "explicit-cache", promptCacheKey)
+}
+
+func TestResolveOpenAIMessagesMetadataSession_MetadataPrecedesContentFallback(t *testing.T) {
+	svc := &service.OpenAIGatewayService{}
+	bodyA := []byte(`{"metadata":{"user_id":"stable-user"},"messages":[{"role":"user","content":"first turn"}]}`)
+	bodyB := []byte(`{"metadata":{"user_id":"stable-user"},"messages":[{"role":"user","content":"later turn"}]}`)
+
+	hashA, _ := resolveOpenAIMessagesMetadataSession(svc, newOpenAIMessagesSessionTestContext(), "", "claude-sonnet-4-5", bodyA)
+	hashB, _ := resolveOpenAIMessagesMetadataSession(svc, newOpenAIMessagesSessionTestContext(), "", "claude-sonnet-4-5", bodyB)
+
+	require.Equal(t, hashA, hashB)
+	require.Equal(t, service.DeriveSessionHashFromSeed("claude-sonnet-4-5-stable-user"), hashA)
+}
+
+func TestResolveOpenAIMessagesMetadataSession_ContentFallbackWithoutStableSignal(t *testing.T) {
+	svc := &service.OpenAIGatewayService{}
+	bodyA := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"first turn"}]}`)
+	bodyB := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"different first turn"}]}`)
+
+	hashA, _ := resolveOpenAIMessagesMetadataSession(svc, newOpenAIMessagesSessionTestContext(), "", "claude-sonnet-4-5", bodyA)
+	hashB, _ := resolveOpenAIMessagesMetadataSession(svc, newOpenAIMessagesSessionTestContext(), "", "claude-sonnet-4-5", bodyB)
+
+	require.NotEmpty(t, hashA)
+	require.NotEmpty(t, hashB)
+	require.NotEqual(t, hashA, hashB)
+}
+
+func newOpenAIMessagesSessionTestContext() *gin.Context {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	return c
 }
 
 func TestOpenAIHandleStreamingAwareError_NonStreaming(t *testing.T) {
@@ -2024,13 +2061,11 @@ func TestOpenAIResponsesWebSocket_StripsPreviousResponseIDWhenStickyPreviousMiss
 	require.Equal(t, "hello", gjson.GetBytes(got.upstreamFirstPayload, "input.0.text").String())
 }
 
-func TestOpenAIResponsesWebSocket_KeepsFunctionCallOutputPreviousResponseIDWhenStickyPreviousMisses(t *testing.T) {
-	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
-		firstPayload: `{"type":"response.create","model":"gpt-5.4","stream":false,"previous_response_id":"resp_tool_chain","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`,
+func TestOpenAIResponsesWebSocket_FunctionCallOutputPreviousResponseMissFailsClosed(t *testing.T) {
+	runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload:    `{"type":"response.create","model":"gpt-5.4","stream":false,"previous_response_id":"resp_tool_chain","input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`,
+		wantCloseReason: "previous response affinity unavailable",
 	})
-
-	require.Equal(t, "resp_tool_chain", gjson.GetBytes(got.upstreamFirstPayload, "previous_response_id").String(),
-		"工具续链无法用完整 input 重建，sticky miss 时也应保留 previous_response_id")
 }
 
 func TestOpenAIResponsesWebSocket_PassthroughUsageLogLeavesUserAgentNilWhenMissing(t *testing.T) {
@@ -2191,9 +2226,10 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
-	firstPayload   string
-	userAgent      *string
-	channelMapping map[string]string
+	firstPayload    string
+	userAgent       *string
+	channelMapping  map[string]string
+	wantCloseReason string
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -3268,6 +3304,12 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 	_, event, err := clientConn.Read(readCtx)
 	cancelRead()
+	if tc.wantCloseReason != "" {
+		require.Error(t, err)
+		require.Equal(t, coderws.StatusTryAgainLater, coderws.CloseStatus(err))
+		require.Contains(t, strings.ToLower(err.Error()), strings.ToLower(tc.wantCloseReason))
+		return openAIResponsesWSUsageLogResult{}
+	}
 	require.NoError(t, err)
 	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
 	_ = clientConn.Close(coderws.StatusNormalClosure, "done")

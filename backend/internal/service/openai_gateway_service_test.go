@@ -15,6 +15,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/model"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -375,6 +376,7 @@ func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 		name  string
 		value string
 	}{
+		{name: codexSessionIDHeader, value: "codex-session"},
 		{name: "session_id", value: "generic-session"},
 		{name: "conversation_id", value: "generic-conversation"},
 		{name: openCodeSessionAffinityHeader, value: "opencode-affinity"},
@@ -530,6 +532,91 @@ func TestOpenAIGatewayService_BindHTTPResponseAccount(t *testing.T) {
 	require.Equal(t, account.ID, got)
 }
 
+func TestOpenAIGatewayService_BindHTTPResponseAccountUsesFallbackGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	originalGroupID := int64(4202)
+	fallbackGroupID := int64(4203)
+	c.Set("api_key", &APIKey{ID: 502, GroupID: &originalGroupID})
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, &Group{
+		ID:              originalGroupID,
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		Hydrated:        true,
+		ClaudeCodeOnly:  true,
+		FallbackGroupID: &fallbackGroupID,
+	}))
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 37002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc.bindHTTPResponseAccount(c.Request.Context(), c, account, "resp_http_fallback")
+
+	store := svc.getOpenAIWSStateStore()
+	got, err := store.GetResponseAccount(context.Background(), fallbackGroupID, "resp_http_fallback")
+	require.NoError(t, err)
+	require.Equal(t, account.ID, got)
+	originalBinding, err := store.GetResponseAccount(context.Background(), originalGroupID, "resp_http_fallback")
+	require.NoError(t, err)
+	require.Zero(t, originalBinding)
+}
+
+func TestOpenAIGatewayService_BindHTTPResponseAccountPreservesPassedForcePlatformContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	originalGroupID := int64(4204)
+	fallbackGroupID := int64(4205)
+	c.Set("api_key", &APIKey{ID: 503, GroupID: &originalGroupID})
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, &Group{
+		ID:              originalGroupID,
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		Hydrated:        true,
+		ClaudeCodeOnly:  true,
+		FallbackGroupID: &fallbackGroupID,
+	}))
+	resolveCtx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, PlatformOpenAI)
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 37003, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc.bindHTTPResponseAccount(resolveCtx, c, account, "resp_http_force_platform")
+
+	store := svc.getOpenAIWSStateStore()
+	got, err := store.GetResponseAccount(context.Background(), originalGroupID, "resp_http_force_platform")
+	require.NoError(t, err)
+	require.Equal(t, account.ID, got)
+	fallbackBinding, err := store.GetResponseAccount(context.Background(), fallbackGroupID, "resp_http_force_platform")
+	require.NoError(t, err)
+	require.Zero(t, fallbackBinding)
+}
+
+func TestOpenAIGatewayService_BindHTTPResponseAccountSkipsUnresolvedFallbackGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	groupID := int64(4206)
+	c.Set("api_key", &APIKey{ID: 504, GroupID: &groupID})
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, &Group{
+		ID:             groupID,
+		Platform:       PlatformOpenAI,
+		Status:         StatusActive,
+		Hydrated:       true,
+		ClaudeCodeOnly: true,
+	}))
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 37004, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc.bindHTTPResponseAccount(c.Request.Context(), c, account, "resp_http_unresolved_fallback")
+
+	got, err := svc.getOpenAIWSStateStore().GetResponseAccount(context.Background(), groupID, "resp_http_unresolved_fallback")
+	require.NoError(t, err)
+	require.Zero(t, got)
+}
+
 func TestOpenAIGatewayService_BindStickySessionUsesConfiguredTTL(t *testing.T) {
 	cache := &stubGatewayCache{}
 	svc := &OpenAIGatewayService{
@@ -541,6 +628,46 @@ func TestOpenAIGatewayService_BindStickySessionUsesConfiguredTTL(t *testing.T) {
 
 	require.NoError(t, svc.BindStickySession(context.Background(), nil, "session", 101))
 	require.Equal(t, 6*time.Hour, cache.lastSetTTL)
+}
+
+func TestOpenAIGatewayService_BindStickySessionUsesFallbackGroup(t *testing.T) {
+	originalGroupID := int64(4301)
+	fallbackGroupID := int64(4302)
+	ctx := context.WithValue(context.Background(), ctxkey.Group, &Group{
+		ID:              originalGroupID,
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		Hydrated:        true,
+		ClaudeCodeOnly:  true,
+		FallbackGroupID: &fallbackGroupID,
+	})
+	cache := &stubGatewayCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+
+	require.NoError(t, svc.BindStickySession(ctx, &originalGroupID, "fallback-session", 43001))
+	require.Equal(t, fallbackGroupID, cache.lastSetGroupID)
+	require.Equal(t, int64(43001), cache.sessionBindings["openai:fallback-session"])
+}
+
+func TestOpenAIGatewayService_BindStickySessionUsesResolvedFinalGroupContext(t *testing.T) {
+	originalGroupID := int64(4303)
+	fallbackGroupID := int64(4304)
+	ctx := context.WithValue(context.Background(), ctxkey.Group, &Group{
+		ID:              originalGroupID,
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		Hydrated:        true,
+		ClaudeCodeOnly:  true,
+		FallbackGroupID: &fallbackGroupID,
+	})
+	// Simulate a scheduler result captured before the fallback configuration is
+	// edited concurrently: the binding must retain the captured scope.
+	ctx = WithOpenAIFinalGroupID(ctx, originalGroupID)
+	cache := &stubGatewayCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+
+	require.NoError(t, svc.BindStickySession(ctx, &originalGroupID, "captured-session", 43003))
+	require.Equal(t, originalGroupID, cache.lastSetGroupID)
 }
 
 func TestOpenAIGatewayService_GenerateExplicitSessionHash_SkipsContentFallback(t *testing.T) {
@@ -662,6 +789,7 @@ func (c stubConcurrencyCache) GetAccountWaitingCount(ctx context.Context, accoun
 type stubGatewayCache struct {
 	sessionBindings map[string]int64
 	deletedSessions map[string]int
+	lastSetGroupID  int64
 	lastSetTTL      time.Duration
 	lastRefreshTTL  time.Duration
 }
@@ -670,7 +798,7 @@ func (c *stubGatewayCache) GetSessionAccountID(ctx context.Context, groupID int6
 	if id, ok := c.sessionBindings[sessionHash]; ok {
 		return id, nil
 	}
-	return 0, errors.New("not found")
+	return 0, ErrGatewayCacheMiss
 }
 
 func (c *stubGatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
@@ -678,6 +806,7 @@ func (c *stubGatewayCache) SetSessionAccountID(ctx context.Context, groupID int6
 		c.sessionBindings = make(map[string]int64)
 	}
 	c.sessionBindings[sessionHash] = accountID
+	c.lastSetGroupID = groupID
 	c.lastSetTTL = ttl
 	return nil
 }
@@ -704,7 +833,7 @@ func (c *stubGatewayCache) SetSessionOwnerGroupID(ctx context.Context, userID in
 }
 
 func (c *stubGatewayCache) GetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string) (int64, error) {
-	return 0, errors.New("not found")
+	return 0, ErrGatewayCacheMiss
 }
 
 func (c *stubGatewayCache) RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error {
@@ -3201,7 +3330,7 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
 	require.Equal(t, codexCLIVersion, req.Header.Get("Version"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
-	require.NotEmpty(t, req.Header.Get("Session_Id"))
+	require.Empty(t, req.Header.Get("Session_Id"), "compact requests without a stable client seed must not synthesize a random session")
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
 }
 
@@ -3293,8 +3422,69 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
 	require.Equal(t, codexCLIVersion, req.Header.Get("Version"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"), "Codex OAuth HTTP must not synthesize the legacy responses beta header")
-	require.NotEmpty(t, req.Header.Get("Session_Id"))
+	require.Empty(t, req.Header.Get("Session_Id"), "compact requests without a stable client seed must not synthesize a random session")
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+}
+
+func TestOpenAICompactStagedPromptCacheKeyPreservesStickyHashAndUpstreamSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	originalBody := []byte(`{"model":"gpt-5.5","instructions":"compact-test","input":[{"type":"message","role":"user","content":"compact me"}],"prompt_cache_key":"stable-compact-session"}`)
+	normalizedBody, changed, err := normalizeOpenAICompactRequestBody(originalBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(normalizedBody, "prompt_cache_key").Exists())
+
+	normalRecorder := httptest.NewRecorder()
+	normalContext, _ := gin.CreateTestContext(normalRecorder)
+	normalContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
+	normalHash := svc.GenerateSessionHash(normalContext, originalBody)
+
+	compactRecorder := httptest.NewRecorder()
+	compactContext, _ := gin.CreateTestContext(compactRecorder)
+	compactContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(normalizedBody))
+	compactContext.Set(openAICompactSessionSeedKey, " stable-compact-session ")
+	compactHash := svc.GenerateSessionHash(compactContext, normalizedBody)
+
+	require.Equal(t, DeriveSessionHashFromSeed("stable-compact-session"), normalHash)
+	require.Equal(t, normalHash, compactHash)
+	require.Equal(t, normalHash, svc.GenerateExplicitSessionHash(compactContext, normalizedBody))
+	require.Equal(t, "stable-compact-session", resolveOpenAICompactSessionID(compactContext))
+
+	account := &Account{Type: AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"}}
+	wantUpstreamSession := isolateOpenAISessionID(0, "stable-compact-session")
+	request, err := svc.buildUpstreamRequest(compactContext.Request.Context(), compactContext, account, normalizedBody, "token", false, "", true)
+	require.NoError(t, err)
+	require.Equal(t, wantUpstreamSession, request.Header.Get("Session_Id"))
+
+	passthroughRequest, err := svc.buildUpstreamRequestOpenAIPassthrough(compactContext.Request.Context(), compactContext, account, normalizedBody, "token")
+	require.NoError(t, err)
+	require.Equal(t, wantUpstreamSession, passthroughRequest.Header.Get("Session_Id"))
+}
+
+func TestOpenAICompactWithoutExplicitSeedUsesContentFallbackOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	body := []byte(`{"model":"gpt-5.5","instructions":"compact-test","input":[{"type":"message","role":"user","content":"compact me"}]}`)
+	normalizedBody, _, err := normalizeOpenAICompactRequestBody(body)
+	require.NoError(t, err)
+
+	newContext := func() *gin.Context {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(normalizedBody))
+		return c
+	}
+	first := newContext()
+	second := newContext()
+
+	firstHash := svc.GenerateSessionHash(first, normalizedBody)
+	secondHash := svc.GenerateSessionHash(second, normalizedBody)
+	require.NotEmpty(t, firstHash)
+	require.Equal(t, firstHash, secondHash)
+	require.Equal(t, DeriveSessionHashFromSeed(deriveOpenAIContentSessionSeed(normalizedBody)), firstHash)
+	require.Empty(t, svc.GenerateExplicitSessionHash(first, normalizedBody))
+	require.Empty(t, resolveOpenAICompactSessionID(first))
 }
 
 func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing.T) {

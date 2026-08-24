@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -43,7 +44,8 @@ type openAIWSSessionConnBinding struct {
 // - response_id -> account_id 用于续链路由
 // - response_id -> conn_id 用于连接内上下文复用
 //
-// response_id -> account_id 优先走 GatewayCache（Redis），同时维护本地热缓存。
+// 配置 GatewayCache（Redis）时，response_id -> account_id 以共享缓存为读取权威，
+// 避免其它实例删除绑定后继续命中本地陈旧值；未配置共享缓存时使用进程内映射。
 // response_id -> conn_id 仅在本进程内有效。
 type OpenAIWSStateStore interface {
 	BindResponseAccount(ctx context.Context, groupID int64, responseID string, accountID int64, ttl time.Duration) error
@@ -122,19 +124,15 @@ func (s *defaultOpenAIWSStateStore) GetResponseAccount(ctx context.Context, grou
 	}
 	s.maybeCleanup()
 
-	now := time.Now()
 	mapKey := openAIWSResponseAccountMapKey(groupID, id)
-	s.responseToAccountMu.RLock()
-	if binding, ok := s.responseToAccount[mapKey]; ok {
-		if now.Before(binding.expiresAt) {
-			accountID := binding.accountID
-			s.responseToAccountMu.RUnlock()
-			return accountID, nil
-		}
-	}
-	s.responseToAccountMu.RUnlock()
-
 	if s.cache == nil {
+		now := time.Now()
+		s.responseToAccountMu.RLock()
+		binding, ok := s.responseToAccount[mapKey]
+		s.responseToAccountMu.RUnlock()
+		if ok && now.Before(binding.expiresAt) {
+			return binding.accountID, nil
+		}
 		return 0, nil
 	}
 
@@ -142,9 +140,18 @@ func (s *defaultOpenAIWSStateStore) GetResponseAccount(ctx context.Context, grou
 	cacheCtx, cancel := withOpenAIWSStateStoreRedisTimeout(ctx)
 	defer cancel()
 	accountID, err := s.cache.GetSessionAccountID(cacheCtx, groupID, cacheKey)
-	if err != nil || accountID <= 0 {
-		// 缓存读取失败不阻断主流程，按未命中降级。
+	if errors.Is(err, ErrGatewayCacheMiss) {
+		// 共享缓存 miss 同时淘汰本地镜像，防止陈旧值长期占用内存。
+		s.responseToAccountMu.Lock()
+		delete(s.responseToAccount, mapKey)
+		s.responseToAccountMu.Unlock()
 		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("get response account binding: %w", err)
+	}
+	if accountID <= 0 {
+		return 0, fmt.Errorf("get response account binding: invalid account id %d", accountID)
 	}
 	return accountID, nil
 }

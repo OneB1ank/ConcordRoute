@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -21,6 +22,7 @@ import (
 )
 
 const (
+	codexSessionIDHeader          = "session-id"
 	openCodeSessionAffinityHeader = "X-Session-Affinity"
 	openCodeSessionIDHeader       = "X-Session-Id"
 	openCodeNativeSessionHeader   = "X-OpenCode-Session"
@@ -28,6 +30,7 @@ const (
 )
 
 var explicitOpenAIHeaderSessionNames = []string{
+	codexSessionIDHeader,
 	"session_id",
 	"conversation_id",
 	openCodeSessionAffinityHeader,
@@ -66,7 +69,29 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 	}
+	if sessionID == "" {
+		sessionID = stagedOpenAICompactSessionSeed(c)
+	}
 	return sessionID
+}
+
+// stagedOpenAICompactSessionSeed returns the explicit prompt_cache_key captured
+// before legacy /responses/compact normalization removes it from the body. It
+// deliberately returns an empty string when no stable client value exists so
+// callers can continue to the normal content-derived fallback.
+func stagedOpenAICompactSessionSeed(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	seed, ok := c.Get(openAICompactSessionSeedKey)
+	if !ok {
+		return ""
+	}
+	seedStr, ok := seed.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(seedStr)
 }
 
 // explicitOpenAIRequestSessionID 仅对认证到 Grok 分组的请求，将 Grok 原生会话头加入
@@ -82,6 +107,9 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	}
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+	}
+	if sessionID == "" {
+		sessionID = stagedOpenAICompactSessionSeed(c)
 	}
 	if sessionID == "" && isGrokRequestContext(c) && len(body) > 0 {
 		sessionID = grokPreviousResponseSessionSeed(body)
@@ -120,13 +148,14 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 // GenerateSessionHash generates a sticky-session hash for OpenAI requests.
 //
 // Priority:
-//  1. Header: session_id
-//  2. Header: conversation_id
-//  3. Header：x-session-affinity / x-session-id / x-opencode-session（OpenCode）
-//  4. Header：x-conversation-id（CodeBuddy）
-//  5. Header：x-grok-conv-id（仅 Grok 分组）
-//  6. Body：prompt_cache_key
-//  7. Body：基于内容回退（model + system + tools + 第一条用户消息）
+//  1. Header: session-id（Codex CLI）
+//  2. Header: session_id
+//  3. Header: conversation_id
+//  4. Header：x-session-affinity / x-session-id / x-opencode-session（OpenCode）
+//  5. Header：x-conversation-id（CodeBuddy）
+//  6. Header：x-grok-conv-id（仅 Grok 分组）
+//  7. Body：prompt_cache_key
+//  8. Body：基于内容回退（model + system + tools + 第一条用户消息）
 func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
@@ -207,7 +236,24 @@ func (s *OpenAIGatewayService) BindStickySession(ctx context.Context, groupID *i
 	if sessionHash == "" || accountID <= 0 {
 		return nil
 	}
-	return s.setStickySessionAccountID(ctx, groupID, sessionHash, accountID, s.openAIStickySessionTTL())
+	if finalGroupID, ok := OpenAIFinalGroupIDFromContext(ctx); ok {
+		return s.bindStickySessionResolved(ctx, &finalGroupID, sessionHash, accountID)
+	}
+	resolvedCtx, resolvedGroupID, err := s.resolveOpenAISchedulerGroup(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	return s.bindStickySessionResolved(resolvedCtx, resolvedGroupID, sessionHash, accountID)
+}
+
+// bindStickySessionResolved writes a binding using a group that was already
+// resolved by the current scheduling attempt. Keeping this separate from the
+// public helper avoids a second fallback-chain lookup in the scheduler hot path.
+func (s *OpenAIGatewayService) bindStickySessionResolved(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
+	if s == nil || strings.TrimSpace(sessionHash) == "" || accountID <= 0 {
+		return nil
+	}
+	return s.setStickySessionAccountID(ctx, groupID, strings.TrimSpace(sessionHash), accountID, s.openAIStickySessionTTL())
 }
 
 // SelectAccount selects an OpenAI account with sticky session support
@@ -794,7 +840,11 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsForRouting(ctx
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
-	if account := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, routingModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability); account != nil {
+	account, stickyErr := s.tryStickySessionHit(ctx, groupID, platform, sessionHash, requestedModel, routingModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability)
+	if stickyErr != nil {
+		return nil, stickyErr
+	}
+	if account != nil {
 		return account, nil
 	}
 
@@ -826,71 +876,78 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsForRouting(ctx
 //
 // tryStickySessionHit attempts to get account from sticky session.
 // Returns account if hit and usable; clears session and returns nil if account is unavailable.
-func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID *int64, platform string, sessionHash, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability) *Account {
+func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID *int64, platform string, sessionHash, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability) (*Account, error) {
 	if sessionHash == "" {
-		return nil
+		return nil, nil
 	}
 	platform = normalizeOpenAICompatiblePlatform(platform)
 
 	accountID := stickyAccountID
-	if accountID <= 0 {
+	if accountID == 0 {
 		var err error
 		accountID, err = s.getStickySessionAccountID(ctx, groupID, sessionHash)
-		if err != nil || accountID <= 0 {
-			return nil
+		if err != nil {
+			if errors.Is(err, ErrGatewayCacheMiss) {
+				return nil, nil
+			}
+			logOpenAIAffinityCacheReadDegraded("session", groupID, err)
+			return nil, nil
 		}
+	}
+	if accountID <= 0 {
+		return nil, nil
 	}
 
 	if _, excluded := excludedIDs[accountID]; excluded {
-		return nil
+		return nil, nil
 	}
 
 	account, err := s.getSchedulableAccount(ctx, accountID)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	if account == nil {
 		// getSchedulableAccount 可能因临时暂停或额度阈值返回 nil,nil；
 		// 此时旧粘性键已经失效，必须删除而不是让会话持续卡在旧账号上。
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-		return nil
+		return nil, nil
 	}
 
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared
 	if shouldClearStickySession(account, routingModel) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-		return nil
+		return nil, nil
 	}
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
 	if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, routingModel, false, requiredCapability) {
-		return nil
+		return nil, nil
 	}
 	if !parentHealthyForShadow(account, s.parentAccountLookup(ctx)) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-		return nil
+		return nil, nil
 	}
 	if s.isOpenAIAccountRequestRuntimeBlocked(ctx, account, routingModel) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-		return nil
+		return nil, nil
 	}
 	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, routingModel, requireCompact, requiredCapability)
 	if account == nil || !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-		return nil
+		return nil, nil
 	}
 	if groupID != nil && s.needsUpstreamChannelRestrictionCheck(ctx, groupID) &&
 		s.isUpstreamRoutingModelRestrictedByChannel(ctx, *groupID, account, routingModel, requireCompact) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-		return nil
+		return nil, nil
 	}
 
 	// 刷新会话 TTL 并返回账号
 	// Refresh session TTL and return account
 	_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, s.openAIStickySessionTTL())
-	return account
+	return account, nil
 }
 
 // selectBestAccount 从候选账号中选择最佳账号（优先级 + LRU）。
@@ -1010,7 +1067,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForRouting(ctx cont
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 	var stickyAccountID int64
 	if sessionHash != "" && s.cache != nil {
-		if accountID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash); err == nil {
+		accountID, stickyErr := s.getStickySessionAccountID(ctx, groupID, sessionHash)
+		if stickyErr != nil && !errors.Is(stickyErr, ErrGatewayCacheMiss) {
+			logOpenAIAffinityCacheReadDegraded("session", groupID, stickyErr)
+			stickyAccountID = openAIStickyLookupDegradedAccountID
+		}
+		if stickyErr == nil {
 			stickyAccountID = accountID
 		}
 	}

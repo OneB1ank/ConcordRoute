@@ -75,6 +75,10 @@ const (
 	// Service 层仅在分组匹配时复用 PrefetchedStickyAccountID，避免分组切换重试误用旧 sticky。
 	PrefetchedStickyGroupID Key = "ctx_prefetched_sticky_group_id"
 
+	// OpenAIFinalGroupID 保存本次 OpenAI 调度已经解析出的最终分组。
+	// 由选择阶段写入，供同一请求后续 sticky/response 绑定复用，避免再次沿回退链解析。
+	OpenAIFinalGroupID Key = "ctx_openai_final_group_id"
+
 	// ClaudeCodeVersion stores the extracted Claude Code version from User-Agent (e.g. "2.1.22")
 	ClaudeCodeVersion Key = "ctx_claude_code_version"
 )

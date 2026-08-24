@@ -51,6 +51,59 @@ func newOpenAIWSDownstreamWriteContext(controlCtx context.Context, hooks *OpenAI
 	return context.WithTimeout(writeParent, timeout)
 }
 
+// openAIWSResultMayBindResponseAccount restricts response affinity to an
+// explicitly successful upstream terminal event. A response id observed on a
+// failed, incomplete, cancelled, or transport-error turn is not a usable
+// continuation anchor and must not move subsequent requests to this account.
+func openAIWSResultMayBindResponseAccount(result *OpenAIForwardResult) bool {
+	if result == nil || strings.TrimSpace(result.RequestID) == "" {
+		return false
+	}
+	return openAIWSTerminalEventMayBind(strings.TrimSpace(result.UpstreamTerminalEvent))
+}
+
+func openAIWSTerminalEventMayBind(event string) bool {
+	// response.done is emitted by the WS/Realtime compatibility path and is
+	// treated as a successful terminal alias everywhere else in the gateway.
+	switch strings.TrimSpace(event) {
+	case "response.completed", "response.done":
+		return true
+	default:
+		return false
+	}
+}
+
+func openAIWSTurnMayBindResponseAccount(capture OpenAIWSTurnCapture) bool {
+	return capture.Err == nil && openAIWSResultMayBindResponseAccount(capture.Result)
+}
+
+// withOpenAIWSIngressResponseBinding wraps passthrough callbacks so completed
+// turns publish the same response->account binding as HTTP, pooled WSv2 and
+// HTTP-bridge ingress modes. The caller callback remains intact.
+func (s *OpenAIGatewayService) withOpenAIWSIngressResponseBinding(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	hooks *OpenAIWSIngressHooks,
+) *OpenAIWSIngressHooks {
+	wrapped := OpenAIWSIngressHooks{}
+	if hooks != nil {
+		wrapped = *hooks
+	}
+	downstreamAfterTurn := wrapped.AfterTurn
+	wrapped.AfterTurn = func(capture OpenAIWSTurnCapture) {
+		if openAIWSTurnMayBindResponseAccount(capture) {
+			responseID := strings.TrimSpace(capture.Result.RequestID)
+			s.bindHTTPResponseAccount(ctx, c, account, responseID)
+			s.bindOpenAIWSResponseSessionOwner(ctx, c, responseID)
+		}
+		if downstreamAfterTurn != nil {
+			downstreamAfterTurn(capture)
+		}
+	}
+	return &wrapped
+}
+
 // ProxyResponsesWebSocketFromClient 处理客户端入站 WebSocket（OpenAI Responses WS Mode）并转发到上游。
 // 当前实现按“单请求 -> 终止事件 -> 下一请求”的顺序代理，适配 Codex CLI 的 turn 模式。
 func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
@@ -107,6 +160,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
 				return fmt.Errorf("websocket ingress requires ws_v2 transport, got=%s", wsDecision.Transport)
 			}
+			passthroughHooks := s.withOpenAIWSIngressResponseBinding(ctx, c, account, hooks)
 			return s.proxyResponsesWebSocketV2Passthrough(
 				ctx,
 				c,
@@ -114,7 +168,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				account,
 				token,
 				firstClientMessage,
-				hooks,
+				passthroughHooks,
 				wsDecision,
 				tlsRouterMatch,
 			)
@@ -462,7 +516,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.getOpenAIWSStateStore()
-	groupID := getOpenAIGroupIDFromContext(c)
+	groupID, groupResolved := s.resolveOpenAIResponseBindingGroupID(ctx, c)
+	if !groupResolved {
+		stateStore = nil
+	}
 	storeDisabledConnMode := s.openAIWSStoreDisabledConnMode()
 	sessionHash := ""
 	preferredConnID := ""
@@ -613,7 +670,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 			}
 			responseID := strings.TrimSpace(result.RequestID)
-			if responseID != "" && stateStore != nil {
+			if openAIWSResultMayBindResponseAccount(result) && stateStore != nil {
 				ttl := s.openAIWSResponseStickyTTL()
 				logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 			}
@@ -912,6 +969,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
 				errorStatus := openAIWSErrorPolicyStatus(upstreamMessage)
 				fallbackReason, _ := classifyOpenAIWSErrorEventFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
+				if fallbackReason == openAIWSIngressStagePreviousResponseNotFound {
+					s.clearOpenAIPreviousResponseBindingsOnNotFound(ctx, c, turnPreviousResponseID)
+				}
 				errCode, errType, errMessage := summarizeOpenAIWSErrorEventFieldsFromRaw(errCodeRaw, errTypeRaw, errMsgRaw)
 				recoverablePrevNotFound := fallbackReason == openAIWSIngressStagePreviousResponseNotFound &&
 					turnPreviousResponseID != "" &&
@@ -1711,7 +1771,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			lastTurnStrictState = nextStrictState
 		}
 
-		if responseID != "" && stateStore != nil {
+		if openAIWSResultMayBindResponseAccount(result) && stateStore != nil {
 			ttl := s.openAIWSResponseStickyTTL()
 			logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 			stateStore.BindResponseConn(responseID, connID, ttl)

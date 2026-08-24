@@ -14,7 +14,7 @@ const maxPersistedSessionIDLength = 255
 // clientSessionIDHeaders 优先识别 Codex CLI 标准 session-id，再兼容 OpenAI
 // 粘性会话头和原生协议标识；这些标识只用于持久化，不得改变调度行为。
 var clientSessionIDHeaders = append(
-	append([]string{"session-id"}, explicitOpenAIHeaderSessionNames...),
+	append([]string{}, explicitOpenAIHeaderSessionNames...),
 	claudeCodeSessionHeader,
 )
 

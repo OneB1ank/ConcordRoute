@@ -58,6 +58,12 @@ type RelayExit struct {
 	WroteDownstream bool
 }
 
+// ErrDropDownstreamFrame tells Relay that the current upstream frame was
+// handled by the adapter and must not be forwarded to the client. The relay
+// remains active so the same turn can continue (for example after a bounded
+// in-place recovery retry).
+var ErrDropDownstreamFrame = errors.New("drop upstream frame before downstream write")
+
 type RelayOptions struct {
 	WriteTimeout                    time.Duration
 	IdleTimeout                     time.Duration
@@ -487,6 +493,20 @@ func runUpstreamToClient(
 		markActivity()
 		if beforeWriteClient != nil {
 			if err := beforeWriteClient(msgType, payload, wroteDownstream); err != nil {
+				if errors.Is(err, ErrDropDownstreamFrame) {
+					if droppedFrames != nil {
+						droppedFrames.Add(1)
+					}
+					emitRelayTrace(onTrace, RelayTraceEvent{
+						Stage:           "drop_downstream_frame",
+						Direction:       "upstream_to_client",
+						MessageType:     relayMessageTypeString(msgType),
+						PayloadBytes:    len(payload),
+						WroteDownstream: wroteDownstream,
+					})
+					markActivity()
+					continue
+				}
 				emitRelayTrace(onTrace, RelayTraceEvent{
 					Stage:           "upstream_message_rejected",
 					Direction:       "upstream_to_client",
@@ -663,9 +683,13 @@ func observeUpstreamMessage(
 	if responseID == "" {
 		responseID = strings.TrimSpace(values[2].String())
 	}
-	// 仅 terminal 事件兜底读取顶层 id，避免把 event_id 当成 response_id 关联到 turn。
+	// 仅 terminal 事件兜底读取符合 OpenAI response ID 格式的顶层 id，
+	// 避免把 evt_* 等 event ID 当成 response_id 关联到 turn。
 	if responseID == "" && isTerminalEvent(eventType) {
-		responseID = strings.TrimSpace(values[3].String())
+		topLevelID := strings.TrimSpace(values[3].String())
+		if strings.HasPrefix(topLevelID, "resp_") {
+			responseID = topLevelID
+		}
 	}
 	now := nowFn()
 

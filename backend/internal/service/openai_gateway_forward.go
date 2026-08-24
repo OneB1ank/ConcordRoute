@@ -1131,8 +1131,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 			if req.Header.Get("version") == "" {
 				req.Header.Set("version", CodexCanonicalClientVersion())
 			}
-			compactSession := resolveOpenAICompactSessionID(c)
-			req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
+			if compactSession := resolveOpenAICompactSessionID(c); compactSession != "" {
+				req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
+			}
 		} else {
 			req.Header.Set("accept", "text/event-stream")
 		}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -93,7 +94,16 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
 	groupID := int64(1001)
+	fallbackGroupID := int64(1002)
 	c.Set("api_key", &APIKey{GroupID: &groupID})
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Group, &Group{
+		ID:              groupID,
+		Platform:        PlatformOpenAI,
+		Status:          StatusActive,
+		Hydrated:        true,
+		ClaudeCodeOnly:  true,
+		FallbackGroupID: &fallbackGroupID,
+	}))
 
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
@@ -119,11 +129,12 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 
 	cache := &stubGatewayCache{}
 	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		httpUpstream:     upstream,
-		cache:            cache,
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
+		cfg:                cfg,
+		httpUpstream:       upstream,
+		cache:              cache,
+		openaiWSResolver:   NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:      NewCodexToolCorrector(),
+		openaiWSStateStore: NewOpenAIWSStateStore(nil),
 	}
 
 	account := &Account{
@@ -161,9 +172,12 @@ func TestOpenAIGatewayService_Forward_WSv2_SuccessAndBindSticky(t *testing.T) {
 	require.False(t, received.Stream, "应保持客户端 stream=false 的原始语义")
 
 	store := svc.getOpenAIWSStateStore()
-	mappedAccountID, getErr := store.GetResponseAccount(context.Background(), groupID, "resp_new_1")
+	mappedAccountID, getErr := store.GetResponseAccount(context.Background(), fallbackGroupID, "resp_new_1")
 	require.NoError(t, getErr)
 	require.Equal(t, account.ID, mappedAccountID)
+	originalBinding, getErr := store.GetResponseAccount(context.Background(), groupID, "resp_new_1")
+	require.NoError(t, getErr)
+	require.Zero(t, originalBinding)
 	connID, ok := store.GetResponseConn("resp_new_1")
 	require.True(t, ok)
 	require.NotEmpty(t, connID)

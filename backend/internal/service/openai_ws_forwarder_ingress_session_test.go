@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -96,6 +97,59 @@ func TestOpenAIWSDownstreamWriteContext_CancellationOwnership(t *testing.T) {
 	})
 }
 
+func TestOpenAIWSPassthroughResponseBinding_OnlySuccessfulTerminal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(48201)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Set("api_key", &APIKey{ID: 48202, UserID: 48203, GroupID: &groupID})
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 48204, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	tests := []struct {
+		name       string
+		terminal   string
+		requestID  string
+		captureErr error
+		wantBound  bool
+	}{
+		{name: "completed", terminal: "response.completed", requestID: "resp_bind_completed", wantBound: true},
+		{name: "done alias", terminal: "response.done", requestID: "resp_bind_done", wantBound: true},
+		{name: "failed", terminal: "response.failed", requestID: "resp_bind_failed"},
+		{name: "incomplete", terminal: "response.incomplete", requestID: "resp_bind_incomplete"},
+		{name: "cancelled", terminal: "response.cancelled", requestID: "resp_bind_cancelled"},
+		{name: "transport error", terminal: "response.completed", requestID: "resp_bind_transport_error", captureErr: errors.New("upstream read failed")},
+		{name: "missing result", requestID: "resp_bind_missing_result"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result *OpenAIForwardResult
+			if tt.name != "missing result" {
+				result = &OpenAIForwardResult{
+					OpenAIWSMode:          true,
+					RequestID:             tt.requestID,
+					UpstreamTerminalEvent: tt.terminal,
+				}
+			}
+			hooks := svc.withOpenAIWSIngressResponseBinding(context.Background(), c, account, nil)
+			hooks.AfterTurn(OpenAIWSTurnCapture{
+				Result: result,
+				Err:    tt.captureErr,
+			})
+
+			boundAccountID, err := svc.getOpenAIWSStateStore().GetResponseAccount(context.Background(), groupID, tt.requestID)
+			require.NoError(t, err)
+			if tt.wantBound {
+				require.Equal(t, account.ID, boundAccountID)
+			} else {
+				require.Zero(t, boundAccountID)
+			}
+		})
+	}
+}
+
 // TestOpenAIWSImageIntentForRoutingModel 验证 WebSocket 生图判断只使用渠道模型 C。
 func TestOpenAIWSImageIntentForRoutingModel(t *testing.T) {
 	tests := []struct {
@@ -137,6 +191,8 @@ func TestOpenAIWSImageIntentForRoutingModel_PassiveNamespaceIsNotExplicit(t *tes
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossTurns(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	originalGroupID := int64(11401)
+	fallbackGroupID := int64(11402)
 
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
@@ -165,12 +221,13 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	pool.setClientDialerForTest(captureDialer)
 
 	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		httpUpstream:     &httpUpstreamRecorder{},
-		cache:            &stubGatewayCache{},
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-		openaiWSPool:     pool,
+		cfg:                cfg,
+		httpUpstream:       &httpUpstreamRecorder{},
+		cache:              &stubGatewayCache{},
+		openaiWSResolver:   NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:      NewCodexToolCorrector(),
+		openaiWSPool:       pool,
+		openaiWSStateStore: NewOpenAIWSStateStore(nil),
 	}
 
 	account := &Account{
@@ -234,7 +291,16 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 		req := r.Clone(r.Context())
 		req.Header = req.Header.Clone()
 		req.Header.Set("User-Agent", "unit-test-agent/1.0")
+		req = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, &Group{
+			ID:              originalGroupID,
+			Platform:        PlatformOpenAI,
+			Status:          StatusActive,
+			Hydrated:        true,
+			ClaudeCodeOnly:  true,
+			FallbackGroupID: &fallbackGroupID,
+		}))
 		ginCtx.Request = req
+		ginCtx.Set("api_key", &APIKey{GroupID: &originalGroupID})
 
 		readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		msgType, firstMessage, readErr := conn.Read(readCtx)
@@ -308,6 +374,15 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_KeepLeaseAcrossT
 	require.Equal(t, "upstream-turn-1", fmt.Sprint(captureConn.writes[0]["model"]))
 	require.Equal(t, "upstream-turn-2", fmt.Sprint(captureConn.writes[1]["model"]))
 	require.Equal(t, []string{"1:client-turn-1", "2:client-turn-2"}, routingCalls)
+	store := svc.getOpenAIWSStateStore()
+	for _, responseID := range []string{"resp_ingress_turn_1", "resp_ingress_turn_2"} {
+		boundAccountID, getErr := store.GetResponseAccount(context.Background(), fallbackGroupID, responseID)
+		require.NoError(t, getErr)
+		require.Equal(t, account.ID, boundAccountID)
+		originalBinding, getErr := store.GetResponseAccount(context.Background(), originalGroupID, responseID)
+		require.NoError(t, getErr)
+		require.Zero(t, originalBinding)
+	}
 }
 
 // TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_LeaseLossSendsRetryClose
@@ -1170,6 +1245,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_DedicatedModeDoe
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeRelaysByCaddyAdapter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	originalGroupID := int64(45201)
+	fallbackGroupID := int64(45202)
 
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
@@ -1201,6 +1278,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 		openaiWSResolver:          NewOpenAIWSProtocolResolver(cfg),
 		toolCorrector:             NewCodexToolCorrector(),
 		openaiWSPassthroughDialer: captureDialer,
+		openaiWSStateStore:        NewOpenAIWSStateStore(nil),
 	}
 
 	account := &Account{
@@ -1269,7 +1347,16 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 		req := r.Clone(r.Context())
 		req.Header = req.Header.Clone()
 		req.Header.Set("User-Agent", "unit-test-agent/1.0")
+		req = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, &Group{
+			ID:              originalGroupID,
+			Platform:        PlatformOpenAI,
+			Status:          StatusActive,
+			Hydrated:        true,
+			ClaudeCodeOnly:  true,
+			FallbackGroupID: &fallbackGroupID,
+		}))
 		ginCtx.Request = req
+		ginCtx.Set("api_key", &APIKey{GroupID: &originalGroupID})
 
 		readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		msgType, firstMessage, readErr := conn.Read(readCtx)
@@ -1387,6 +1474,15 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 	require.Equal(t, "2:client-turn-2", <-routingCalls)
 	require.Equal(t, "2:client-turn-2", <-routingCalls)
 	require.Equal(t, 2, <-beforeTurnCalls)
+	store := svc.getOpenAIWSStateStore()
+	for _, responseID := range []string{"resp_passthrough_turn_1", "resp_passthrough_turn_2"} {
+		boundAccountID, getErr := store.GetResponseAccount(context.Background(), fallbackGroupID, responseID)
+		require.NoError(t, getErr)
+		require.Equal(t, account.ID, boundAccountID)
+		originalBinding, getErr := store.GetResponseAccount(context.Background(), originalGroupID, responseID)
+		require.NoError(t, getErr)
+		require.Zero(t, originalBinding)
+	}
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_HTTPBridgeModeRelaysHTTPStream(t *testing.T) {
@@ -4078,6 +4174,12 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreviousResponse
 	secondConn.mu.Unlock()
 	require.Len(t, secondWrites, 1, "恢复重试应在第二个连接发送一次请求")
 	require.False(t, gjson.Get(requestToJSONString(secondWrites[0]), "previous_response_id").Exists(), "恢复重试应移除 previous_response_id")
+	stateStore := svc.getOpenAIWSStateStore()
+	boundAccountID, getErr := stateStore.GetResponseAccount(context.Background(), 0, "resp_turn_prev_recover_1")
+	require.NoError(t, getErr)
+	require.Zero(t, boundAccountID, "ingress previous_response_not_found must clear the old account binding")
+	_, connBound := stateStore.GetResponseConn("resp_turn_prev_recover_1")
+	require.False(t, connBound, "ingress previous_response_not_found must clear the old connection binding")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_StoreDisabledStrictAffinityPreviousResponseNotFoundLayer2Recovery(t *testing.T) {

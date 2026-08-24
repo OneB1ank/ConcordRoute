@@ -420,6 +420,11 @@ var (
 // ErrNoAvailableAccounts 表示没有可用的账号
 var ErrNoAvailableAccounts = errors.New("no available accounts")
 
+// ErrOpenAIPreviousResponseAffinityUnavailable means a response chain cannot
+// be continued on its original account. Requests whose input depends on that
+// chain must stop instead of forwarding the old response ID to another account.
+var ErrOpenAIPreviousResponseAffinityUnavailable = errors.New("previous response affinity unavailable")
+
 // ErrClaudeCodeOnly 表示分组仅允许 Claude Code 客户端访问
 var ErrClaudeCodeOnly = errors.New("this group only allows Claude Code clients")
 
@@ -473,6 +478,12 @@ type GatewayCache interface {
 	// RefreshSessionOwnerTTL 刷新显式会话归属记录的过期时间。
 	RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error
 }
+
+// ErrGatewayCacheMiss is the storage-independent sentinel returned when a
+// GatewayCache lookup has no value. Callers that need fail-closed affinity can
+// distinguish a normal miss from Redis/network/decoding failures without
+// importing a repository-specific error such as redis.Nil.
+var ErrGatewayCacheMiss = errors.New("gateway cache miss")
 
 // GrokVideoBillingCache 为异步视频任务保存创建时定价快照，并跨实例防止轮询重复扣费。
 // 它保持为独立子接口，避免与 Grok 无关的缓存实现被迫提供这组能力。
@@ -557,6 +568,9 @@ type AccountSelectionResult struct {
 	ReleaseFunc       func()
 	WaitPlan          *AccountWaitPlan // nil means no wait allowed
 	AdvancedScheduler bool             // 仅内部转发链路使用，不对外序列化。
+	// FinalGroupID is the resolved scheduler scope for this request.  It is
+	// populated by OpenAI scheduling and consumed by subsequent bindings.
+	FinalGroupID int64
 }
 
 // ClaudeUsage 表示Claude API返回的usage信息

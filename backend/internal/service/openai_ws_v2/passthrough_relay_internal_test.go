@@ -211,6 +211,51 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 		require.True(t, sig.graceful)
 		require.Equal(t, int64(1), dropped.Load())
 	})
+
+	t.Run("adapter-handled frame is dropped while relay continues", func(t *testing.T) {
+		t.Parallel()
+
+		exitCh := make(chan relayExitSignal, 1)
+		drop := &atomic.Bool{}
+		dropped := &atomic.Int64{}
+		written := &atomic.Int64{}
+		runUpstreamToClient(
+			context.Background(),
+			newPassthroughTestFrameConn([]passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"error","error":{"code":"previous_response_not_found"}}`)},
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.completed","response":{"id":"resp_recovered","usage":{"input_tokens":1,"output_tokens":1}}}`)},
+			}, true),
+			func(_ coderws.MessageType, _ []byte) error {
+				written.Add(1)
+				return nil
+			},
+			time.Now(),
+			time.Now,
+			&relayState{},
+			nil,
+			nil,
+			nil,
+			func(_ coderws.MessageType, payload []byte, _ bool) error {
+				if gjson.GetBytes(payload, "type").String() == "error" {
+					return ErrDropDownstreamFrame
+				}
+				return nil
+			},
+			nil,
+			nil,
+			nil,
+			drop,
+			nil,
+			dropped,
+			func() {},
+			nil,
+			exitCh,
+		)
+		sig := <-exitCh
+		require.Equal(t, "read_upstream", sig.stage)
+		require.Equal(t, int64(1), dropped.Load())
+		require.Equal(t, int64(1), written.Load())
+	})
 }
 
 func TestRunIdleWatchdog_NoTimeoutWhenDisabled(t *testing.T) {
@@ -507,7 +552,26 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	require.False(t, observed.terminal)
 	require.Equal(t, "", observed.responseID)
 
-	// terminal：允许兜底用顶层 id（用于兼容少数字段变体）。
+	// terminal：顶层 event ID 不应进入 response_id，因此也不应产生绑定回调输入。
+	observed = observeUpstreamMessage(
+		state,
+		[]byte(`{"type":"response.completed","id":"evt_completed_123","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`),
+		startAt,
+		nowFn,
+		nil,
+		nil,
+	)
+	require.True(t, observed.terminal)
+	require.Empty(t, observed.responseID)
+
+	called := 0
+	emitTurnComplete(func(turn RelayTurnResult) {
+		called++
+		require.NotEqual(t, "evt_completed_123", turn.RequestID)
+	}, state, observed)
+	require.Zero(t, called)
+
+	// terminal：允许兜底用 resp_ 开头的顶层 id（用于兼容少数字段变体）。
 	observed = observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.completed","id":"resp_fallback","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`),

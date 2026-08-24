@@ -1170,7 +1170,10 @@ func (s *OpenAIGatewayService) bindHTTPResponseAccount(ctx context.Context, c *g
 	if store == nil {
 		return
 	}
-	groupID := getOpenAIGroupIDFromContext(c)
+	groupID, groupResolved := s.resolveOpenAIResponseBindingGroupID(ctx, c)
+	if !groupResolved {
+		return
+	}
 	ttl := s.openAIWSResponseStickyTTL()
 	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 }

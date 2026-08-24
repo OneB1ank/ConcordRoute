@@ -31,6 +31,40 @@ type stagedPassthroughConn struct {
 	closeOnce sync.Once
 }
 
+type passthroughWriteProbeConn struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	writes    int
+}
+
+func (c *passthroughWriteProbeConn) ReadFrame(context.Context) (coderws.MessageType, []byte, error) {
+	return coderws.MessageText, nil, errOpenAIWSConnClosed
+}
+
+func (c *passthroughWriteProbeConn) WriteFrame(context.Context, coderws.MessageType, []byte) error {
+	c.mu.Lock()
+	c.active++
+	if c.active > c.maxActive {
+		c.maxActive = c.active
+	}
+	c.writes++
+	c.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	c.mu.Lock()
+	c.active--
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *passthroughWriteProbeConn) Close() error { return nil }
+
+func (c *passthroughWriteProbeConn) snapshot() (writes, maxActive int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.writes, c.maxActive
+}
+
 func newStagedPassthroughConn() *stagedPassthroughConn {
 	return &stagedPassthroughConn{
 		frames: make(chan stagedPassthroughFrame, 4),
@@ -145,6 +179,141 @@ func passthroughLifecycleAccount() *Account {
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough,
 		},
+	}
+}
+
+func TestPassthroughPreviousResponseNotFoundClearsBindings(t *testing.T) {
+	cfg := passthroughLifecycleConfig()
+	upstream := newStagedPassthroughConn()
+	svc := newPassthroughLifecycleService(cfg, upstream)
+	store := NewOpenAIWSStateStore(nil)
+	svc.openaiWSStateStore = store
+	account := passthroughLifecycleAccount()
+	require.NoError(t, store.BindResponseAccount(context.Background(), 0, "resp_passthrough_missing", account.ID, time.Hour))
+	store.BindResponseConn("resp_passthrough_missing", "conn_passthrough_stale", time.Hour)
+
+	controlCtx, cancelControl := context.WithCancel(context.Background())
+	defer cancelControl()
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	client := dialPassthroughLifecycleClientWithFirstMessage(
+		t,
+		server,
+		[]byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_passthrough_missing"}`),
+	)
+	defer func() { _ = client.CloseNow() }()
+	require.NotEmpty(t, requirePassthroughUpstreamWrite(t, upstream, 2*time.Second))
+
+	upstream.Send(`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"missing"}}`)
+	payload, err := readPassthroughLifecycleFrame(t, client, 2*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	require.Eventually(t, func() bool {
+		accountID, getErr := store.GetResponseAccount(context.Background(), 0, "resp_passthrough_missing")
+		_, connBound := store.GetResponseConn("resp_passthrough_missing")
+		return getErr == nil && accountID == 0 && !connBound
+	}, time.Second, 10*time.Millisecond)
+
+	cancelControl()
+	_ = client.CloseNow()
+	select {
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough server did not stop after cancellation")
+	}
+}
+
+func TestPassthroughPreviousResponseNotFoundRecoversOnce(t *testing.T) {
+	cfg := passthroughLifecycleConfig()
+	cfg.Gateway.OpenAIWS.IngressPreviousResponseRecoveryEnabled = true
+	upstream := newStagedPassthroughConn()
+	svc := newPassthroughLifecycleService(cfg, upstream)
+	store := NewOpenAIWSStateStore(nil)
+	svc.openaiWSStateStore = store
+	account := passthroughLifecycleAccount()
+	const previousResponseID = "resp_passthrough_recover"
+	require.NoError(t, store.BindResponseAccount(context.Background(), 0, previousResponseID, account.ID, time.Hour))
+	store.BindResponseConn(previousResponseID, "conn_passthrough_recover", time.Hour)
+
+	controlCtx, cancelControl := context.WithCancel(context.Background())
+	defer cancelControl()
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	client := dialPassthroughLifecycleClientWithFirstMessage(
+		t,
+		server,
+		[]byte(`{"type":"response.create","model":"gpt-5.1","stream":false,"previous_response_id":"resp_passthrough_recover","input":[{"role":"user","content":"hello"}]}`),
+	)
+	defer func() { _ = client.CloseNow() }()
+	firstWrite := requirePassthroughUpstreamWrite(t, upstream, 2*time.Second)
+	require.Equal(t, previousResponseID, gjson.GetBytes(firstWrite, "previous_response_id").String())
+	upstream.Send(`{"type":"session.created","session":{"id":"sess_passthrough"}}`)
+	sessionCreated, err := readPassthroughLifecycleFrame(t, client, 2*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "session.created", gjson.GetBytes(sessionCreated, "type").String())
+
+	upstream.Send(`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"missing"}}`)
+	retryWrite := requirePassthroughUpstreamWrite(t, upstream, 2*time.Second)
+	require.False(t, gjson.GetBytes(retryWrite, "previous_response_id").Exists())
+	require.Equal(t, "hello", gjson.GetBytes(retryWrite, "input.0.content").String())
+	require.Eventually(t, func() bool {
+		accountID, getErr := store.GetResponseAccount(context.Background(), 0, previousResponseID)
+		_, connBound := store.GetResponseConn(previousResponseID)
+		return getErr == nil && accountID == 0 && !connBound
+	}, time.Second, 10*time.Millisecond)
+
+	upstream.Send(`{"type":"response.completed","response":{"id":"resp_passthrough_recovered","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+	payload, err := readPassthroughLifecycleFrame(t, client, 2*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, "resp_passthrough_recovered", gjson.GetBytes(payload, "response.id").String())
+
+	require.NoError(t, client.Close(coderws.StatusNormalClosure, "done"))
+	select {
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough recovery server did not stop")
+	}
+}
+
+func TestPassthroughPreviousResponseNotFoundDoesNotRetryTwice(t *testing.T) {
+	cfg := passthroughLifecycleConfig()
+	cfg.Gateway.OpenAIWS.IngressPreviousResponseRecoveryEnabled = true
+	upstream := newStagedPassthroughConn()
+	svc := newPassthroughLifecycleService(cfg, upstream)
+
+	controlCtx, cancelControl := context.WithCancel(context.Background())
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, passthroughLifecycleAccount())
+	defer server.Close()
+	client := dialPassthroughLifecycleClientWithFirstMessage(
+		t,
+		server,
+		[]byte(`{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_passthrough_retry_once"}`),
+	)
+	defer func() { _ = client.CloseNow() }()
+	require.NotEmpty(t, requirePassthroughUpstreamWrite(t, upstream, 2*time.Second))
+
+	errorEvent := `{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"still missing"}}`
+	upstream.Send(errorEvent)
+	retryWrite := requirePassthroughUpstreamWrite(t, upstream, 2*time.Second)
+	require.False(t, gjson.GetBytes(retryWrite, "previous_response_id").Exists())
+
+	upstream.Send(errorEvent)
+	payload, err := readPassthroughLifecycleFrame(t, client, 2*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(payload, "type").String())
+	select {
+	case unexpected := <-upstream.writes:
+		t.Fatalf("previous_response_not_found retried more than once: %s", unexpected)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancelControl()
+	_ = client.CloseNow()
+	select {
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough single-retry server did not stop")
 	}
 }
 
@@ -265,6 +434,32 @@ func TestOpenAIWSPassthroughTurnLifecycle_SerializesTerminalCommitAndNextTurn(t 
 		t.Error("failed terminal write must not commit idle state")
 	})
 	require.False(t, <-admitted, "failed terminal write must keep the current turn in flight")
+}
+
+func TestOpenAIWSPassthroughUpstreamWritesAreSerialized(t *testing.T) {
+	inner := &passthroughWriteProbeConn{}
+	serialized := &openAIWSSerializedFrameConn{inner: inner}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			errCh <- serialized.WriteFrame(ctx, coderws.MessageText, []byte(`{"type":"session.update"}`))
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	writes, maxActive := inner.snapshot()
+	require.Equal(t, 2, writes)
+	require.Equal(t, 1, maxActive, "passthrough recovery and client writers must not overlap")
 }
 
 func TestOpenAIWSPassthroughPreservesOverdraftBusinessFrames(t *testing.T) {
