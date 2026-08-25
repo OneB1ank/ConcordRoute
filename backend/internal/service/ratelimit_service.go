@@ -1414,6 +1414,47 @@ func (s *RateLimitService) get429FallbackCooldown(ctx context.Context, account *
 	return time.Duration(seconds) * time.Second, true
 }
 
+// ShouldMap429To503 reports whether this 429 used the no-reset fallback path
+// and the administrator enabled the temporary 503 client response mapping.
+// The original 429 remains the status used by account scheduling and telemetry.
+func (s *RateLimitService) ShouldMap429To503(ctx context.Context, account *Account, headers http.Header, responseBody []byte) bool {
+	if s == nil || account == nil || !is429WithoutExplicitReset(account, headers, responseBody) {
+		return false
+	}
+	settings := DefaultRateLimit429CooldownSettings()
+	if s.settingService != nil {
+		loaded, err := s.settingService.GetRateLimit429CooldownSettings(ctx)
+		if err == nil && loaded != nil {
+			settings = loaded
+		}
+	}
+	return settings.Enabled && settings.MapTo503
+}
+
+func is429WithoutExplicitReset(account *Account, headers http.Header, responseBody []byte) bool {
+	if account == nil {
+		return false
+	}
+	switch account.Platform {
+	case PlatformOpenAI:
+		return calculateOpenAI429ResetTime(headers) == nil && parseOpenAIRateLimitResetTime(responseBody) == nil
+	case PlatformAnthropic:
+		if calculateAnthropic429ResetTime(headers) != nil {
+			return false
+		}
+		reset := strings.TrimSpace(headers.Get("anthropic-ratelimit-unified-reset"))
+		if reset == "" {
+			return true
+		}
+		_, err := strconv.ParseInt(reset, 10, 64)
+		return err != nil
+	case PlatformGemini, PlatformAntigravity:
+		return ParseGeminiRateLimitResetTime(responseBody) == nil
+	default:
+		return true
+	}
+}
+
 func clampRateLimit429CooldownSeconds(seconds int) int {
 	if seconds < 1 {
 		return 1

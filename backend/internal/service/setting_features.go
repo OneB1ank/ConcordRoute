@@ -688,7 +688,7 @@ func (s *SettingService) GetRateLimit429CooldownSettings(ctx context.Context) (*
 		return DefaultRateLimit429CooldownSettings(), nil
 	}
 
-	var settings RateLimit429CooldownSettings
+	settings := RateLimit429CooldownSettings{MapTo503: true}
 	if err := json.Unmarshal([]byte(value), &settings); err != nil {
 		return DefaultRateLimit429CooldownSettings(), nil
 	}

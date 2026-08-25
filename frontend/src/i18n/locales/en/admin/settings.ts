@@ -1170,6 +1170,8 @@ dataSharing: {
         enabledHint: 'Pause account scheduling when a 429 has no reset time, then auto-recover after cooldown',
         cooldownSeconds: 'Cooldown Duration (seconds)',
         cooldownSecondsHint: 'Default cooldown duration (1-7200 seconds); explicit upstream reset times still take precedence',
+        mapTo503: 'Return 503 without a reset time',
+        mapTo503Hint: 'Only applies to 429 responses using the default cooldown; explicit reset responses stay 429',
         saved: '429 default cooldown settings saved',
         saveFailed: 'Failed to save 429 default cooldown settings'
       },

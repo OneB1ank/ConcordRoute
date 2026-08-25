@@ -602,6 +602,10 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		errMsg = "Upstream access forbidden, please contact administrator"
 	case 429:
 		statusCode = http.StatusTooManyRequests
+		if s.rateLimitService != nil && decision.Policy == ErrorPolicyNone &&
+			s.rateLimitService.ShouldMap429To503(c.Request.Context(), account, resp.Header, body) {
+			statusCode = http.StatusServiceUnavailable
+		}
 		errType = "rate_limit_error"
 		errMsg = "Upstream rate limit exceeded, please retry later"
 	default:
@@ -795,6 +799,11 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		errType = "api_error"
 	}
 
-	writeError(c, resp.StatusCode, errType, upstreamMsg)
+	clientStatus := resp.StatusCode
+	if resp.StatusCode == http.StatusTooManyRequests && decision.Policy == ErrorPolicyNone &&
+		s.rateLimitService != nil && s.rateLimitService.ShouldMap429To503(c.Request.Context(), account, resp.Header, body) {
+		clientStatus = http.StatusServiceUnavailable
+	}
+	writeError(c, clientStatus, errType, upstreamMsg)
 	return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 }

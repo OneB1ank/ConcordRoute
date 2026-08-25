@@ -114,6 +114,7 @@ func (h *SettingHandler) GetRateLimit429CooldownSettings(c *gin.Context) {
 	response.Success(c, dto.RateLimit429CooldownSettings{
 		Enabled:         settings.Enabled,
 		CooldownSeconds: settings.CooldownSeconds,
+		MapTo503:        settings.MapTo503,
 	})
 }
 
@@ -121,6 +122,7 @@ func (h *SettingHandler) GetRateLimit429CooldownSettings(c *gin.Context) {
 type UpdateRateLimit429CooldownSettingsRequest struct {
 	Enabled         bool `json:"enabled"`
 	CooldownSeconds int  `json:"cooldown_seconds"`
+	MapTo503        bool `json:"map_to_503"`
 }
 
 // UpdateRateLimit429CooldownSettings 更新429默认回避配置
@@ -135,6 +137,7 @@ func (h *SettingHandler) UpdateRateLimit429CooldownSettings(c *gin.Context) {
 	settings := &service.RateLimit429CooldownSettings{
 		Enabled:         req.Enabled,
 		CooldownSeconds: req.CooldownSeconds,
+		MapTo503:        req.MapTo503,
 	}
 
 	if err := h.settingService.SetRateLimit429CooldownSettings(c.Request.Context(), settings); err != nil {
@@ -151,6 +154,7 @@ func (h *SettingHandler) UpdateRateLimit429CooldownSettings(c *gin.Context) {
 	response.Success(c, dto.RateLimit429CooldownSettings{
 		Enabled:         updatedSettings.Enabled,
 		CooldownSeconds: updatedSettings.CooldownSeconds,
+		MapTo503:        updatedSettings.MapTo503,
 	})
 }
 

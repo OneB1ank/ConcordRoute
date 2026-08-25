@@ -542,6 +542,17 @@
                   v-if="rateLimit429CooldownForm.enabled"
                   class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700"
                 >
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <label class="font-medium text-gray-900 dark:text-white">{{
+                        t("admin.settings.rateLimit429Cooldown.mapTo503")
+                      }}</label>
+                      <p class="text-sm text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.rateLimit429Cooldown.mapTo503Hint") }}
+                      </p>
+                    </div>
+                    <Toggle v-model="rateLimit429CooldownForm.map_to_503" />
+                  </div>
                   <div>
                     <label
                       class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -8951,6 +8962,7 @@ const rateLimit429CooldownSaving = ref(false);
 const rateLimit429CooldownForm = reactive({
   enabled: true,
   cooldown_seconds: 5,
+  map_to_503: true,
 });
 
 // 面板 API 限流状态
@@ -11838,6 +11850,7 @@ async function saveRateLimit429CooldownSettings() {
     const updated = await adminAPI.settings.updateRateLimit429CooldownSettings({
       enabled: rateLimit429CooldownForm.enabled,
       cooldown_seconds: rateLimit429CooldownForm.cooldown_seconds,
+      map_to_503: rateLimit429CooldownForm.map_to_503,
     });
     Object.assign(rateLimit429CooldownForm, updated);
     appStore.showSuccess(t("admin.settings.rateLimit429Cooldown.saved"));

@@ -1163,6 +1163,8 @@ dataSharing: {
         enabledHint: '收到无重置时间的 429 时暂停该账号调度，冷却后自动恢复',
         cooldownSeconds: '回避时长（秒）',
         cooldownSecondsHint: '默认回避持续时间（1-7200 秒）；上游返回明确 reset 时仍优先使用上游时间',
+        mapTo503: '无 reset 时返回 503',
+        mapTo503Hint: '仅对触发默认回避的 429 生效；有明确 reset 的 429 保持原状态码',
         saved: '429 默认回避设置保存成功',
         saveFailed: '保存 429 默认回避设置失败'
       },

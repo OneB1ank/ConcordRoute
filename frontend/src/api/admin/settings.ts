@@ -1368,6 +1368,7 @@ export async function updateOpenAIOAuthImportDefaults(
 export interface RateLimit429CooldownSettings {
   enabled: boolean;
   cooldown_seconds: number;
+  map_to_503: boolean;
 }
 
 export async function getRateLimit429CooldownSettings(): Promise<RateLimit429CooldownSettings> {

@@ -450,6 +450,7 @@ type OpenAI403CooldownSettings struct {
 type RateLimit429CooldownSettings struct {
 	Enabled         bool `json:"enabled"`
 	CooldownSeconds int  `json:"cooldown_seconds"`
+	MapTo503        bool `json:"map_to_503"`
 }
 
 // PanelRateLimitSettings 面板 API 限流配置 DTO
