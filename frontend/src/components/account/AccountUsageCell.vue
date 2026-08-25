@@ -113,6 +113,20 @@
     <!-- OpenAI OAuth 账号统一使用 /usage API 数据源 -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
+        <div
+          v-if="codexOverdraftStatus"
+          data-testid="codex-overdraft-status"
+          class="flex items-center gap-1.5 text-[9px]"
+          :class="codexOverdraftStatus.textClass"
+          :title="codexOverdraftStatus.title"
+        >
+          <span class="rounded px-1.5 py-0.5 font-medium" :class="codexOverdraftStatus.badgeClass">
+            {{ codexOverdraftStatus.label }}
+          </span>
+          <span class="text-gray-500 dark:text-gray-400">
+            {{ codexOverdraftStatus.detail }}
+          </span>
+        </div>
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
@@ -806,7 +820,46 @@ const geminiUsageAvailable = computed(() => {
 
 const hasOpenAIUsageFallback = computed(() => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
-  return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
+  return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day || !!usageInfo.value?.codex_quota_overdraft
+})
+
+const codexOverdraftStatus = computed(() => {
+  const state = usageInfo.value?.codex_quota_overdraft
+  if (!state) return null
+  const windowLabel = state.quota_window === 'multiple' ? '5h / 7d' : state.quota_window
+  const detail = `${windowLabel} · ${state.used_percent.toFixed(1)}%`
+  const recoverAt = state.recover_at ? new Date(state.recover_at).toLocaleString() : ''
+  const title = recoverAt
+    ? `${detail} · ${t('admin.accounts.usageWindow.overdraftRecoverAt')}: ${recoverAt}`
+    : detail
+  switch (state.status) {
+    case 'preparing':
+      return {
+        label: t('admin.accounts.usageWindow.overdraftPreparing'),
+        detail,
+        title,
+        textClass: 'text-amber-600 dark:text-amber-400',
+        badgeClass: 'bg-amber-50 dark:bg-amber-950/40'
+      }
+    case 'active':
+      return {
+        label: t('admin.accounts.usageWindow.overdraftActive'),
+        detail,
+        title,
+        textClass: 'text-red-600 dark:text-red-400',
+        badgeClass: 'bg-red-50 dark:bg-red-950/40'
+      }
+    case 'terminated':
+      return {
+        label: t('admin.accounts.usageWindow.overdraftTerminated'),
+        detail,
+        title,
+        textClass: 'text-red-600 dark:text-red-400',
+        badgeClass: 'bg-red-50 dark:bg-red-950/40'
+      }
+    default:
+      return null
+  }
 })
 
 const openAIQuotaAutoPaused = computed(() => {

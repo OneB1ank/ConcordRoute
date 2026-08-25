@@ -533,7 +533,7 @@ func evaluateOpenAIQuotaAutoPause(ctx context.Context, account *Account, now tim
 	if account == nil || !account.IsOpenAI() {
 		return false, openAIQuotaAutoPauseDecision{}
 	}
-	if codexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) {
+	if codexQuotaOverdraftSchedulingEnabled(ctx) && codexQuotaOverdraftPrearmReached(account, now.UTC()) {
 		return false, openAIQuotaAutoPauseDecision{}
 	}
 	// 账号级显式禁用标记优先于全局默认值。否则账号阈值留空会表示“使用全局默认”，
@@ -1572,7 +1572,7 @@ func (s *OpenAIGatewayService) isOpenAIAccountBlockedBySchedulingThreshold(ctx c
 	if s == nil || s.rateLimitService == nil || account == nil {
 		return false
 	}
-	if codexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) {
+	if codexQuotaOverdraftSchedulingEnabled(ctx) && codexQuotaOverdraftPrearmReached(account, time.Now().UTC()) {
 		return false
 	}
 	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)

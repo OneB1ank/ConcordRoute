@@ -2984,6 +2984,27 @@ func tempUnschedulablePredicate(ctx context.Context) dbpredicate.Account {
 				b.Arg(service.CodexQuotaOverdraftEnabledExtraKey)
 				b.WriteString(", ''))) IN ('1', 't', 'true')")
 			})
+			prearmReachedExpr := entsql.P(func(b *entsql.Builder) {
+				// 数据库预筛选必须与服务层的 95% 准备门一致，否则阈值暂停账号
+				// 会在载入前被过滤，后续内存归一化没有机会恢复它。
+				writeWindow := func(key string) {
+					b.WriteString("CASE WHEN BTRIM(COALESCE(")
+					b.WriteString(extraCol)
+					b.WriteString(" ->> ")
+					b.Arg(key)
+					b.WriteString(", '')) ~ '^[0-9]+([.][0-9]+){0,1}$' THEN (")
+					b.WriteString(extraCol)
+					b.WriteString(" ->> ")
+					b.Arg(key)
+					b.WriteString(")::double precision ELSE 0 END >= ")
+					b.Arg(service.CodexQuotaOverdraftPrearmPercent)
+				}
+				b.WriteByte('(')
+				writeWindow("codex_5h_used_percent")
+				b.WriteString(" OR ")
+				writeWindow("codex_7d_used_percent")
+				b.WriteByte(')')
+			})
 			bypassableReasonExpr := entsql.Or(
 				entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
 				entsql.Contains(reasonCol, `"source":"codex_quota_overdraft"`),
@@ -2993,6 +3014,7 @@ func tempUnschedulablePredicate(ctx context.Context) dbpredicate.Account {
 				entsql.EQ(s.C("type"), service.AccountTypeOAuth),
 				entsql.IsNull(s.C("parent_account_id")),
 				enabledExpr,
+				prearmReachedExpr,
 				bypassableReasonExpr,
 			))
 		}

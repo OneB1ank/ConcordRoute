@@ -237,6 +237,9 @@ type UsageInfo struct {
 	// QuotaAutoPaused 表示 OpenAI 账号当前因 5h/7d 配额阈值被自动暂停调度。
 	QuotaAutoPaused bool `json:"quota_auto_paused"`
 
+	// CodexQuotaOverdraft 是基于真实额度快照派生的 95%/98% 被动状态。
+	CodexQuotaOverdraft *CodexQuotaOverdraftState `json:"codex_quota_overdraft,omitempty"`
+
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
 
@@ -684,6 +687,7 @@ func (s *AccountUsageService) applyOpenAIQuotaAutoPauseState(ctx context.Context
 		ctx = WithOpenAIQuotaAutoPauseSettings(ctx, s.quotaAutoPauseSettings.GetOpenAIQuotaAutoPauseSettings(ctx))
 	}
 	usage.QuotaAutoPaused = EvaluateOpenAIQuotaAutoPause(ctx, account)
+	usage.CodexQuotaOverdraft = buildCodexQuotaOverdraftState(account, usage, time.Now().UTC())
 }
 
 // buildPassiveUsageWindow 从 Extra 中的被动采样数据（utilization 为 0-1 小数、reset 为 Unix 秒）

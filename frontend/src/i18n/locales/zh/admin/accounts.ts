@@ -511,6 +511,10 @@ export default {
         }
       },
       usageWindow: {
+        overdraftPreparing: '透支准备',
+        overdraftActive: '透支运行',
+        overdraftTerminated: '透支已终止',
+        overdraftRecoverAt: '预计恢复',
         statsTitle: '5小时窗口用量统计',
         statsTitleDaily: '每日用量统计',
         geminiProDaily: 'Pro',
@@ -770,7 +774,7 @@ export default {
         codexFingerprintCockpit: 'Cockpit（会话+缓存键）',
         codexFingerprintFull: '完全收敛',
         codexQuotaOverdraft: 'Codex 额度透支（实验性）',
-        codexQuotaOverdraftDesc: '仅绕过本地额度预留阈值，真实上游 429 按标准限流暂停；不发主动模型探针、不改写请求。',
+        codexQuotaOverdraftDesc: '达到 95% 进入准备并保留普通业务调用，达到 98% 显示透支运行；仅越过本地额度预留阈值，真实上游 429 终止当前周期并按标准限流暂停。请求体、缓存键和会话标识保持原样。',
         codexImageTool: 'Codex 图片桥接策略',
         codexImageToolDesc:
           '统一控制 Codex /responses 文本请求的 hosted image_generation 桥接和客户端图片工具声明。hosted 工具自动注入仅适用于非 Responses Lite 请求；账号级策略优先于渠道和全局配置，不影响独立图片生成接口。',

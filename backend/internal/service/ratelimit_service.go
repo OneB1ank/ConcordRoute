@@ -184,7 +184,7 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	if !account.IsActive() || !account.Schedulable {
 		return false
 	}
-	if codexQuotaOverdraftSchedulingEnabled(ctx) && isCodexQuotaOverdraftAccount(account) {
+	if codexQuotaOverdraftSchedulingEnabled(ctx) && codexQuotaOverdraftPrearmReached(account, time.Now().UTC()) {
 		return false
 	}
 

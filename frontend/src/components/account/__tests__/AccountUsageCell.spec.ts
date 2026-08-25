@@ -974,6 +974,52 @@ describe('AccountUsageCell', () => {
   expect(wrapper.text()).toContain('7d|100|106540000')
   })
 
+  it.each([
+    { status: 'preparing', label: 'admin.accounts.usageWindow.overdraftPreparing' },
+    { status: 'active', label: 'admin.accounts.usageWindow.overdraftActive' },
+    { status: 'terminated', label: 'admin.accounts.usageWindow.overdraftTerminated' }
+  ])('OpenAI OAuth 显示被动透支状态 $status', async ({ status, label }) => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: status === 'preparing' ? 95 : 99,
+        resets_at: '2026-08-25T06:00:00Z',
+        remaining_seconds: 3600
+      },
+      seven_day: null,
+      codex_quota_overdraft: {
+        status,
+        quota_window: '5h',
+        used_percent: status === 'preparing' ? 95 : 99,
+        prearm_percent: 95,
+        start_percent: 98,
+        recover_at: '2026-08-25T06:00:00Z'
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 2100,
+          platform: 'openai',
+          type: 'oauth',
+          extra: { codex_quota_overdraft_enabled: true }
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="codex-overdraft-status"]').text()).toContain(label)
+    expect(wrapper.get('[data-testid="codex-overdraft-status"]').text()).toContain('5h ·')
+  })
+
   it('Key 账号会展示 today stats 徽章并带 A/U 提示', async () => {
 		const wrapper = mount(AccountUsageCell, {
 		  props: {

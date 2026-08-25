@@ -700,7 +700,7 @@ export default {
         codexFingerprintCockpit: 'Cockpit (session + cache key)',
         codexFingerprintFull: 'Full convergence',
         codexQuotaOverdraft: 'Codex quota overdraft (experimental)',
-        codexQuotaOverdraftDesc: 'Only bypasses local quota reserve thresholds. A real upstream 429 pauses the account through standard rate limiting; no active model probes are sent and requests are not rewritten.',
+        codexQuotaOverdraftDesc: 'At 95%, enters preparation and keeps normal business requests eligible; at 98%, shows overdraft active. Only local quota reserve thresholds are bypassed. A real upstream 429 terminates the cycle through standard rate limiting. Request bodies, cache keys, and session identifiers remain unchanged.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',
@@ -1669,6 +1669,10 @@ export default {
         noData: 'No usage data available for this account'
       },
       usageWindow: {
+        overdraftPreparing: 'Overdraft preparing',
+        overdraftActive: 'Overdraft active',
+        overdraftTerminated: 'Overdraft terminated',
+        overdraftRecoverAt: 'Expected recovery',
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',
         geminiProDaily: 'Pro',

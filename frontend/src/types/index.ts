@@ -1383,6 +1383,15 @@ export interface UsageProgress {
   limit_requests?: number
 }
 
+export interface CodexQuotaOverdraftState {
+  status: 'preparing' | 'active' | 'terminated'
+  quota_window: '5h' | '7d' | 'multiple'
+  used_percent: number
+  prearm_percent: number
+  start_percent: number
+  recover_at?: string | null
+}
+
 // Antigravity 单个模型的配额信息
 export interface AntigravityModelQuota {
   utilization: number // 使用率 0-100
@@ -1447,6 +1456,7 @@ export interface AccountUsageInfo {
   gemini_pro_minute?: UsageProgress | null
   gemini_flash_minute?: UsageProgress | null
   quota_auto_paused?: boolean
+  codex_quota_overdraft?: CodexQuotaOverdraftState | null
   antigravity_quota?: Record<string, AntigravityModelQuota> | null
   grok_request_quota?: GrokQuotaWindow | null
   grok_token_quota?: GrokQuotaWindow | null
