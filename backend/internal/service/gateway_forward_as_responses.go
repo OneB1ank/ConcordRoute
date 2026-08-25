@@ -621,6 +621,12 @@ func writeResponsesError(c *gin.Context, statusCode int, code, message string) {
 
 // mapUpstreamStatusCode maps upstream HTTP status codes to appropriate client-facing codes.
 func mapUpstreamStatusCode(code int) int {
+	// A transient upstream rate limit is exposed as service-unavailable to
+	// clients.  The original 429 is still retained for account cooldown,
+	// failover decisions and operations telemetry before this client mapping.
+	if code == http.StatusTooManyRequests {
+		return http.StatusServiceUnavailable
+	}
 	if code >= 500 {
 		return http.StatusBadGateway
 	}
