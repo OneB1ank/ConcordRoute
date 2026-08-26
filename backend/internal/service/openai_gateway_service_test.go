@@ -402,6 +402,31 @@ func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	require.Equal(t, "body-session", svc.ExtractSessionID(c, body))
 }
 
+func TestOpenAIGatewayService_CodexSessionIDKeepsReconnectHashStable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Request.Header.Set(codexSessionIDHeader, "codex-reconnect-session")
+
+	svc := &OpenAIGatewayService{}
+	warmup := []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.6-sol",
+		"generate":false,
+		"tools":[{"type":"custom","name":"exec"}],
+		"input":[{"role":"user","content":"warmup"}]
+	}`)
+	business := []byte(`{
+		"type":"response.create",
+		"model":"gpt-5.6-sol",
+		"input":[{"role":"user","content":"install codex"}]
+	}`)
+
+	require.Equal(t, svc.GenerateSessionHash(c, warmup), svc.GenerateSessionHash(c, business))
+	require.Equal(t, "codex-reconnect-session", svc.ExtractSessionID(c, business))
+}
+
 func TestOpenAIGatewayService_ClientSessionHeadersIgnorePerRequestIDs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -1360,6 +1385,49 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 		t.Fatalf("expected account 1")
 	}
 	require.Zero(t, cache.lastRefreshTTL, "creating a wait plan must not extend a binding before the slot is acquired")
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_StickyCapacitySpilloverKeepsBinding(t *testing.T) {
+	sessionHash := "sticky-spillover"
+	groupID := int64(1)
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 6, Priority: 1, GroupIDs: []int64{groupID}},
+			{ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Concurrency: 6, Priority: 1, GroupIDs: []int64{groupID}},
+		},
+	}
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{"openai:" + sessionHash: 1},
+	}
+	concurrencyCache := stubConcurrencyCache{
+		acquireResults: map[int64]bool{1: false, 2: true},
+		waitCounts:     map[int64]int{1: 1},
+		loadMap: map[int64]*AccountLoadInfo{
+			1: {AccountID: 1, LoadRate: 100},
+			2: {AccountID: 2, LoadRate: 10},
+		},
+	}
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.Scheduling.StickySessionMaxWaiting = 1
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        repo,
+		cache:              cache,
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, sessionHash, "gpt-4", nil)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(2), selection.Account.ID, "容量溢出应仅让本次请求使用其他账号")
+	require.True(t, selection.Acquired)
+	require.Equal(t, int64(1), cache.sessionBindings["openai:"+sessionHash], "容量溢出不应迁移持久粘性绑定")
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_PrefersLowerLoad(t *testing.T) {

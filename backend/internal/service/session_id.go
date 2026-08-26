@@ -11,12 +11,18 @@ import (
 // VARCHAR(255) 宽度内；超长值直接拒绝，避免不同标识因截断而混为一体。
 const maxPersistedSessionIDLength = 255
 
-// clientSessionIDHeaders 优先识别 Codex CLI 标准 session-id，再兼容 OpenAI
-// 粘性会话头和原生协议标识；这些标识只用于持久化，不得改变调度行为。
-var clientSessionIDHeaders = append(
-	append([]string{}, explicitOpenAIHeaderSessionNames...),
+// clientSessionIDHeaders 是用量日志持久化专用的识别顺序。它与调度亲和顺序
+// 分离，避免任一链路后续调整请求头兼容策略时意外改变另一条链路的语义。
+var clientSessionIDHeaders = []string{
+	codexSessionIDHeader,
+	"session_id",
+	"conversation_id",
+	openCodeSessionAffinityHeader,
+	openCodeSessionIDHeader,
+	openCodeNativeSessionHeader,
+	codeBuddyConversationHeader,
 	claudeCodeSessionHeader,
-)
+}
 
 // ExtractClientSessionID 从请求头解析并清理客户端显式提供的会话标识，用于关联
 // 用量日志。所有网关协议共用该入口，确保 session_id 记录口径一致；没有有效值时

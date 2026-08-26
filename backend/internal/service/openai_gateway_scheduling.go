@@ -147,13 +147,12 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 //
 // Priority:
 //  1. 请求头：session-id（Codex CLI）
-//  2. 请求头：session_id
-//  3. 请求头：conversation_id
-//  4. 请求头：x-session-affinity / x-session-id / x-opencode-session（OpenCode）
-//  5. 请求头：x-conversation-id（CodeBuddy）
-//  6. 请求头：x-grok-conv-id（仅 Grok 分组）
-//  7. 请求体：prompt_cache_key
-//  8. 请求体：基于内容回退（model + system + tools + 第一条用户消息）
+//  2. 请求头：session_id / conversation_id
+//  3. 请求头：x-session-affinity / x-session-id / x-opencode-session（OpenCode）
+//  4. 请求头：x-conversation-id（CodeBuddy）
+//  5. 请求头：x-grok-conv-id（仅 Grok 分组）
+//  6. 请求体：prompt_cache_key
+//  7. 请求体：基于内容回退（model + system + tools + 第一条用户消息）
 func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
@@ -1117,6 +1116,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForRouting(ctx cont
 		return excluded
 	}
 
+	// 健康粘性账号的等待队列满时，本次请求可以临时溢出到其他账号，
+	// 但短时容量尖峰不应把整个会话迁移到缓存尚未预热的新账号。
+	stickySpillover := false
 	if sessionHash != "" {
 		accountID := stickyAccountID
 		if accountID > 0 && !isExcluded(accountID) {
@@ -1158,6 +1160,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForRouting(ctx cont
 								MaxWaiting:     cfg.StickySessionMaxWaiting,
 							})
 						}
+						stickySpillover = true
 					}
 				}
 			}
@@ -1286,7 +1289,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForRouting(ctx cont
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
-				if sessionHash != "" {
+				if sessionHash != "" && !stickySpillover {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, s.openAIStickySessionTTL())
 				}
 				return selection, true, nil
@@ -1320,7 +1323,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwarenessForRouting(ctx cont
 				if selectErr != nil {
 					return nil, selectErr
 				}
-				if sessionHash != "" {
+				if sessionHash != "" && !stickySpillover {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, s.openAIStickySessionTTL())
 				}
 				return selection, nil
