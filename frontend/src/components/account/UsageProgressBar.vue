@@ -25,6 +25,35 @@
       </div>
     </div>
 
+    <!-- Usage generated after the account entered overdraft mode. -->
+    <div
+      v-if="overdraftStats && (overdraftStats.requests > 0 || overdraftStats.tokens > 0)"
+      class="mb-0.5 flex items-center"
+      data-testid="overdraft-stats"
+    >
+      <div class="flex items-center gap-1.5 text-[9px] text-red-600 dark:text-red-400">
+        <span class="rounded bg-red-50 px-1.5 py-0.5 dark:bg-red-950/40">
+          {{ t('admin.accounts.usageWindow.overdraftStats') }}
+        </span>
+        <span class="rounded bg-red-50 px-1.5 py-0.5 dark:bg-red-950/40">
+          {{ formatOverdraftRequests }} req
+        </span>
+        <span class="rounded bg-red-50 px-1.5 py-0.5 dark:bg-red-950/40">
+          {{ formatOverdraftTokens }}
+        </span>
+        <span class="rounded bg-red-50 px-1.5 py-0.5 dark:bg-red-950/40" :title="t('usage.accountBilled')">
+          A {{ formatOverdraftAccountCost }}
+        </span>
+        <span
+          v-if="overdraftStats.user_cost != null"
+          class="rounded bg-red-50 px-1.5 py-0.5 dark:bg-red-950/40"
+          :title="t('usage.userBilled')"
+        >
+          U {{ formatOverdraftUserCost }}
+        </span>
+      </div>
+    </div>
+
     <!-- 进度条行 -->
     <div class="flex items-center gap-1">
       <!-- 标签保持固定宽度，让同一单元格内的多行进度条对齐。 -->
@@ -73,6 +102,7 @@ const props = defineProps<{
   resetsAt?: string | null
   color: 'indigo' | 'emerald' | 'purple' | 'amber'
   windowStats?: WindowStats | null
+  overdraftStats?: WindowStats | null
   showNowWhenIdle?: boolean
   remainingCapacity?: boolean
   wideLabel?: boolean
@@ -225,6 +255,28 @@ const formatUserCost = computed(() => {
     return formatBalanceAmount(0, { fractionDigits: 2 })
   }
   return formatBalanceAmount(props.windowStats.user_cost, { fractionDigits: 2 })
+})
+
+const formatOverdraftRequests = computed(() => {
+  if (!props.overdraftStats) return ''
+  return formatCompactNumber(props.overdraftStats.requests, { allowBillions: false })
+})
+
+const formatOverdraftTokens = computed(() => {
+  if (!props.overdraftStats) return ''
+  return formatCompactNumber(props.overdraftStats.tokens)
+})
+
+const formatOverdraftAccountCost = computed(() => {
+  if (!props.overdraftStats) return formatUsdAmount(0, { fractionDigits: 2 })
+  return formatUsdAmount(props.overdraftStats.cost, { fractionDigits: 2 })
+})
+
+const formatOverdraftUserCost = computed(() => {
+  if (!props.overdraftStats || props.overdraftStats.user_cost == null) {
+    return formatBalanceAmount(0, { fractionDigits: 2 })
+  }
+  return formatBalanceAmount(props.overdraftStats.user_cost, { fractionDigits: 2 })
 })
 
 </script>

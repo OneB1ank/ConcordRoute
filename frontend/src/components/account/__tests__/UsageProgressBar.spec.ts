@@ -147,6 +147,26 @@ describe('UsageProgressBar', () => {
     expect(wrapper.get('.h-1\\.5 > div').classes()).toContain('bg-red-500')
   })
 
+  it('显示透支期间的独立请求、Token 与费用统计', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '7d',
+        utilization: 100,
+        color: 'emerald',
+        overdraftStats: {
+          requests: 7,
+          tokens: 1234,
+          cost: 2.5,
+          user_cost: 3
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="overdraft-stats"]').text()).toContain('admin.accounts.usageWindow.overdraftStats')
+    expect(wrapper.text()).toContain('7 req')
+    expect(wrapper.text()).toContain('1.2K')
+  })
+
   it('宽标签模式为 Credits 预留固定空间，避免与进度条重叠', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {

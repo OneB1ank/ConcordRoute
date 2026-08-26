@@ -47,3 +47,20 @@ func TestShouldMap429To503HonorsDisabledMapping(t *testing.T) {
 
 	require.False(t, svc.ShouldMap429To503(context.Background(), account, http.Header{}, nil))
 }
+
+func TestShouldMap429To503KeepsQuotaExhaustionAs429(t *testing.T) {
+	repo := newMockSettingRepo()
+	data, err := json.Marshal(RateLimit429CooldownSettings{Enabled: true, CooldownSeconds: 5, MapTo503: true})
+	require.NoError(t, err)
+	repo.data[SettingKeyRateLimit429CooldownSettings] = string(data)
+	svc := NewRateLimitService(&rateLimit429AccountRepoStub{}, nil, &config.Config{}, nil, nil)
+	svc.SetSettingService(NewSettingService(repo, &config.Config{}))
+	account := &Account{Platform: PlatformOpenAI}
+
+	require.False(t, svc.ShouldMap429To503(
+		context.Background(), account, http.Header{}, []byte(`{"error":{"type":"usage_limit_reached"}}`)),
+		"quota exhaustion must remain 429 for the overdraft state machine")
+	require.True(t, svc.ShouldMap429To503(
+		context.Background(), account, http.Header{}, []byte(`{"error":{"type":"rate_limit_exceeded"}}`)),
+		"transient 429 without reset may use the configured 503 mapping")
+}

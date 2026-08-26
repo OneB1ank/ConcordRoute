@@ -133,6 +133,7 @@
           :utilization="usageInfo.five_hour.utilization"
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
+          :overdraft-stats="usageInfo.five_hour.overdraft_stats"
           :show-now-when-idle="true"
           color="indigo"
         />
@@ -142,6 +143,7 @@
           :utilization="usageInfo.seven_day.utilization"
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
+          :overdraft-stats="usageInfo.seven_day.overdraft_stats"
           :show-now-when-idle="true"
           color="emerald"
         />
@@ -827,7 +829,11 @@ const codexOverdraftStatus = computed(() => {
   const state = usageInfo.value?.codex_quota_overdraft
   if (!state) return null
   const windowLabel = state.quota_window === 'multiple' ? '5h / 7d' : state.quota_window
-  const detail = `${windowLabel} · ${state.used_percent.toFixed(1)}%`
+  const progress = state.attempt_limit && state.attempt_limit > 0
+    ? ` · ${state.attempts ?? 0}/${state.attempt_limit}`
+    : ''
+  const reason = state.reason_code ? ` · ${state.reason_code}` : ''
+  const detail = `${windowLabel} · ${state.used_percent.toFixed(1)}%${progress}${reason}`
   const recoverAt = state.recover_at ? new Date(state.recover_at).toLocaleString() : ''
   const title = recoverAt
     ? `${detail} · ${t('admin.accounts.usageWindow.overdraftRecoverAt')}: ${recoverAt}`

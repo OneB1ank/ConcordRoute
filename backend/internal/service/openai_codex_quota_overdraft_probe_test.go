@@ -229,6 +229,50 @@ func TestCodexQuotaOverdraftQuotaLimitedHeadersUse98PercentThreshold(t *testing.
 	require.True(t, codexQuotaOverdraftResponseIsQuotaLimited(nil, []byte(`{"error":{"type":"usage_limit_reached"}}`)))
 }
 
+func TestCodexQuota429ClassificationSeparatesQuotaAndTransient(t *testing.T) {
+	require.Equal(t, codexQuota429QuotaExhausted,
+		classifyCodexQuota429(nil, []byte(`{"error":{"type":"usage_limit_reached"}}`)))
+	require.Equal(t, codexQuota429Transient,
+		classifyCodexQuota429(nil, []byte(`{"error":{"type":"rate_limit_exceeded","message":"try again later"}}`)))
+
+	transientHeaders := make(http.Header)
+	transientHeaders.Set("x-codex-primary-used-percent", "97.9")
+	require.Equal(t, codexQuota429Transient, classifyCodexQuota429(transientHeaders, nil))
+
+	quotaHeaders := make(http.Header)
+	quotaHeaders.Set("x-codex-primary-used-percent", "100")
+	require.Equal(t, codexQuota429QuotaExhausted, classifyCodexQuota429(quotaHeaders, nil))
+}
+
+func TestBuildCodexQuotaOverdraftUsageStateIncludesProbeProgress(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.Extra["codex_5h_used_percent"] = 0
+	account.Extra["codex_7d_used_percent"] = 100
+	account.Extra["codex_7d_reset_at"] = now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = &CodexQuotaOverdraftProbeState{
+		Status:      codexQuotaOverdraftProbeInconclusive,
+		QuotaWindow: "7d",
+		CycleKey:    "7d:test",
+		Attempts:    2,
+		Limit:       5,
+		ReasonCode:  "transient_failure",
+		RecoverAt:   codexQuotaOverdraftTimePtr(now.Add(7 * 24 * time.Hour)),
+	}
+	usage := &UsageInfo{
+		FiveHour: &UsageProgress{Utilization: 0},
+		SevenDay: &UsageProgress{Utilization: 100, ResetsAt: codexQuotaOverdraftTimePtr(now.Add(7 * 24 * time.Hour))},
+	}
+
+	state := buildCodexQuotaOverdraftUsageState(account, usage, now)
+	require.NotNil(t, state)
+	require.Equal(t, CodexQuotaOverdraftStatusPreparing, state.Status)
+	require.Equal(t, 2, state.Attempts)
+	require.Equal(t, 5, state.AttemptLimit)
+	require.Equal(t, "transient_failure", state.ReasonCode)
+	require.Equal(t, "7d", state.QuotaWindow)
+}
+
 func TestCodexQuotaOverdraftProbeStopsWhenCycleIsSuperseded(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	account := newCodexOverdraftProbeTestAccount(now)

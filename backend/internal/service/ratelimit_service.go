@@ -1421,6 +1421,12 @@ func (s *RateLimitService) ShouldMap429To503(ctx context.Context, account *Accou
 	if s == nil || account == nil || !is429WithoutExplicitReset(account, headers, responseBody) {
 		return false
 	}
+	// A quota-exhausted OpenAI response is a subscription-window terminal
+	// signal, not a transient burst. Keep it as 429 so the quota/overdraft
+	// state machine can classify and pause the account correctly.
+	if account.Platform == PlatformOpenAI && classifyCodexQuota429(headers, responseBody) == codexQuota429QuotaExhausted {
+		return false
+	}
 	settings := DefaultRateLimit429CooldownSettings()
 	if s.settingService != nil {
 		loaded, err := s.settingService.GetRateLimit429CooldownSettings(ctx)

@@ -514,6 +514,7 @@ export default {
         overdraftPreparing: '透支准备',
         overdraftActive: '透支运行',
         overdraftTerminated: '透支已终止',
+        overdraftStats: '透支用量',
         overdraftRecoverAt: '预计恢复',
         statsTitle: '5小时窗口用量统计',
         statsTitleDaily: '每日用量统计',

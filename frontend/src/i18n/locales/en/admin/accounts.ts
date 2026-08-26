@@ -1672,6 +1672,7 @@ export default {
         overdraftPreparing: 'Overdraft preparing',
         overdraftActive: 'Overdraft active',
         overdraftTerminated: 'Overdraft terminated',
+        overdraftStats: 'Overdraft usage',
         overdraftRecoverAt: 'Expected recovery',
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',

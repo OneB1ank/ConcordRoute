@@ -847,20 +847,41 @@ func codexQuotaOverdraftProbeModels(preferred string) []string {
 }
 
 func codexQuotaOverdraftResponseIsQuotaLimited(headers http.Header, body []byte) bool {
+	return classifyCodexQuota429(headers, body) == codexQuota429QuotaExhausted
+}
+
+type codexQuota429Class string
+
+const (
+	codexQuota429QuotaExhausted codexQuota429Class = "quota_exhausted"
+	codexQuota429Transient      codexQuota429Class = "transient"
+)
+
+// classifyCodexQuota429 separates a subscription-window exhaustion from an
+// ordinary burst/rate-limit response.  The quota markers and normalized
+// window percentages are authoritative; generic retry wording remains
+// transient and must stay on the normal 429 policy path.
+func classifyCodexQuota429(headers http.Header, body []byte) codexQuota429Class {
+	text := strings.ToLower(strings.Join(strings.Fields(string(body)), " "))
+	for _, marker := range []string{
+		"usage_limit_reached",
+		"usage limit has been reached",
+		"quota exhausted",
+		"weekly limit reached",
+		"subscription quota",
+	} {
+		if strings.Contains(text, marker) {
+			return codexQuota429QuotaExhausted
+		}
+	}
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
 		if normalized := snapshot.Normalize(); normalized != nil &&
 			(normalized.Used5hPercent != nil && *normalized.Used5hPercent >= codexQuotaOverdraftStartPercent ||
 				normalized.Used7dPercent != nil && *normalized.Used7dPercent >= codexQuotaOverdraftStartPercent) {
-			return true
+			return codexQuota429QuotaExhausted
 		}
 	}
-	text := strings.ToLower(strings.Join(strings.Fields(string(body)), " "))
-	for _, marker := range []string{"usage_limit_reached", "usage limit has been reached", "quota exhausted", "weekly limit reached"} {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	return false
+	return codexQuota429Transient
 }
 
 func codexQuotaOverdraftSignalFromAccount(account *Account, state *CodexQuotaOverdraftProbeState, now time.Time) (codexQuotaOverdraftSignal, bool) {

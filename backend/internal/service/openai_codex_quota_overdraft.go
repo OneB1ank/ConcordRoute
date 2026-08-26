@@ -38,6 +38,9 @@ type CodexQuotaOverdraftState struct {
 	UsedPercent   float64    `json:"used_percent"`
 	PrearmPercent float64    `json:"prearm_percent"`
 	StartPercent  float64    `json:"start_percent"`
+	Attempts      int        `json:"attempts,omitempty"`
+	AttemptLimit  int        `json:"attempt_limit,omitempty"`
+	ReasonCode    string     `json:"reason_code,omitempty"`
 	RecoverAt     *time.Time `json:"recover_at,omitempty"`
 }
 
@@ -60,14 +63,19 @@ func buildCodexQuotaOverdraftState(account *Account, usage *UsageInfo, now time.
 	}
 	maxUsed := 0.0
 	window := "multiple"
+	eligible := make(map[string]bool, 2)
 	for name, progress := range map[string]*UsageProgress{"5h": usage.FiveHour, "7d": usage.SevenDay} {
 		if progress == nil || (progress.ResetsAt != nil && !progress.ResetsAt.After(now)) || progress.Utilization < codexQuotaOverdraftPrearmPercent {
 			continue
 		}
+		eligible[name] = true
 		if progress.Utilization > maxUsed {
 			maxUsed = progress.Utilization
 			window = name
 		}
+	}
+	if eligible["5h"] && eligible["7d"] {
+		window = "multiple"
 	}
 	rateLimited := account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now)
 	if maxUsed < codexQuotaOverdraftPrearmPercent && !rateLimited {
@@ -110,6 +118,9 @@ func buildCodexQuotaOverdraftUsageState(account *Account, usage *UsageInfo, now 
 	if probe.QuotaWindow != "" {
 		base.QuotaWindow = probe.QuotaWindow
 	}
+	base.Attempts = probe.Attempts
+	base.AttemptLimit = probe.Limit
+	base.ReasonCode = strings.TrimSpace(probe.ReasonCode)
 	if probe.RecoverAt != nil {
 		base.RecoverAt = cloneTimePtr(probe.RecoverAt)
 	}
