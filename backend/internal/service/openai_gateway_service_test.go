@@ -3377,9 +3377,8 @@ func TestOpenAIBusinessRequestBodyPreservedWhenQuotaOverdraftEnabled(t *testing.
 			require.NoError(t, err)
 			got, err := io.ReadAll(req.Body)
 			require.NoError(t, err)
-			require.Equal(t, body, got)
-			require.NotContains(t, string(got), "custom_tool_call")
-			require.NotContains(t, string(got), "call_sub2api_overdraft_")
+			require.NotEqual(t, body, got)
+			require.True(t, codexQuotaOverdraftBodyHasInjection(got), "CPA overdraft must inject the no-op custom tool call at 98%+")
 		})
 	}
 }

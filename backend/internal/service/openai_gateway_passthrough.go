@@ -309,6 +309,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	s.ObserveCodexUsageHeaders(ctx, account, resp.Header)
+	s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, upstreamPassthroughModel, resp.Header)
 
 	if usage == nil {
 		usage = &OpenAIUsage{}
@@ -377,6 +378,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	token string,
 	routerMatch ...TLSFingerprintRouterMatchResult,
 ) (*http.Request, error) {
+	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:

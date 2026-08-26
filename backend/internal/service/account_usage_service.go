@@ -157,12 +157,17 @@ type WindowStats struct {
 
 // UsageProgress 使用量进度
 type UsageProgress struct {
-	Utilization      float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
-	ResetsAt         *time.Time   `json:"resets_at"`              // 重置时间
-	RemainingSeconds int          `json:"remaining_seconds"`      // 距重置剩余秒数
-	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
-	UsedRequests     int64        `json:"used_requests,omitempty"`
-	LimitRequests    int64        `json:"limit_requests,omitempty"`
+	Utilization         float64      `json:"utilization"`       // 使用率百分比 (0-100+，100表示100%)
+	ResetsAt            *time.Time   `json:"resets_at"`         // 重置时间
+	RemainingSeconds    int          `json:"remaining_seconds"` // 距重置剩余秒数
+	OverdraftActive     bool         `json:"overdraft_active,omitempty"`
+	OverdraftTerminated bool         `json:"overdraft_terminated,omitempty"`
+	OverdraftStats      *WindowStats `json:"overdraft_stats,omitempty"`
+	OverdraftStarted    *time.Time   `json:"overdraft_started,omitempty"`
+	OverdraftRecover    *time.Time   `json:"overdraft_recover,omitempty"`
+	WindowStats         *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
+	UsedRequests        int64        `json:"used_requests,omitempty"`
+	LimitRequests       int64        `json:"limit_requests,omitempty"`
 }
 
 // AntigravityModelQuota Antigravity 单个模型的配额信息
@@ -352,7 +357,15 @@ type AccountUsageService struct {
 	tlsFPProfileService     *TLSFingerprintProfileService
 	httpUpstream            HTTPUpstream
 	quotaAutoPauseSettings  OpenAIQuotaAutoPauseSettingsReader
+	openAIGatewayService    *OpenAIGatewayService
+	codexQuotaOverdraft     *CodexQuotaOverdraftCoordinator
 	qoderSessionProvider    *QoderTokenProvider
+}
+
+func (s *AccountUsageService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
+	if s != nil {
+		s.codexQuotaOverdraft = coordinator
+	}
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -687,7 +700,9 @@ func (s *AccountUsageService) applyOpenAIQuotaAutoPauseState(ctx context.Context
 		ctx = WithOpenAIQuotaAutoPauseSettings(ctx, s.quotaAutoPauseSettings.GetOpenAIQuotaAutoPauseSettings(ctx))
 	}
 	usage.QuotaAutoPaused = EvaluateOpenAIQuotaAutoPause(ctx, account)
-	usage.CodexQuotaOverdraft = buildCodexQuotaOverdraftState(account, usage, time.Now().UTC())
+	if usage.CodexQuotaOverdraft == nil {
+		usage.CodexQuotaOverdraft = buildCodexQuotaOverdraftUsageState(account, usage, time.Now().UTC())
+	}
 }
 
 // buildPassiveUsageWindow 从 Extra 中的被动采样数据（utilization 为 0-1 小数、reset 为 Unix 秒）
@@ -761,6 +776,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
+	usage.CodexQuotaOverdraft = buildCodexQuotaOverdraftUsageState(account, usage, now)
 	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldQueryOpenAICodexUsage(account.ID, now, force) {
 		if account.IsShadow() {
 			// Spark shadow accounts fetch usage from /wham/usage (bengalfox channel)
@@ -792,6 +808,11 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 	}
 
+	if s.codexQuotaOverdraft != nil {
+		s.codexQuotaOverdraft.ObserveAccount(account, "")
+	}
+	usage.CodexQuotaOverdraft = buildCodexQuotaOverdraftUsageState(account, usage, now)
+
 	if s.usageLogRepo == nil {
 		return usage, nil
 	}
@@ -809,6 +830,8 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
+
+	applyCodexQuotaOverdraftUsage(ctx, s.usageLogRepo, account, usage, now)
 
 	return usage, nil
 }

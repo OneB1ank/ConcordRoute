@@ -162,6 +162,15 @@ func (s *OpenAIGatewayService) applyOpenAIAccountUpstreamErrorInternal(
 		}
 		return decision
 	}
+	preferredModel := ""
+	if len(canonicalModel) > 0 {
+		preferredModel = canonicalModel[0]
+	}
+	if statusCode == http.StatusTooManyRequests && s.codexQuotaOverdraft != nil &&
+		s.codexQuotaOverdraft.HandleQuota429(stateCtx, account, headers, responseBody, preferredModel) {
+		// 明确的订阅额度 429 交给账号级 CPA 透支状态机；普通瞬时 429 仍走既有路径。
+		return decision
+	}
 	if s.rateLimitService != nil && len(canonicalModel) > 0 && s.rateLimitService.HandleUpstreamModelNotFound(stateCtx, account, canonicalModel[0], statusCode, responseBody) {
 		decision.StopScheduling = true
 		return decision

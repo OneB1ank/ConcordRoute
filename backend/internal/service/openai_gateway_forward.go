@@ -1019,6 +1019,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		s.ObserveCodexUsageHeaders(ctx, account, resp.Header)
+		s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, upstreamModel, resp.Header)
 
 		if usage == nil {
 			usage = &OpenAIUsage{}
@@ -1057,6 +1058,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, routerMatch ...TLSFingerprintRouterMatchResult) (*http.Request, error) {
+	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {

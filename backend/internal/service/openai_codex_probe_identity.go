@@ -11,6 +11,7 @@ const (
 	codexProbePurposeAccountTest        codexProbePurpose = "account-test"
 	codexProbePurposeNativeCompactionV2 codexProbePurpose = "native-compaction-v2"
 	codexProbePurposeImageAccountTest   codexProbePurpose = "image-account-test"
+	codexProbePurposeQuotaOverdraft     codexProbePurpose = "quota-overdraft"
 )
 
 const codexProbeFingerprintSourceVersion = "codex-background-probe:v1"

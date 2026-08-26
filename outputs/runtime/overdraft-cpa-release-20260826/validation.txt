@@ -1,0 +1,13 @@
+CPA-style overdraft release validation
+date=2026-08-26
+version=0.2.140
+features=95% prearm; 98% injection/active threshold; up to 5 real probes; quota-only 429 terminal handling; business success recovery
+tests:
+  go test ./internal/service -run overdraft targeted = PASS
+  go test ./internal/service -count=1 = PASS
+  go test ./cmd/server ./internal/repository -run ^$ = PASS
+  gofmt relevant files = PASS
+  git diff --check = PASS
+server_changes=none
+rollback=restore tracked files from baseline.sha256.txt or run rollback.ps1
+  git diff --cached --check (source paths excluding generated patch artifact) = PASS

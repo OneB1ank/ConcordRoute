@@ -408,6 +408,7 @@ type OpenAIGatewayService struct {
 	billingService        *BillingService
 	usageBillingNow       func() time.Time // 用量计费时钟，测试可注入固定时间以覆盖峰值倍率。
 	rateLimitService      *RateLimitService
+	codexQuotaOverdraft   *CodexQuotaOverdraftCoordinator
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
@@ -523,6 +524,28 @@ func (s *OpenAIGatewayService) ObserveCodexUsageHeaders(ctx context.Context, acc
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
 		s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 	}
+}
+
+// SetCodexQuotaOverdraftCoordinator wires the CPA-style quota coordinator
+// after the gateway is constructed, avoiding a constructor cycle.
+func (s *OpenAIGatewayService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
+	if s != nil {
+		s.codexQuotaOverdraft = coordinator
+	}
+}
+
+// ObserveCodexQuotaOverdraftBusinessSuccess records successful business traffic
+// that carried an overdraft payload as direct availability evidence.
+func (s *OpenAIGatewayService) ObserveCodexQuotaOverdraftBusinessSuccess(ctx context.Context, account *Account, model string, headers http.Header) {
+	if s == nil || account == nil || s.codexQuotaOverdraft == nil || !codexQuotaOverdraftWasInjected(ctx, account.ID) {
+		return
+	}
+	if account.Type == AccountTypeOAuth && !account.IsShadow() {
+		if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
+			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
+		}
+	}
+	s.codexQuotaOverdraft.ObserveBusinessSuccess(account, model)
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

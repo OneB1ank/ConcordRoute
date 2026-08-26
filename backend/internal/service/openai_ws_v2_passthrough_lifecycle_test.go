@@ -496,7 +496,9 @@ func TestOpenAIWSPassthroughPreservesOverdraftBusinessFrames(t *testing.T) {
 	firstFrame := []byte(`{"type":"response.create","model":"gpt-5.4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"preserve first frame"}]}],"stream":false}`)
 	clientConn := dialPassthroughLifecycleClientWithFirstMessage(t, server, firstFrame)
 	defer func() { _ = clientConn.CloseNow() }()
-	require.Equal(t, firstFrame, requirePassthroughUpstreamWrite(t, upstream, 3*time.Second))
+	firstUpstreamFrame := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
+	require.NotEqual(t, firstFrame, firstUpstreamFrame)
+	require.True(t, codexQuotaOverdraftBodyHasInjection(firstUpstreamFrame), "CPA overdraft frame must carry the no-op custom tool call")
 
 	completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
 	require.NoError(t, err)
@@ -507,7 +509,9 @@ func TestOpenAIWSPassthroughPreservesOverdraftBusinessFrames(t *testing.T) {
 	err = clientConn.Write(writeCtx, coderws.MessageText, secondFrame)
 	cancelWrite()
 	require.NoError(t, err)
-	require.Equal(t, secondFrame, requirePassthroughUpstreamWrite(t, upstream, 3*time.Second))
+	secondUpstreamFrame := requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
+	require.NotEqual(t, secondFrame, secondUpstreamFrame)
+	require.True(t, codexQuotaOverdraftBodyHasInjection(secondUpstreamFrame), "each response.create turn must carry the CPA overdraft marker")
 
 	upstream.Send(`{"type":"response.completed","response":{"id":"resp_body_second","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":1}}}`)
 	completed, err = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)

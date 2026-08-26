@@ -225,6 +225,8 @@ func ProvideAccountUsageService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	httpUpstream HTTPUpstream,
 	quotaAutoPauseSettings OpenAIQuotaAutoPauseSettingsReader,
+	openAIGatewayService *OpenAIGatewayService,
+	codexQuotaOverdraft *CodexQuotaOverdraftCoordinator,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -241,7 +243,26 @@ func ProvideAccountUsageService(
 		httpUpstream,
 		quotaAutoPauseSettings,
 	)
+	service.openAIGatewayService = openAIGatewayService
+	service.SetCodexQuotaOverdraftCoordinator(codexQuotaOverdraft)
 	return service
+}
+
+// ProvideCodexQuotaOverdraftCoordinator creates the shared CPA-style
+// coordinator used by gateway requests and background usage refreshes.
+func ProvideCodexQuotaOverdraftCoordinator(
+	accountRepo AccountRepository,
+	httpUpstream HTTPUpstream,
+	openAITokenProvider *OpenAITokenProvider,
+	tempUnschedCache TempUnschedCache,
+	runtimeBlocker AccountRuntimeBlocker,
+	rateLimitService *RateLimitService,
+) *CodexQuotaOverdraftCoordinator {
+	coordinator := NewCodexQuotaOverdraftCoordinator(accountRepo, httpUpstream, openAITokenProvider, tempUnschedCache, runtimeBlocker, rateLimitService)
+	if gateway, ok := runtimeBlocker.(*OpenAIGatewayService); ok {
+		gateway.SetCodexQuotaOverdraftCoordinator(coordinator)
+	}
+	return coordinator
 }
 
 // ProvideAccountTestService 为管理端账号测试复用网关的 Agent Identity 连接失效能力。
@@ -860,6 +881,7 @@ var ProviderSet = wire.NewSet(
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
+	ProvideCodexQuotaOverdraftCoordinator,
 	ProvideAccountUsageService,
 	ProvideAccountTestService,
 	ProvideOllamaCloudUsageService,
