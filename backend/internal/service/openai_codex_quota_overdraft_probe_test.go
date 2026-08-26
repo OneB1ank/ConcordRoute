@@ -273,6 +273,42 @@ func TestBuildCodexQuotaOverdraftUsageStateIncludesProbeProgress(t *testing.T) {
 	require.Equal(t, "7d", state.QuotaWindow)
 }
 
+func TestBuildCodexQuotaOverdraftUsageStateKeepsAccountRateLimitTerminated(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.RateLimitResetAt = codexQuotaOverdraftTimePtr(now.Add(5 * time.Hour))
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = &CodexQuotaOverdraftProbeState{
+		Status:      codexQuotaOverdraftProbeInconclusive,
+		QuotaWindow: "7d",
+		CycleKey:    "7d:test",
+		Attempts:    2,
+		Limit:       codexQuotaOverdraftProbeAttemptLimit,
+		ReasonCode:  "transient_failure",
+		RecoverAt:   codexQuotaOverdraftTimePtr(now.Add(7 * 24 * time.Hour)),
+	}
+	usage := &UsageInfo{SevenDay: &UsageProgress{Utilization: 100, ResetsAt: codexQuotaOverdraftTimePtr(now.Add(7 * 24 * time.Hour))}}
+
+	state := buildCodexQuotaOverdraftUsageState(account, usage, now)
+	require.NotNil(t, state)
+	require.Equal(t, CodexQuotaOverdraftStatusTerminated, state.Status)
+}
+
+func TestCodexQuotaOverdraftStateFromAccountNormalizesCompletedQuotaSnapshot(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = &CodexQuotaOverdraftProbeState{
+		Status:     codexQuotaOverdraftProbeInconclusive,
+		CycleKey:   "5h:test",
+		Attempts:   codexQuotaOverdraftProbeAttemptLimit,
+		Limit:      codexQuotaOverdraftProbeAttemptLimit,
+		ReasonCode: "quota_limited",
+	}
+
+	state, ok := codexQuotaOverdraftStateFromAccount(account)
+	require.True(t, ok)
+	require.Equal(t, codexQuotaOverdraftProbeFailed, state.Status)
+}
+
 func TestCodexQuotaOverdraftProbeStopsWhenCycleIsSuperseded(t *testing.T) {
 	now := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	account := newCodexOverdraftProbeTestAccount(now)

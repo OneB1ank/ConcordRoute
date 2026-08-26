@@ -124,6 +124,10 @@ func buildCodexQuotaOverdraftUsageState(account *Account, usage *UsageInfo, now 
 	if probe.RecoverAt != nil {
 		base.RecoverAt = cloneTimePtr(probe.RecoverAt)
 	}
+	// 账号已经进入明确限流终态时，探测中的旧快照不得把它降级为“准备”。
+	if base.Status == CodexQuotaOverdraftStatusTerminated {
+		return base
+	}
 	switch probe.Status {
 	case codexQuotaOverdraftProbeFailed:
 		base.Status = CodexQuotaOverdraftStatusTerminated

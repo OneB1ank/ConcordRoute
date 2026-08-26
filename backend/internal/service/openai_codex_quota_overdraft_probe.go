@@ -993,6 +993,12 @@ func codexQuotaOverdraftStateFromAccount(account *Account) (*CodexQuotaOverdraft
 	if err := json.Unmarshal(encoded, &state); err != nil || state.CycleKey == "" {
 		return nil, false
 	}
+	// 五次额度失败已给出完整结论；兼容最终落库前被读取到的 pending/inconclusive 快照。
+	if (state.Status == codexQuotaOverdraftProbePending || state.Status == codexQuotaOverdraftProbeInconclusive) &&
+		state.Limit > 0 && state.Attempts >= state.Limit &&
+		strings.EqualFold(strings.TrimSpace(state.ReasonCode), "quota_limited") {
+		state.Status = codexQuotaOverdraftProbeFailed
+	}
 	return &state, true
 }
 
