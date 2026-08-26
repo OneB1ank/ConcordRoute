@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/service"
-
-	entsql "entgo.io/ent/dialect/sql"
 )
 
 // ClaimCodexQuotaOverdraftProbe atomically reserves one quota cycle. A cycle is
@@ -212,21 +210,4 @@ func (r *accountRepository) FinalizeCodexQuotaOverdraftProbeFailed(
 	}
 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
 	return true, nil
-}
-
-func extendCodexQuotaOverdraftTempUnschedulablePredicates(
-	ctx context.Context,
-	s *entsql.Selector,
-	predicates []*entsql.Predicate,
-) []*entsql.Predicate {
-	if !service.CodexQuotaOverdraftSchedulingEnabled(ctx) {
-		return predicates
-	}
-	reasonCol := s.C("temp_unschedulable_reason")
-	return append(predicates, entsql.And(
-		entsql.EQ(s.C("platform"), service.PlatformOpenAI),
-		entsql.EQ(s.C("type"), service.AccountTypeOAuth),
-		entsql.IsNull(s.C("parent_account_id")),
-		entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
-	))
 }

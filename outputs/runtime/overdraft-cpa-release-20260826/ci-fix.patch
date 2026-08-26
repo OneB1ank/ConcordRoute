@@ -1,0 +1,160 @@
+diff --git a/backend/internal/repository/account_repo_codex_overdraft.go b/backend/internal/repository/account_repo_codex_overdraft.go
+index e749671760..aa7f987452 100644
+--- a/backend/internal/repository/account_repo_codex_overdraft.go
++++ b/backend/internal/repository/account_repo_codex_overdraft.go
+@@ -9,8 +9,6 @@ import (
+ 	"time"
+ 
+ 	"github.com/TokenFlux/TokenRouter/internal/service"
+-
+-	entsql "entgo.io/ent/dialect/sql"
+ )
+ 
+ // ClaimCodexQuotaOverdraftProbe atomically reserves one quota cycle. A cycle is
+@@ -213,20 +211,3 @@ func (r *accountRepository) FinalizeCodexQuotaOverdraftProbeFailed(
+ 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+ 	return true, nil
+ }
+-
+-func extendCodexQuotaOverdraftTempUnschedulablePredicates(
+-	ctx context.Context,
+-	s *entsql.Selector,
+-	predicates []*entsql.Predicate,
+-) []*entsql.Predicate {
+-	if !service.CodexQuotaOverdraftSchedulingEnabled(ctx) {
+-		return predicates
+-	}
+-	reasonCol := s.C("temp_unschedulable_reason")
+-	return append(predicates, entsql.And(
+-		entsql.EQ(s.C("platform"), service.PlatformOpenAI),
+-		entsql.EQ(s.C("type"), service.AccountTypeOAuth),
+-		entsql.IsNull(s.C("parent_account_id")),
+-		entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
+-	))
+-}
+diff --git a/backend/internal/service/gateway_service.go b/backend/internal/service/gateway_service.go
+index 18dc797878..fc1be8450f 100644
+--- a/backend/internal/service/gateway_service.go
++++ b/backend/internal/service/gateway_service.go
+@@ -543,6 +543,12 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
+ 	if account == nil {
+ 		return false
+ 	}
++	// A quota-confirmed business 429 is terminal for the current cycle. Clear
++	// sticky affinity immediately even if the scheduler snapshot has not yet
++	// observed the persisted pause.
++	if state, ok := codexQuotaOverdraftStateFromAccount(account); ok && codexQuotaOverdraftTerminalBusinessFailure(state) {
++		return true
++	}
+ 	if !account.IsSchedulable() {
+ 		return true
+ 	}
+diff --git a/backend/internal/service/openai_codex_quota_overdraft_probe.go b/backend/internal/service/openai_codex_quota_overdraft_probe.go
+index 94c9f780a7..927729658c 100644
+--- a/backend/internal/service/openai_codex_quota_overdraft_probe.go
++++ b/backend/internal/service/openai_codex_quota_overdraft_probe.go
+@@ -1006,14 +1006,6 @@ func codexQuotaOverdraftProbationEligible(account *Account, now time.Time) bool
+ 	return exhausted && codexQuotaOverdraftStateCoversSignal(state, signal)
+ }
+ 
+-func codexQuotaOverdraftSnapshotPrearmReached(updates map[string]any) bool {
+-	if len(updates) == 0 {
+-		return false
+-	}
+-	return parseExtraFloat64(updates["codex_5h_used_percent"]) >= codexQuotaOverdraftPrearmPercent ||
+-		parseExtraFloat64(updates["codex_7d_used_percent"]) >= codexQuotaOverdraftPrearmPercent
+-}
+-
+ func applyCodexQuotaOverdraftUsage(
+ 	ctx context.Context,
+ 	repo UsageLogRepository,
+diff --git a/backend/internal/service/openai_codex_quota_overdraft_probe_test.go b/backend/internal/service/openai_codex_quota_overdraft_probe_test.go
+index a67da44933..6b32396eb2 100644
+--- a/backend/internal/service/openai_codex_quota_overdraft_probe_test.go
++++ b/backend/internal/service/openai_codex_quota_overdraft_probe_test.go
+@@ -8,15 +8,40 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"strconv"
++	"strings"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/TokenFlux/TokenRouter/internal/model"
+ 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
++	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
+ 	"github.com/TokenFlux/TokenRouter/internal/pkg/usagestats"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++type codexOverdraftHTTPUpstreamStub struct {
++	req        *http.Request
++	proxyURL   string
++	accountID  int64
++	tlsProfile *tlsfingerprint.Profile
++}
++
++func (s *codexOverdraftHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
++	return s.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
++}
++
++func (s *codexOverdraftHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
++	s.req = req
++	s.proxyURL = proxyURL
++	s.accountID = accountID
++	s.tlsProfile = profile
++	return &http.Response{
++		StatusCode: http.StatusOK,
++		Header:     make(http.Header),
++		Body:       io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}\n\n`)),
++	}, nil
++}
++
+ type codexOverdraftProbeRepoStub struct {
+ 	AccountRepository
+ 	account         *Account
+@@ -354,7 +379,7 @@ func TestCodexQuotaOverdraftInjectedBusiness429FailsImmediately(t *testing.T) {
+ 	repo := &codexOverdraftProbeRepoStub{account: account}
+ 	coordinator := &CodexQuotaOverdraftCoordinator{
+ 		accountRepo:  repo,
+-		httpUpstream: &accountUsageHTTPUpstreamStub{},
++		httpUpstream: &codexOverdraftHTTPUpstreamStub{},
+ 		now:          func() time.Time { return now },
+ 	}
+ 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+@@ -384,7 +409,7 @@ func TestCodexQuotaOverdraftInjectedBusiness429UpgradesLegacyProbeFailure(t *tes
+ 	repo := &codexOverdraftProbeRepoStub{account: account}
+ 	coordinator := &CodexQuotaOverdraftCoordinator{
+ 		accountRepo:  repo,
+-		httpUpstream: &accountUsageHTTPUpstreamStub{},
++		httpUpstream: &codexOverdraftHTTPUpstreamStub{},
+ 		now:          func() time.Time { return now },
+ 	}
+ 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
+@@ -740,7 +765,7 @@ func TestCodexQuotaOverdraftProbeReusesNormalRequestIdentityTLSAndProxy(t *testi
+ 		Proxy:   &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
+ 	}
+ 	gateway.rememberOpenAIOutboundIdentity(account, userAgent, match)
+-	upstream := &accountUsageHTTPUpstreamStub{}
++	upstream := &codexOverdraftHTTPUpstreamStub{}
+ 	coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream, openAIGateway: gateway}
+ 
+ 	_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
+@@ -792,7 +817,7 @@ func TestCodexQuotaOverdraftProbeKeepsStableConversationAndRotatesTurn(t *testin
+ 	}
+ 
+ 	capture := func() (http.Header, map[string]any) {
+-		upstream := &accountUsageHTTPUpstreamStub{}
++		upstream := &codexOverdraftHTTPUpstreamStub{}
+ 		coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
+ 		_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
+ 		require.NotNil(t, upstream.req)
+@@ -835,7 +860,7 @@ func TestCodexQuotaOverdraftProbeFailsClosedWhenConfiguredProxyIsUnavailable(t *
+ 		},
+ 		ProxyID: &proxyID,
+ 	}
+-	upstream := &accountUsageHTTPUpstreamStub{}
++	upstream := &codexOverdraftHTTPUpstreamStub{}
+ 	coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
+ 
+ 	_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")

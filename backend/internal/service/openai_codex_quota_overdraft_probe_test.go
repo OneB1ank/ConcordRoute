@@ -8,14 +8,39 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/usagestats"
 	"github.com/stretchr/testify/require"
 )
+
+type codexOverdraftHTTPUpstreamStub struct {
+	req        *http.Request
+	proxyURL   string
+	accountID  int64
+	tlsProfile *tlsfingerprint.Profile
+}
+
+func (s *codexOverdraftHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	return s.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
+}
+
+func (s *codexOverdraftHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	s.req = req
+	s.proxyURL = proxyURL
+	s.accountID = accountID
+	s.tlsProfile = profile
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}\n\n`)),
+	}, nil
+}
 
 type codexOverdraftProbeRepoStub struct {
 	AccountRepository
@@ -354,7 +379,7 @@ func TestCodexQuotaOverdraftInjectedBusiness429FailsImmediately(t *testing.T) {
 	repo := &codexOverdraftProbeRepoStub{account: account}
 	coordinator := &CodexQuotaOverdraftCoordinator{
 		accountRepo:  repo,
-		httpUpstream: &accountUsageHTTPUpstreamStub{},
+		httpUpstream: &codexOverdraftHTTPUpstreamStub{},
 		now:          func() time.Time { return now },
 	}
 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
@@ -384,7 +409,7 @@ func TestCodexQuotaOverdraftInjectedBusiness429UpgradesLegacyProbeFailure(t *tes
 	repo := &codexOverdraftProbeRepoStub{account: account}
 	coordinator := &CodexQuotaOverdraftCoordinator{
 		accountRepo:  repo,
-		httpUpstream: &accountUsageHTTPUpstreamStub{},
+		httpUpstream: &codexOverdraftHTTPUpstreamStub{},
 		now:          func() time.Time { return now },
 	}
 	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
@@ -740,7 +765,7 @@ func TestCodexQuotaOverdraftProbeReusesNormalRequestIdentityTLSAndProxy(t *testi
 		Proxy:   &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
 	}
 	gateway.rememberOpenAIOutboundIdentity(account, userAgent, match)
-	upstream := &accountUsageHTTPUpstreamStub{}
+	upstream := &codexOverdraftHTTPUpstreamStub{}
 	coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream, openAIGateway: gateway}
 
 	_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
@@ -792,7 +817,7 @@ func TestCodexQuotaOverdraftProbeKeepsStableConversationAndRotatesTurn(t *testin
 	}
 
 	capture := func() (http.Header, map[string]any) {
-		upstream := &accountUsageHTTPUpstreamStub{}
+		upstream := &codexOverdraftHTTPUpstreamStub{}
 		coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
 		_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
 		require.NotNil(t, upstream.req)
@@ -835,7 +860,7 @@ func TestCodexQuotaOverdraftProbeFailsClosedWhenConfiguredProxyIsUnavailable(t *
 		},
 		ProxyID: &proxyID,
 	}
-	upstream := &accountUsageHTTPUpstreamStub{}
+	upstream := &codexOverdraftHTTPUpstreamStub{}
 	coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
 
 	_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")

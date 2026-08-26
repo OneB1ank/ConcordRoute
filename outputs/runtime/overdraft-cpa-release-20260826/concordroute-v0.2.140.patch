@@ -21,10 +21,10 @@ index 76bf192756..76617d6c42 100644
  	accountHandler := admin.ProvideAccountHandler(adminService, settingService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, rateLimitService, accountUsageService, accountTestService, concurrencyService, gatewayService, openAIGatewayService, crsSyncService, sessionLimitCache, rpmCache, compositeTokenCacheInvalidator, grokQuotaService)
 diff --git a/backend/internal/repository/account_repo_codex_overdraft.go b/backend/internal/repository/account_repo_codex_overdraft.go
 new file mode 100644
-index 0000000000..e749671760
+index 0000000000..aa7f987452
 --- /dev/null
 +++ b/backend/internal/repository/account_repo_codex_overdraft.go
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,213 @@
 +package repository
 +
 +import (
@@ -36,8 +36,6 @@ index 0000000000..e749671760
 +	"time"
 +
 +	"github.com/TokenFlux/TokenRouter/internal/service"
-+
-+	entsql "entgo.io/ent/dialect/sql"
 +)
 +
 +// ClaimCodexQuotaOverdraftProbe atomically reserves one quota cycle. A cycle is
@@ -240,23 +238,6 @@ index 0000000000..e749671760
 +	r.syncSchedulerAccountSnapshotDetached(ctx, id)
 +	return true, nil
 +}
-+
-+func extendCodexQuotaOverdraftTempUnschedulablePredicates(
-+	ctx context.Context,
-+	s *entsql.Selector,
-+	predicates []*entsql.Predicate,
-+) []*entsql.Predicate {
-+	if !service.CodexQuotaOverdraftSchedulingEnabled(ctx) {
-+		return predicates
-+	}
-+	reasonCol := s.C("temp_unschedulable_reason")
-+	return append(predicates, entsql.And(
-+		entsql.EQ(s.C("platform"), service.PlatformOpenAI),
-+		entsql.EQ(s.C("type"), service.AccountTypeOAuth),
-+		entsql.IsNull(s.C("parent_account_id")),
-+		entsql.Contains(reasonCol, `"source":"`+service.AccountSchedulingThresholdReasonSource+`"`),
-+	))
-+}
 diff --git a/backend/internal/service/account_usage_service.go b/backend/internal/service/account_usage_service.go
 index 47c0d0acbb..b9ea5bc1ec 100644
 --- a/backend/internal/service/account_usage_service.go
@@ -343,6 +324,23 @@ index 47c0d0acbb..b9ea5bc1ec 100644
  	return usage, nil
  }
  
+diff --git a/backend/internal/service/gateway_service.go b/backend/internal/service/gateway_service.go
+index 18dc797878..fc1be8450f 100644
+--- a/backend/internal/service/gateway_service.go
++++ b/backend/internal/service/gateway_service.go
+@@ -543,6 +543,12 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
+ 	if account == nil {
+ 		return false
+ 	}
++	// A quota-confirmed business 429 is terminal for the current cycle. Clear
++	// sticky affinity immediately even if the scheduler snapshot has not yet
++	// observed the persisted pause.
++	if state, ok := codexQuotaOverdraftStateFromAccount(account); ok && codexQuotaOverdraftTerminalBusinessFailure(state) {
++		return true
++	}
+ 	if !account.IsSchedulable() {
+ 		return true
+ 	}
 diff --git a/backend/internal/service/openai_account_runtime_block_fastpath.go b/backend/internal/service/openai_account_runtime_block_fastpath.go
 index 0832c57748..be162bc799 100644
 --- a/backend/internal/service/openai_account_runtime_block_fastpath.go
@@ -944,10 +942,10 @@ index a4640eeb00..027df906be 100644
  }
 diff --git a/backend/internal/service/openai_codex_quota_overdraft_probe.go b/backend/internal/service/openai_codex_quota_overdraft_probe.go
 new file mode 100644
-index 0000000000..94c9f780a7
+index 0000000000..927729658c
 --- /dev/null
 +++ b/backend/internal/service/openai_codex_quota_overdraft_probe.go
-@@ -0,0 +1,1209 @@
+@@ -0,0 +1,1201 @@
 +package service
 +
 +import (
@@ -1956,14 +1954,6 @@ index 0000000000..94c9f780a7
 +	return exhausted && codexQuotaOverdraftStateCoversSignal(state, signal)
 +}
 +
-+func codexQuotaOverdraftSnapshotPrearmReached(updates map[string]any) bool {
-+	if len(updates) == 0 {
-+		return false
-+	}
-+	return parseExtraFloat64(updates["codex_5h_used_percent"]) >= codexQuotaOverdraftPrearmPercent ||
-+		parseExtraFloat64(updates["codex_7d_used_percent"]) >= codexQuotaOverdraftPrearmPercent
-+}
-+
 +func applyCodexQuotaOverdraftUsage(
 +	ctx context.Context,
 +	repo UsageLogRepository,
@@ -2159,10 +2149,10 @@ index 0000000000..94c9f780a7
 +}
 diff --git a/backend/internal/service/openai_codex_quota_overdraft_probe_test.go b/backend/internal/service/openai_codex_quota_overdraft_probe_test.go
 new file mode 100644
-index 0000000000..a67da44933
+index 0000000000..6b32396eb2
 --- /dev/null
 +++ b/backend/internal/service/openai_codex_quota_overdraft_probe_test.go
-@@ -0,0 +1,862 @@
+@@ -0,0 +1,887 @@
 +//go:build unit
 +
 +package service
@@ -2173,14 +2163,39 @@ index 0000000000..a67da44933
 +	"io"
 +	"net/http"
 +	"strconv"
++	"strings"
 +	"testing"
 +	"time"
 +
 +	"github.com/TokenFlux/TokenRouter/internal/model"
 +	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
++	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 +	"github.com/TokenFlux/TokenRouter/internal/pkg/usagestats"
 +	"github.com/stretchr/testify/require"
 +)
++
++type codexOverdraftHTTPUpstreamStub struct {
++	req        *http.Request
++	proxyURL   string
++	accountID  int64
++	tlsProfile *tlsfingerprint.Profile
++}
++
++func (s *codexOverdraftHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
++	return s.DoWithTLS(req, proxyURL, accountID, accountConcurrency, nil)
++}
++
++func (s *codexOverdraftHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
++	s.req = req
++	s.proxyURL = proxyURL
++	s.accountID = accountID
++	s.tlsProfile = profile
++	return &http.Response{
++		StatusCode: http.StatusOK,
++		Header:     make(http.Header),
++		Body:       io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}\n\n`)),
++	}, nil
++}
 +
 +type codexOverdraftProbeRepoStub struct {
 +	AccountRepository
@@ -2519,7 +2534,7 @@ index 0000000000..a67da44933
 +	repo := &codexOverdraftProbeRepoStub{account: account}
 +	coordinator := &CodexQuotaOverdraftCoordinator{
 +		accountRepo:  repo,
-+		httpUpstream: &accountUsageHTTPUpstreamStub{},
++		httpUpstream: &codexOverdraftHTTPUpstreamStub{},
 +		now:          func() time.Time { return now },
 +	}
 +	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
@@ -2549,7 +2564,7 @@ index 0000000000..a67da44933
 +	repo := &codexOverdraftProbeRepoStub{account: account}
 +	coordinator := &CodexQuotaOverdraftCoordinator{
 +		accountRepo:  repo,
-+		httpUpstream: &accountUsageHTTPUpstreamStub{},
++		httpUpstream: &codexOverdraftHTTPUpstreamStub{},
 +		now:          func() time.Time { return now },
 +	}
 +	ctx := WithCodexQuotaOverdraftScheduling(context.Background())
@@ -2905,7 +2920,7 @@ index 0000000000..a67da44933
 +		Proxy:   &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 8080},
 +	}
 +	gateway.rememberOpenAIOutboundIdentity(account, userAgent, match)
-+	upstream := &accountUsageHTTPUpstreamStub{}
++	upstream := &codexOverdraftHTTPUpstreamStub{}
 +	coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream, openAIGateway: gateway}
 +
 +	_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
@@ -2957,7 +2972,7 @@ index 0000000000..a67da44933
 +	}
 +
 +	capture := func() (http.Header, map[string]any) {
-+		upstream := &accountUsageHTTPUpstreamStub{}
++		upstream := &codexOverdraftHTTPUpstreamStub{}
 +		coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
 +		_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
 +		require.NotNil(t, upstream.req)
@@ -3000,7 +3015,7 @@ index 0000000000..a67da44933
 +		},
 +		ProxyID: &proxyID,
 +	}
-+	upstream := &accountUsageHTTPUpstreamStub{}
++	upstream := &codexOverdraftHTTPUpstreamStub{}
 +	coordinator := &CodexQuotaOverdraftCoordinator{httpUpstream: upstream}
 +
 +	_ = coordinator.runProbeAttempt(context.Background(), account, "gpt-5.4")
@@ -3583,56 +3598,3 @@ index 8a348dd4ba..827b928216 100644
  	ProvideAccountUsageService,
  	ProvideAccountTestService,
  	ProvideOllamaCloudUsageService,
-diff --git a/outputs/runtime/overdraft-cpa-release-20260826/baseline.sha256.txt b/outputs/runtime/overdraft-cpa-release-20260826/baseline.sha256.txt
-new file mode 100644
-index 0000000000..a54eaf632b
---- /dev/null
-+++ b/outputs/runtime/overdraft-cpa-release-20260826/baseline.sha256.txt
-@@ -0,0 +1,17 @@
-+150330DDC9527646D6845A877703C2360469F7D0B9EAD6A6059678868D90A05B  backend/cmd/server/VERSION
-+C740FA18A312ACD0C05710C642CFC9E848BCCDA14FE56E46AEE7142EB5C2566A  backend/cmd/server/wire_gen.go
-+C6D309D38F8FDE2C87D55BCC0238719E48101A5E4DFB02C8ACFAEA28E77FE50C  backend/internal/repository/account_repo_codex_overdraft.go
-+872AC15676846483EBAB6D4373D4C58959EA0BF1AA13FC75710B75B935523F11  backend/internal/service/account_usage_service.go
-+AB010F329F3D6C0B2E8CADF88E5264A4FB0E26FA9F91F7D5418386BD4EAEB13E  backend/internal/service/openai_account_runtime_block_fastpath.go
-+B8B6A60FB0F8F441D8BF2BB2294F607AB9519756DE3ECE8723BC0E60685CECA7  backend/internal/service/openai_codex_probe_identity.go
-+F0619AB3CF41E2C67F9EE0F37F4F6930A23ED006E05E71D6EEA7A58D713D25B9  backend/internal/service/openai_codex_quota_overdraft.go
-+217756667FD8ECC9CC7F9AEBAF96096B3145E48D0BD8782924FFDB427E78B663  backend/internal/service/openai_codex_quota_overdraft_probe.go
-+67240CDC4E6D430173DDAAF18FB2D96462D7C931354194AD7362BE1946A68F1C  backend/internal/service/openai_codex_quota_overdraft_probe_test.go
-+DE17A8A209ABDC51F2A49B8F7E152F007961DDEF62144072FBB1326AD4904670  backend/internal/service/openai_codex_quota_overdraft_test.go
-+7D7EE86F0CC3F3E01C95636C75E5BB52F4AD90A651D17F7DDEB982EB6AC3D995  backend/internal/service/openai_gateway_forward.go
-+7A535DFCF7B8CBB6AF51F214A5DD29F4BA89218A7CFAA722CCFC3270876AD9F6  backend/internal/service/openai_gateway_passthrough.go
-+FDA18EFA4018C6595ED7A01DF2FEFF19D5EBE920A3FABD92980A2672378FAB9C  backend/internal/service/openai_gateway_service.go
-+F67776358FB45FBD72C9779C33B5485D6F28A8DB992D3FC7D4492FAF84BEE8DD  backend/internal/service/openai_gateway_service_test.go
-+544E2C46C99E6661C44FC1A2F5A79791D8383145DE00142134278DD2A174BB5B  backend/internal/service/openai_ws_v2_passthrough_adapter.go
-+2D41C05D18855A9C7B1FD7135338A529A1C73A1A3FCF10E5488E672AA6A15086  backend/internal/service/openai_ws_v2_passthrough_lifecycle_test.go
-+02D2D1F300AA187EE00C6E90B10E8C7EB5CBA350E0063BBB149CF1808325E228  backend/internal/service/wire.go
-diff --git a/outputs/runtime/overdraft-cpa-release-20260826/rollback.ps1 b/outputs/runtime/overdraft-cpa-release-20260826/rollback.ps1
-new file mode 100644
-index 0000000000..8a47853d00
---- /dev/null
-+++ b/outputs/runtime/overdraft-cpa-release-20260826/rollback.ps1
-@@ -0,0 +1,6 @@
-+$ErrorActionPreference = 'Stop'
-+$repo = 'D:\c++\sub2api-tls-router-port\src'
-+Set-Location $repo
-+$files = @('backend/cmd/server/VERSION','backend/cmd/server/wire_gen.go','backend/internal/repository/account_repo_codex_overdraft.go','backend/internal/service/account_usage_service.go','backend/internal/service/openai_account_runtime_block_fastpath.go','backend/internal/service/openai_codex_probe_identity.go','backend/internal/service/openai_codex_quota_overdraft.go','backend/internal/service/openai_codex_quota_overdraft_probe.go','backend/internal/service/openai_codex_quota_overdraft_probe_test.go','backend/internal/service/openai_codex_quota_overdraft_test.go','backend/internal/service/openai_gateway_forward.go','backend/internal/service/openai_gateway_passthrough.go','backend/internal/service/openai_gateway_service.go','backend/internal/service/openai_gateway_service_test.go','backend/internal/service/openai_ws_v2_passthrough_adapter.go','backend/internal/service/openai_ws_v2_passthrough_lifecycle_test.go','backend/internal/service/wire.go')
-+foreach ($f in $files) { git checkout HEAD -- $f 2>$null }
-+Write-Output 'rollback complete'
-diff --git a/outputs/runtime/overdraft-cpa-release-20260826/validation.txt b/outputs/runtime/overdraft-cpa-release-20260826/validation.txt
-new file mode 100644
-index 0000000000..0f70eec9bd
---- /dev/null
-+++ b/outputs/runtime/overdraft-cpa-release-20260826/validation.txt
-@@ -0,0 +1,12 @@
-+CPA-style overdraft release validation
-+date=2026-08-26
-+version=0.2.140
-+features=95% prearm; 98% injection/active threshold; up to 5 real probes; quota-only 429 terminal handling; business success recovery
-+tests:
-+  go test ./internal/service -run overdraft targeted = PASS
-+  go test ./internal/service -count=1 = PASS
-+  go test ./cmd/server ./internal/repository -run ^$ = PASS
-+  gofmt relevant files = PASS
-+  git diff --check = PASS
-+server_changes=none
-+rollback=restore tracked files from baseline.sha256.txt or run rollback.ps1

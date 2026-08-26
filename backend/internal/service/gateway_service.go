@@ -543,6 +543,12 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 	if account == nil {
 		return false
 	}
+	// A quota-confirmed business 429 is terminal for the current cycle. Clear
+	// sticky affinity immediately even if the scheduler snapshot has not yet
+	// observed the persisted pause.
+	if state, ok := codexQuotaOverdraftStateFromAccount(account); ok && codexQuotaOverdraftTerminalBusinessFailure(state) {
+		return true
+	}
 	if !account.IsSchedulable() {
 		return true
 	}
