@@ -99,6 +99,20 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.find('[data-testid="grok-plan-icon"]').exists()).toBe(false)
   })
 
+  it('renders self_serve_business_prolite as the OpenAI Team 5x tier', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'oauth',
+        planType: 'self_serve_business_prolite'
+      }
+    })
+
+    expect(wrapper.text()).toContain('Team 5x')
+    expect(wrapper.text()).not.toContain('self_serve_business_prolite')
+    expect(wrapper.html()).toContain('bg-indigo-100')
+  })
+
   it('uses a compact currentColor Grok free mark', () => {
     const wrapper = mount(GrokFreeIcon)
 

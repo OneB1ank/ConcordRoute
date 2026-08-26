@@ -35,3 +35,21 @@ func TestSchedulerMetadataAccountKeepsOpenAISubscriptionIdentity(t *testing.T) {
 	require.True(t, metadata.IsOpenAIChatGPTSubscription())
 	require.Empty(t, metadata.GetCredential("access_token"))
 }
+
+func TestSchedulerMetadataAccountRecognizesSelfServeBusinessProLiteAsSubscription(t *testing.T) {
+	account := service.Account{
+		ID:       25,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"plan_type":    "self_serve_business_prolite",
+			"access_token": "secret-access-token",
+		},
+	}
+
+	metadata := buildSchedulerMetadataAccount(account)
+
+	require.Equal(t, "self_serve_business_prolite", metadata.GetCredential("plan_type"))
+	require.True(t, metadata.IsOpenAIChatGPTSubscription())
+	require.Empty(t, metadata.GetCredential("access_token"))
+}

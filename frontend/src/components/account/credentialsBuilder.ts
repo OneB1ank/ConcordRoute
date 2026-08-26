@@ -275,7 +275,8 @@ export interface PlanTypeOption {
 
 /**
  * plan_type 值的友好显示标签，镜像 PlatformTypeBadge 的映射
- * （canonical 值 chatgptpro 显示为 Pro，team 显示为 Team）。未知值原样返回。
+ * （canonical 值 chatgptpro 显示为 Pro，self_serve_business_prolite 显示为 Team 5x）。
+ * 未知值原样返回。
  */
 export function planTypeDisplayLabel(value: string): string {
   switch (value.trim().toLowerCase()) {
@@ -288,6 +289,8 @@ export function planTypeDisplayLabel(value: string): string {
       return 'Free'
     case 'team':
       return 'Team'
+    case 'self_serve_business_prolite':
+      return 'Team 5x'
     default:
       return value
   }

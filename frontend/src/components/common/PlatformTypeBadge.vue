@@ -132,6 +132,8 @@ const planLabel = computed(() => {
       return 'Plus'
     case 'team':
       return 'Team'
+    case 'selfservebusinessprolite':
+      return 'Team 5x'
     case 'chatgptpro':
     case 'pro':
       return 'Pro'
@@ -243,7 +245,10 @@ const planBadgeClass = computed(() => {
   if (normalizedPlanType.value === 'plus') {
     return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
   }
-  if (normalizedPlanType.value === 'team') {
+  if (
+    normalizedPlanType.value === 'team' ||
+    normalizedPlanType.value === 'selfservebusinessprolite'
+  ) {
     return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
   }
   if (normalizedPlanType.value === 'pro' || normalizedPlanType.value === 'chatgptpro') {

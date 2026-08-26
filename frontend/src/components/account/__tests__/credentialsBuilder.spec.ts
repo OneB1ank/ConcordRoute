@@ -391,6 +391,7 @@ describe('plan_type helpers', () => {
       expect(planTypeDisplayLabel('chatgptpro')).toBe('Pro')
       expect(planTypeDisplayLabel('free')).toBe('Free')
       expect(planTypeDisplayLabel('team')).toBe('Team')
+      expect(planTypeDisplayLabel('self_serve_business_prolite')).toBe('Team 5x')
       expect(planTypeDisplayLabel('CHATGPTPRO')).toBe('Pro')
     })
     it('returns unknown values verbatim', () => {
@@ -434,6 +435,13 @@ describe('plan_type helpers', () => {
       expect(opts.find(o => o.value === 'team')).toEqual({ value: 'team', label: 'Team' })
       // 预设项保持不变。
       expect(opts.map(o => o.value)).toEqual(['', 'plus', 'pro', 'free', 'team'])
+    })
+    it('preserves the Team 5x canonical value while showing its internal label', () => {
+      const opts = buildPlanTypeOptions('self_serve_business_prolite', clear)
+      expect(opts.at(-1)).toEqual({
+        value: 'self_serve_business_prolite',
+        label: 'Team 5x'
+      })
     })
     it('appends a fully custom value with a raw label', () => {
       const opts = buildPlanTypeOptions('weird_x', clear)
