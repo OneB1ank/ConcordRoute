@@ -2,6 +2,7 @@ package service
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"compress/gzip"
 	"context"
@@ -540,6 +541,9 @@ func (s *UpdateService) verifyChecksum(ctx context.Context, filePath, checksumUR
 }
 
 func (s *UpdateService) extractBinary(archivePath, destPath string) error {
+	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
+		return extractZipBinary(archivePath, destPath)
+	}
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -625,6 +629,60 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 		return err
 	}
 	return out.Close()
+}
+
+// extractZipBinary extracts only the release executable from a Windows ZIP.
+// Release archives are produced by GoReleaser with a .exe payload; reject
+// traversal and special entries so an update archive cannot write elsewhere.
+func extractZipBinary(archivePath, destPath string) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = reader.Close() }()
+
+	for _, entry := range reader.File {
+		if entry == nil || entry.FileInfo().IsDir() {
+			continue
+		}
+		name := filepath.ToSlash(entry.Name)
+		if strings.Contains(name, "..") || filepath.IsAbs(entry.Name) {
+			return fmt.Errorf("path traversal attempt detected: %s", entry.Name)
+		}
+		baseName := strings.ToLower(filepath.Base(entry.Name))
+		if baseName != "sub2api" && baseName != "sub2api.exe" {
+			continue
+		}
+		if entry.UncompressedSize64 > uint64(maxDownloadSize) {
+			return fmt.Errorf("binary too large: %d bytes (max %d)", entry.UncompressedSize64, maxDownloadSize)
+		}
+		in, err := entry.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.Create(destPath)
+		if err != nil {
+			_ = in.Close()
+			return err
+		}
+		written, copyErr := io.Copy(out, io.LimitReader(in, maxDownloadSize+1))
+		_ = in.Close()
+		closeErr := out.Close()
+		if copyErr != nil {
+			_ = os.Remove(destPath)
+			return copyErr
+		}
+		if closeErr != nil {
+			_ = os.Remove(destPath)
+			return closeErr
+		}
+		if written > maxDownloadSize {
+			_ = os.Remove(destPath)
+			return fmt.Errorf("binary exceeded maximum size of %d bytes", maxDownloadSize)
+		}
+		return nil
+	}
+	return fmt.Errorf("binary not found in zip archive")
 }
 
 func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {

@@ -3,13 +3,38 @@
 package service
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestUpdateServiceExtractBinarySupportsWindowsZip(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	archivePath := filepath.Join(tmp, "sub2api_windows_amd64.zip")
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	zipWriter := zip.NewWriter(archiveFile)
+	entry, err := zipWriter.Create("sub2api.exe")
+	require.NoError(t, err)
+	_, err = entry.Write([]byte("windows-binary"))
+	require.NoError(t, err)
+	require.NoError(t, zipWriter.Close())
+	require.NoError(t, archiveFile.Close())
+
+	destPath := filepath.Join(tmp, "sub2api.exe")
+	svc := NewUpdateService(nil, nil, "0.2.144", "release")
+	require.NoError(t, svc.extractBinary(archivePath, destPath))
+	contents, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	require.Equal(t, []byte("windows-binary"), contents)
+}
 
 type updateServiceCacheStub struct {
 	data string
