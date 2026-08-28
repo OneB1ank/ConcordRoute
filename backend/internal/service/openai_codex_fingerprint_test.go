@@ -429,6 +429,7 @@ func TestCockpitMode_UsesBodyFallbackAndRewritesPromptCacheKey(t *testing.T) {
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
 	require.NotNil(t, ids)
 	assert.Equal(t, codexFingerprintCockpit, ids.mode)
+	assert.Equal(t, resolveConvergedCockpitSessionID(account, "body-thread-A"), ids.sessionID)
 	assert.Equal(t, resolveConvergedThreadID(account, "body-thread-A"), ids.threadID)
 	expectedCacheKey := resolveConvergedPromptCacheKey(account, "client-cache-A")
 	assert.Equal(t, expectedCacheKey, ids.promptCacheKey)
@@ -473,9 +474,48 @@ func TestCockpitMode_PromptCacheFallbackKeepsConversationStable(t *testing.T) {
 	idsB := resolveCodexFingerprintIDsFromRequest(account, nil, bodyB)
 	require.NotNil(t, idsA)
 	require.NotNil(t, idsB)
+	assert.Equal(t, idsA.sessionID, idsB.sessionID, "相同缓存键应派生同一 session")
 	assert.Equal(t, idsA.threadID, idsB.threadID, "相同缓存键应派生同一 thread")
 	assert.Equal(t, idsA.promptCacheKey, idsB.promptCacheKey, "相同缓存键应稳定")
 	assert.NotEqual(t, idsA.turnID, idsB.turnID, "不同请求仍应生成独立 turn")
+}
+
+func TestCockpitMode_ThreadSeedPrefersBodyThreadThenPromptCache(t *testing.T) {
+	account := newTestOAuthAccount(9, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+	})
+
+	withThread := codexFingerprintSource{
+		clientSessionID:   "shared-session",
+		originalSessionID: "shared-session",
+		threadID:          "body-thread",
+		promptCacheKey:    "cache-a",
+	}
+	withoutThreadA := codexFingerprintSource{
+		clientSessionID:   "shared-session",
+		originalSessionID: "shared-session",
+		promptCacheKey:    "cache-a",
+	}
+	withoutThreadB := codexFingerprintSource{
+		clientSessionID:   "shared-session",
+		originalSessionID: "shared-session",
+		promptCacheKey:    "cache-b",
+	}
+
+	idsThread := resolveCodexFingerprintIDsWithSource(account, withThread, codexFingerprintCockpit)
+	idsCacheA := resolveCodexFingerprintIDsWithSource(account, withoutThreadA, codexFingerprintCockpit)
+	idsCacheB := resolveCodexFingerprintIDsWithSource(account, withoutThreadB, codexFingerprintCockpit)
+	require.NotNil(t, idsThread)
+	require.NotNil(t, idsCacheA)
+	require.NotNil(t, idsCacheB)
+	assert.Equal(t, resolveConvergedThreadID(account, "body-thread"), idsThread.threadID)
+	assert.Equal(t, resolveConvergedThreadID(account, "cache-a"), idsCacheA.threadID)
+	assert.Equal(t, resolveConvergedThreadID(account, "cache-b"), idsCacheB.threadID)
+	assert.Equal(t, resolveConvergedCockpitSessionID(account, "body-thread"), idsThread.sessionID)
+	assert.Equal(t, resolveConvergedCockpitSessionID(account, "cache-a"), idsCacheA.sessionID)
+	assert.Equal(t, resolveConvergedCockpitSessionID(account, "cache-b"), idsCacheB.sessionID)
+	assert.NotEqual(t, idsCacheA.sessionID, idsCacheB.sessionID)
+	assert.NotEqual(t, idsCacheA.threadID, idsCacheB.threadID)
 }
 
 func TestCockpitMode_HeaderOnlyPromptCacheKeyDoesNotReinsertBodyField(t *testing.T) {

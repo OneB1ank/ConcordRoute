@@ -69,8 +69,8 @@ const (
 	// thread_id 按客户端原始 session-id 确定性派生（每个真实 Codex 会话一个独立线程）。
 	// 上游看到 1 台设备 + 1 会话 + N 线程，最接近正常用户 spawn 子代理的模式。
 	codexFingerprintSession codexFingerprintMode = "session"
-	// codexFingerprintCockpit 在 session 拓扑基础上兼容 Cockpit 的身份混淆行为：
-	// 从请求体补充识别会话种子，并按账号稳定派生 prompt_cache_key。
+	// codexFingerprintCockpit 固定账号级 installation，并从请求体识别对话种子，
+	// 为每个对话稳定派生 session/thread/prompt_cache_key。
 	codexFingerprintCockpit codexFingerprintMode = "cockpit"
 	// codexFingerprintFull 收敛所有标识：installation_id + session_id + thread_id。
 	// 上游看到 1 台设备 + 1 会话 + 1 线程，最激进。
@@ -231,6 +231,8 @@ func resolveConvergedInstallationID(account *Account) string {
 }
 
 // resolveConvergedSessionID 返回账号级恒定的 session_id。
+// session/full 模式保留这一拓扑；Cockpit 使用对话级派生，避免多个独立
+// 对话在同一账号下暴露为同一个长寿命 session。
 func resolveConvergedSessionID(account *Account) string {
 	if account == nil {
 		return ""
@@ -240,6 +242,19 @@ func resolveConvergedSessionID(account *Account) string {
 		return ""
 	}
 	return deriveStableUUIDv4("sub2api:codex-session-id:v2:" + seed)
+}
+
+// resolveConvergedCockpitSessionID 按账号和对话种子稳定派生 Cockpit session_id。
+// installation_id 仍保持账号级固定；相同对话跨请求稳定，不同对话相互隔离。
+func resolveConvergedCockpitSessionID(account *Account, conversationSeed string) string {
+	if account == nil || strings.TrimSpace(conversationSeed) == "" {
+		return ""
+	}
+	seed := resolveCodexFingerprintSeed(account)
+	if seed == "" {
+		return ""
+	}
+	return deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-cockpit-session-id:v1:%s:%s", seed, strings.TrimSpace(conversationSeed)))
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
@@ -372,15 +387,19 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		return ids
 
 	case codexFingerprintCockpit:
-		ids.sessionID = resolveConvergedSessionID(account)
+		// Cockpit 把 installation 固定在账号级，但 session/thread/cache 都绑定
+		// 到同一个对话种子。这样既保留单设备外观，又避免多个独立对话共享
+		// 一个异常长寿命 session。缺少任何对话信号时回退旧账号级 session，
+		// 保持不携带身份字段的旧客户端兼容。
+		conversationSeed := resolveCockpitConversationSeed(source)
+		ids.sessionID = resolveConvergedCockpitSessionID(account, conversationSeed)
+		if ids.sessionID == "" {
+			ids.sessionID = resolveConvergedSessionID(account)
+		}
 		if ids.sessionID == "" {
 			return nil
 		}
-		threadSeed := strings.TrimSpace(source.threadID)
-		if threadSeed == "" {
-			threadSeed = strings.TrimSpace(source.clientSessionID)
-		}
-		ids.threadID = resolveConvergedThreadID(account, threadSeed)
+		ids.threadID = resolveConvergedThreadID(account, conversationSeed)
 		if ids.threadID == "" {
 			ids.threadID = ids.sessionID
 		}
@@ -402,6 +421,18 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 	}
 
 	return nil
+}
+
+// resolveCockpitConversationSeed 返回 Cockpit 的对话级种子。
+// thread_id 是最精确的对话标识；prompt_cache_key 可在部分客户端缺少
+// thread_id 时隔离对话；session-id 仅作为最后回退，保持旧客户端兼容。
+func resolveCockpitConversationSeed(source codexFingerprintSource) string {
+	return firstNonEmptyCodexValue(
+		source.threadID,
+		source.promptCacheKey,
+		source.originalSessionID,
+		source.clientSessionID,
+	)
 }
 
 // extractCodexStringField 读取 map 中的非空字符串字段。

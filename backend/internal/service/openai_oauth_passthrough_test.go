@@ -307,7 +307,7 @@ func TestOpenAIGatewayService_OAuthPassthroughShadowUsesParentCodexIdentity(t *t
 	_, err := svc.Forward(context.Background(), c, shadow, body)
 	require.Error(t, err)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, resolveConvergedCockpitSessionID(parent, "client-thread"), upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, resolveConvergedThreadID(parent, "client-thread"), upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, resolveConvergedPromptCacheKey(parent, "client-cache"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, resolveConvergedThreadID(parent, "client-thread"), gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
@@ -350,7 +350,7 @@ func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *tes
 	_, err := svc.Forward(context.Background(), c, shadow, body)
 	require.Error(t, err)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, resolveConvergedCockpitSessionID(parent, "transform-thread"), upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, resolveConvergedThreadID(parent, "transform-thread"), upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, resolveConvergedPromptCacheKey(parent, "transform-cache"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 }

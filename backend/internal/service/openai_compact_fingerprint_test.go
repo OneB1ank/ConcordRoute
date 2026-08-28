@@ -50,7 +50,7 @@ func TestOpenAIOAuthCompactConvergesFingerprintHeadersWithoutChangingSchema(t *t
 			require.Error(t, err)
 			require.NotNil(t, upstream.lastReq)
 			require.Equal(t, resolveConvergedInstallationID(account), upstream.lastReq.Header.Get("x-codex-installation-id"))
-			require.Equal(t, resolveConvergedSessionID(account), upstream.lastReq.Header.Get("session-id"))
+			require.Equal(t, resolveConvergedCockpitSessionID(account, "client-thread"), upstream.lastReq.Header.Get("session-id"))
 			require.Equal(t, resolveConvergedThreadID(account, "client-thread"), upstream.lastReq.Header.Get("thread-id"))
 			require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata").Exists())
 			require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())

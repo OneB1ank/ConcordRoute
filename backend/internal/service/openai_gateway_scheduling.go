@@ -175,6 +175,94 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	return currentHash
 }
 
+// GenerateCockpitSessionHash generates the account-affinity seed used by the
+// Cockpit identity topology.  Cockpit treats the conversation identity as the
+// primary scheduling key so two conversations that share a client-level
+// session header do not collapse onto the same account.
+//
+// Priority:
+//  1. body client_metadata.thread_id (or top-level thread_id)
+//  2. body prompt_cache_key
+//  3. header session-id
+//  4. body client_metadata.session_id
+//  5. the remaining compatible session headers
+//  6. content-derived fallback
+func (s *OpenAIGatewayService) GenerateCockpitSessionHash(c *gin.Context, body []byte) string {
+	if c == nil {
+		return ""
+	}
+	seed := cockpitRequestConversationSeed(c, body)
+	if seed == "" && len(body) > 0 {
+		seed = deriveOpenAIContentSessionSeed(body)
+	}
+	if seed == "" {
+		return ""
+	}
+	if isGrokRequestContext(c) {
+		seed = grokStickyAffinitySeed(seed, body)
+	}
+	currentHash, legacyHash := deriveOpenAISessionHashes(seed)
+	attachOpenAILegacySessionHashToGin(c, legacyHash)
+	return currentHash
+}
+
+// GenerateCockpitExplicitSessionHash is the explicit-only companion used by
+// session isolation. It deliberately shares the exact Cockpit seed priority
+// with account scheduling while skipping the content fallback.
+func (s *OpenAIGatewayService) GenerateCockpitExplicitSessionHash(c *gin.Context, body []byte) string {
+	if c == nil {
+		return ""
+	}
+	seed := cockpitRequestConversationSeed(c, body)
+	if seed == "" {
+		return ""
+	}
+	if isGrokRequestContext(c) {
+		seed = grokStickyAffinitySeed(seed, body)
+	}
+	currentHash, legacyHash := deriveOpenAISessionHashes(seed)
+	attachOpenAILegacySessionHashToGin(c, legacyHash)
+	return currentHash
+}
+
+// generateOpenAIAccountSessionHash mirrors the handler's account-selection key
+// for downstream WS state/connection affinity. OpenAI/Cockpit requests must
+// use the conversation-first seed at every layer; other platforms retain the
+// shared compatibility hash.
+func (s *OpenAIGatewayService) generateOpenAIAccountSessionHash(c *gin.Context, body []byte, account *Account) string {
+	if account != nil && account.Platform == PlatformOpenAI {
+		return s.GenerateCockpitSessionHash(c, body)
+	}
+	return s.GenerateSessionHash(c, body)
+}
+
+func cockpitRequestConversationSeed(c *gin.Context, body []byte) string {
+	if len(body) > 0 {
+		for _, path := range []string{"client_metadata.thread_id", "thread_id", "prompt_cache_key"} {
+			if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+				return value
+			}
+		}
+	}
+	if value := strings.TrimSpace(c.GetHeader(codexSessionIDHeader)); value != "" {
+		return value
+	}
+	if len(body) > 0 {
+		if value := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.session_id").String()); value != "" {
+			return value
+		}
+	}
+	if value := explicitOpenAIHeaderSessionID(c); value != "" {
+		return value
+	}
+	if isGrokRequestContext(c) {
+		if value := strings.TrimSpace(c.GetHeader(grokConversationIDHeader)); value != "" {
+			return value
+		}
+	}
+	return stagedOpenAICompactSessionSeed(c)
+}
+
 // grokStickyAffinitySeed 按模型隔离粘性路由，同时不改变
 // applyGrokResponsesCacheIdentity 写入的上游 prompt_cache_key。
 func grokStickyAffinitySeed(sessionID string, body []byte) string {

@@ -122,6 +122,25 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
 	}
+	stageCodexFingerprintIDs(c, nil)
+	var fingerprintAccount *Account
+	var firstFingerprintIDs *codexFingerprintIDs
+	if account.Type == AccountTypeOAuth {
+		var resolveErr error
+		fingerprintAccount, resolveErr = resolveCredentialAccount(ctx, s.accountRepo, account)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve websocket Codex fingerprint account: %w", resolveErr)
+		}
+		var clientHeaders http.Header
+		if c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		firstFingerprintIDs = bindCodexFingerprintIDsToAccount(
+			resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, firstClientMessage),
+			account,
+		)
+		stageCodexFingerprintIDs(c, firstFingerprintIDs)
+	}
 
 	tlsRouterMatch := s.matchTLSFingerprintRouter(c, account)
 
@@ -163,6 +182,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				passthroughHooks,
 				wsDecision,
 				tlsRouterMatch,
+				firstFingerprintIDs,
 			)
 		case OpenAIWSIngressModeHTTPBridge:
 			forceHTTPBridge = true
@@ -453,6 +473,24 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		}
 		normalized = policyApplied
+		// WebSocket 握手头在连接建立后不可变；首帧生成的身份快照必须由
+		// 同一连接内所有 response.create 复用，避免后续帧重新生成 turn/session
+		// 后与握手头形成不可实现的混合身份。
+		if firstFingerprintIDs != nil {
+			fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(normalized, firstFingerprintIDs)
+			if fingerprintErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
+					coderws.StatusPolicyViolation,
+					"invalid websocket fingerprint metadata",
+					fingerprintErr,
+				)
+			}
+			normalized = fingerprinted
+			stageCodexFingerprintIDs(c, firstFingerprintIDs)
+			if firstFingerprintIDs.promptCacheKey != "" {
+				promptCacheKey = firstFingerprintIDs.promptCacheKey
+			}
+		}
 		ingressSessionOriginalModel = originalModel
 
 		return openAIWSClientPayload{
@@ -517,7 +555,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	preferredConnID := ""
 	storeDisabled := false
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
-		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
+		sessionHash = s.generateOpenAIAccountSessionHash(c, payload.rawForHash, account)
 		if turnState == "" && stateStore != nil && sessionHash != "" {
 			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
 				turnState = savedTurnState
@@ -706,6 +744,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if buildHdrErr != nil {
 		return fmt.Errorf("build ws headers: %w", buildHdrErr)
 	}
+	applyCodexFingerprintHeaders(wsHeaders, firstFingerprintIDs)
 	tlsProfile, tlsProfileKey := s.resolveOpenAIWSTLSProfile(account, tlsRouterMatch)
 	baseAcquireReq := openAIWSAcquireRequest{
 		Account: account,

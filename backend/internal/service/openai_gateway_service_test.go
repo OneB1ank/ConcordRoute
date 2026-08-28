@@ -365,6 +365,55 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 	}
 }
 
+func TestOpenAIGatewayService_GenerateCockpitSessionHash_Priority(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set(codexSessionIDHeader, "header-session")
+	c.Request.Header.Set("conversation_id", "header-conversation")
+
+	svc := &OpenAIGatewayService{}
+	hash := func(body string) string {
+		return svc.GenerateCockpitSessionHash(c, []byte(body))
+	}
+
+	threadHash := hash(`{"client_metadata":{"thread_id":"thread-a","session_id":"body-session"},"prompt_cache_key":"cache-a"}`)
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("thread-a")), threadHash)
+	require.Equal(t, threadHash, hash(`{"client_metadata":{"thread_id":"thread-a","session_id":"changed"},"prompt_cache_key":"changed"}`))
+	require.NotEqual(t, threadHash, hash(`{"client_metadata":{"thread_id":"thread-b"},"prompt_cache_key":"cache-a"}`))
+
+	cacheHash := hash(`{"client_metadata":{"session_id":"body-session"},"prompt_cache_key":"cache-a"}`)
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("cache-a")), cacheHash)
+
+	headerHash := hash(`{"client_metadata":{"session_id":"body-session"}}`)
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("header-session")), headerHash)
+
+	c.Request.Header.Del(codexSessionIDHeader)
+	bodySessionHash := hash(`{"client_metadata":{"session_id":"body-session"}}`)
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("body-session")), bodySessionHash)
+
+	c.Request.Header.Del("conversation_id")
+	require.Empty(t, svc.GenerateCockpitExplicitSessionHash(c, []byte(`{"model":"gpt-5.4"}`)))
+}
+
+func TestOpenAIGatewayService_CockpitExplicitHashMatchesSchedulingHash(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set(codexSessionIDHeader, "shared-header")
+
+	svc := &OpenAIGatewayService{}
+	bodyA := []byte(`{"client_metadata":{"thread_id":"thread-a"},"prompt_cache_key":"cache-a"}`)
+	bodyB := []byte(`{"client_metadata":{"thread_id":"thread-b"},"prompt_cache_key":"cache-b"}`)
+
+	require.Equal(t, svc.GenerateCockpitExplicitSessionHash(c, bodyA), svc.GenerateCockpitSessionHash(c, bodyA))
+	require.Equal(t, svc.GenerateCockpitExplicitSessionHash(c, bodyB), svc.GenerateCockpitSessionHash(c, bodyB))
+	require.NotEqual(t, svc.GenerateCockpitSessionHash(c, bodyA), svc.GenerateCockpitSessionHash(c, bodyB))
+	require.Equal(t, svc.GenerateSessionHash(c, bodyA), svc.GenerateSessionHash(c, bodyB), "普通模式继续由共享 session-id 头保持原有粘性")
+}
+
 func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

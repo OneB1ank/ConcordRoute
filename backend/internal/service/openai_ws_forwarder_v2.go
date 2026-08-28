@@ -116,7 +116,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	if !groupResolved {
 		stateStore = nil
 	}
-	sessionHash := s.GenerateSessionHash(c, nil)
+	sessionHash := s.generateOpenAIAccountSessionHash(c, payloadAsJSONBytes(payload), account)
 	if sessionHash == "" {
 		var legacySessionHash string
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)

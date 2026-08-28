@@ -771,6 +771,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	hooks *OpenAIWSIngressHooks,
 	wsDecision OpenAIWSProtocolDecision,
 	tlsRouterMatch TLSFingerprintRouterMatchResult,
+	firstFingerprintIDs *codexFingerprintIDs,
 ) error {
 	if s == nil {
 		return errors.New("service is nil")
@@ -873,6 +874,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	firstClientMessage = updatedFirst
 	firstClientMessage = s.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, firstClientMessage)
+	if firstFingerprintIDs != nil {
+		fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(firstClientMessage, firstFingerprintIDs)
+		if fingerprintErr != nil {
+			return fmt.Errorf("apply Codex fingerprint on first ws frame: %w", fingerprintErr)
+		}
+		firstClientMessage = fingerprinted
+		stageCodexFingerprintIDs(c, firstFingerprintIDs)
+	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
 	// usage 上报：filter
@@ -948,6 +957,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if buildHdrErr != nil {
 		return fmt.Errorf("build ws headers: %w", buildHdrErr)
 	}
+	applyCodexFingerprintHeaders(headers, firstFingerprintIDs)
 	proxyURL := resolveAccountProxyURL(account)
 
 	dialer := s.getOpenAIWSPassthroughDialer()
@@ -1118,7 +1128,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					payload = updatedPayload
 				}
 			}
-
 			// 在写入 U 前先保存客户端会话模型 R，避免后续省略 model 时把上游模型当成新请求再次映射。
 			usageMeta.updateSessionRequestModel(payload)
 			requestModelForThisFrame := usageMeta.requestModelForFrame(payload)
@@ -1160,6 +1169,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(policyCtx, account, model, payload)
 			if policyErr == nil && blocked == nil && isResponseCreate {
 				out = s.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, out)
+				if firstFingerprintIDs != nil {
+					fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(out, firstFingerprintIDs)
+					if fingerprintErr != nil {
+						return payload, nil, fmt.Errorf("apply Codex fingerprint on ws turn %d: %w", turnNo, fingerprintErr)
+					}
+					out = fingerprinted
+					stageCodexFingerprintIDs(c, firstFingerprintIDs)
+				}
 			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用

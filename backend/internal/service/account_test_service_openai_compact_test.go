@@ -118,8 +118,10 @@ func TestAccountTestService_OpenAICompactShadowUsesParentCodexIdentity(t *testin
 
 	err := svc.TestAccountConnection(c, shadow.ID, "gpt-5.3-codex-spark", "", AccountTestModeCompact)
 	require.NoError(t, err)
+	expectedFingerprint := resolveCodexProbeFingerprintIDs(parent, codexProbePurposeNativeCompactionV2, "gpt-5.3-codex-spark")
+	require.NotNil(t, expectedFingerprint)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, resolveConvergedSessionID(parent), upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, expectedFingerprint.sessionID, upstream.lastReq.Header.Get("session-id"))
 	require.Equal(t, "parent-chatgpt-account", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Equal(t, upstream.lastReq.Header.Get("x-codex-installation-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, upstream.lastReq.Header.Get("session-id"), gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())

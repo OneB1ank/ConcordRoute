@@ -478,6 +478,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	explicitSessionHash := h.gatewayService.GenerateExplicitSessionHash(c, sessionHashBody)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
+	if requestPlatform == service.PlatformOpenAI {
+		explicitSessionHash = h.gatewayService.GenerateCockpitExplicitSessionHash(c, sessionHashBody)
+		sessionHash = h.gatewayService.GenerateCockpitSessionHash(c, sessionHashBody)
+	}
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
@@ -1829,6 +1833,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	var cyberBlockedThisConn atomic.Bool
 	explicitSessionHash := h.gatewayService.GenerateExplicitSessionHash(c, firstMessage)
+	if requestPlatform == service.PlatformOpenAI {
+		sessionHash = h.gatewayService.GenerateCockpitSessionHash(c, firstMessage)
+		if sessionHash == "" {
+			sessionHash = h.gatewayService.GenerateSessionHashWithFallback(
+				c,
+				firstMessage,
+				openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
+			)
+		}
+		explicitSessionHash = h.gatewayService.GenerateCockpitExplicitSessionHash(c, firstMessage)
+	}
 	if explicitSessionHash != "" {
 		if err := h.ensureOpenAISessionIsolation(ctx, apiKey, subject.UserID, service.SessionIsolationSourceOpenAI, explicitSessionHash); err != nil {
 			writeSessionIsolationWSError(ctx, wsConn, err)
