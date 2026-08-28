@@ -225,12 +225,41 @@ func (s *OpenAIGatewayService) GenerateCockpitExplicitSessionHash(c *gin.Context
 	return currentHash
 }
 
+// ShouldUseOpenAICockpitAffinity gates conversation-first scheduling to
+// requests that present a Codex identity. Generic OpenAI API-key or Responses
+// traffic keeps the legacy session priority until a Codex signal is present.
+func ShouldUseOpenAICockpitAffinity(c *gin.Context, body []byte) bool {
+	if c == nil {
+		return false
+	}
+	if openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) {
+		return true
+	}
+	if len(body) == 0 {
+		return false
+	}
+	installationID := firstNonEmptyCodexValue(
+		strings.TrimSpace(gjson.GetBytes(body, "client_metadata.x-codex-installation-id").String()),
+		strings.TrimSpace(gjson.GetBytes(body, "x-codex-installation-id").String()),
+	)
+	if installationID == "" {
+		return false
+	}
+	conversationID := firstNonEmptyCodexValue(
+		strings.TrimSpace(gjson.GetBytes(body, "client_metadata.thread_id").String()),
+		strings.TrimSpace(gjson.GetBytes(body, "thread_id").String()),
+		strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()),
+		strings.TrimSpace(c.GetHeader(codexSessionIDHeader)),
+	)
+	return conversationID != ""
+}
+
 // generateOpenAIAccountSessionHash mirrors the handler's account-selection key
 // for downstream WS state/connection affinity. OpenAI/Cockpit requests must
 // use the conversation-first seed at every layer; other platforms retain the
 // shared compatibility hash.
 func (s *OpenAIGatewayService) generateOpenAIAccountSessionHash(c *gin.Context, body []byte, account *Account) string {
-	if account != nil && account.Platform == PlatformOpenAI {
+	if account != nil && account.Platform == PlatformOpenAI && ShouldUseOpenAICockpitAffinity(c, body) {
 		return s.GenerateCockpitSessionHash(c, body)
 	}
 	return s.GenerateSessionHash(c, body)

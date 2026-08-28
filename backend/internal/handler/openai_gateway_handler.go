@@ -478,7 +478,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	explicitSessionHash := h.gatewayService.GenerateExplicitSessionHash(c, sessionHashBody)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
-	if requestPlatform == service.PlatformOpenAI {
+	if requestPlatform == service.PlatformOpenAI && service.ShouldUseOpenAICockpitAffinity(c, sessionHashBody) {
 		explicitSessionHash = h.gatewayService.GenerateCockpitExplicitSessionHash(c, sessionHashBody)
 		sessionHash = h.gatewayService.GenerateCockpitSessionHash(c, sessionHashBody)
 	}
@@ -1833,7 +1833,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	var cyberBlockedThisConn atomic.Bool
 	explicitSessionHash := h.gatewayService.GenerateExplicitSessionHash(c, firstMessage)
-	if requestPlatform == service.PlatformOpenAI {
+	if requestPlatform == service.PlatformOpenAI && service.ShouldUseOpenAICockpitAffinity(c, firstMessage) {
 		sessionHash = h.gatewayService.GenerateCockpitSessionHash(c, firstMessage)
 		if sessionHash == "" {
 			sessionHash = h.gatewayService.GenerateSessionHashWithFallback(

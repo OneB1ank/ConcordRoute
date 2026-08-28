@@ -414,6 +414,27 @@ func TestOpenAIGatewayService_CockpitExplicitHashMatchesSchedulingHash(t *testin
 	require.Equal(t, svc.GenerateSessionHash(c, bodyA), svc.GenerateSessionHash(c, bodyB), "普通模式继续由共享 session-id 头保持原有粘性")
 }
 
+func TestOpenAIGatewayService_AccountSessionHashUsesCockpitOnlyForCodexSignal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set(codexSessionIDHeader, "shared-session")
+	svc := &OpenAIGatewayService{}
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	bodyA := []byte(`{"client_metadata":{"thread_id":"thread-a"}}`)
+	bodyB := []byte(`{"client_metadata":{"thread_id":"thread-b"}}`)
+
+	legacyA := svc.generateOpenAIAccountSessionHash(c, bodyA, account)
+	legacyB := svc.generateOpenAIAccountSessionHash(c, bodyB, account)
+	require.Equal(t, legacyA, legacyB, "generic OpenAI traffic keeps legacy session priority")
+
+	c.Request.Header.Set("User-Agent", "Codex Desktop/0.145.0 (Windows)")
+	cockpitA := svc.generateOpenAIAccountSessionHash(c, bodyA, account)
+	cockpitB := svc.generateOpenAIAccountSessionHash(c, bodyB, account)
+	require.NotEqual(t, cockpitA, cockpitB, "Codex traffic uses conversation-first Cockpit affinity")
+}
+
 func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

@@ -508,10 +508,9 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 	if source.threadID == "" {
 		source.threadID = firstNonEmptyCodexValue(
 			extractCodexStringField(reqBody, "thread_id"),
-			h.Get("thread-id"),
-			h.Get("x-client-request-id"),
 			extractCodexTurnMetadataField(embeddedTurnMetadata, "thread_id"),
 			extractCodexTurnMetadataField(headerTurnMetadata, "thread_id"),
+			h.Get("thread-id"),
 		)
 	}
 	source.turnID = firstNonEmptyCodexValue(
@@ -534,6 +533,11 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 			extractCodexTurnMetadataField(embeddedTurnMetadata, "prompt_cache_key"),
 			extractCodexTurnMetadataField(headerTurnMetadata, "prompt_cache_key"),
 		)
+	}
+	// x-client-request-id is often a per-request UUID. Keep it as the final
+	// fallback so it cannot override a stable thread/session/cache identity.
+	if source.threadID == "" && source.promptCacheKey == "" && source.originalSessionID == "" {
+		source.threadID = strings.TrimSpace(h.Get("x-client-request-id"))
 	}
 	return source
 }
@@ -586,10 +590,9 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 	if source.threadID == "" {
 		source.threadID = firstNonEmptyCodexValue(
 			read("thread_id"),
-			h.Get("thread-id"),
-			h.Get("x-client-request-id"),
 			extractCodexTurnMetadataField(embeddedTurnMetadata, "thread_id"),
 			extractCodexTurnMetadataField(headerTurnMetadata, "thread_id"),
+			h.Get("thread-id"),
 		)
 	}
 	source.turnID = firstNonEmptyCodexValue(
@@ -612,6 +615,9 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 			extractCodexTurnMetadataField(embeddedTurnMetadata, "prompt_cache_key"),
 			extractCodexTurnMetadataField(headerTurnMetadata, "prompt_cache_key"),
 		)
+	}
+	if source.threadID == "" && source.promptCacheKey == "" && source.originalSessionID == "" {
+		source.threadID = strings.TrimSpace(h.Get("x-client-request-id"))
 	}
 	return source
 }

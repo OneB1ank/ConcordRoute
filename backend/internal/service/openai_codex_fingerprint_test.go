@@ -211,6 +211,39 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}
 }
 
+func TestExtractCockpitFingerprintSource_XClientRequestIDIsLastFallback(t *testing.T) {
+	headers := make(http.Header)
+	headers.Set("x-client-request-id", "per-request-uuid")
+	headers.Set("session-id", "stable-session")
+	body := map[string]any{"prompt_cache_key": "stable-cache"}
+	source := extractCockpitFingerprintSource(headers, body)
+
+	require.Empty(t, source.threadID)
+	require.Equal(t, "stable-cache", source.promptCacheKey)
+	require.Equal(t, "stable-session", source.originalSessionID)
+
+	bareHeaders := make(http.Header)
+	bareHeaders.Set("x-client-request-id", "fallback-request-id")
+	bare := extractCockpitFingerprintSource(bareHeaders, map[string]any{})
+	require.Equal(t, "fallback-request-id", bare.threadID)
+}
+
+func TestShouldUseOpenAICockpitAffinityRequiresCodexSignal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newContext := func(ua, originator string) *gin.Context {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		c.Request.Header.Set("User-Agent", ua)
+		c.Request.Header.Set("originator", originator)
+		return c
+	}
+
+	require.False(t, ShouldUseOpenAICockpitAffinity(newContext("curl/8.5.0", ""), []byte(`{"model":"gpt-5.4"}`)))
+	require.True(t, ShouldUseOpenAICockpitAffinity(newContext("Codex Desktop/0.145.0 (Windows)", ""), []byte(`{"model":"gpt-5.4"}`)))
+	require.True(t, ShouldUseOpenAICockpitAffinity(newContext("curl/8.5.0", ""), []byte(`{"client_metadata":{"x-codex-installation-id":"install","thread_id":"thread"}}`)))
+}
+
 // --- resolveConvergedInstallationID ---
 
 func TestResolveConvergedInstallationID_UsesDeviceID(t *testing.T) {

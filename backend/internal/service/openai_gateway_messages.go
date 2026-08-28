@@ -22,6 +22,58 @@ import (
 	"go.uber.org/zap"
 )
 
+// prepareMessagesCodexFingerprint creates one identity snapshot for the
+// Messages bridge before buildUpstreamRequest constructs headers. The native
+// Responses path does this in Forward; Messages enters the builder directly.
+func (s *OpenAIGatewayService) prepareMessagesCodexFingerprint(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	promptCacheKey string,
+) ([]byte, string, error) {
+	stageCodexFingerprintIDs(c, nil)
+	if account == nil || account.Type != AccountTypeOAuth {
+		return body, promptCacheKey, nil
+	}
+	var reqBody map[string]any
+	if err := json.Unmarshal(body, &reqBody); err != nil {
+		return nil, promptCacheKey, fmt.Errorf("unmarshal messages fingerprint body: %w", err)
+	}
+	fingerprintAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
+	if err != nil {
+		return nil, promptCacheKey, fmt.Errorf("resolve messages fingerprint account: %w", err)
+	}
+	var clientHeaders http.Header
+	if c != nil && c.Request != nil {
+		clientHeaders = c.Request.Header
+	}
+	// Ensure an explicitly configured device ID is available before resolving the
+	// single snapshot; this is idempotent and does not overwrite client metadata.
+	applyCodexClientMetadata(reqBody, fingerprintAccount)
+	ids := bindCodexFingerprintIDsToAccount(
+		resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, reqBody),
+		account,
+	)
+	if ids == nil {
+		return body, promptCacheKey, nil
+	}
+	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey == "" && strings.TrimSpace(promptCacheKey) != "" {
+		ids.originalPromptCacheKey = strings.TrimSpace(promptCacheKey)
+		ids.promptCacheKey = resolveConvergedPromptCacheKey(fingerprintAccount, promptCacheKey)
+	}
+	applyCodexFingerprintClientMetadata(reqBody, ids)
+	stageCodexFingerprintIDs(c, ids)
+	if ids.promptCacheKey != "" {
+		promptCacheKey = ids.promptCacheKey
+	}
+	updated, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, promptCacheKey, fmt.Errorf("marshal messages fingerprint body: %w", err)
+	}
+	return updated, promptCacheKey, nil
+}
+
 // ForwardAsAnthropic accepts an Anthropic Messages request body, converts it
 // to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
 // the response back to Anthropic Messages format. This enables Claude Code
@@ -253,6 +305,13 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 	}
 
+	responsesBody, promptCacheKey, err = s.prepareMessagesCodexFingerprint(
+		ctx, c, account, responsesBody, promptCacheKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	// 4c. Apply OpenAI fast policy (may filter service_tier or block the request).
 	// Mirrors the Claude anthropic-beta "fast-mode-2026-02-01" filter, but keyed
 	// on the body-level service_tier field (priority/flex).
@@ -314,15 +373,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	// Override session_id with a deterministic UUID derived from the isolated
-	// session key, ensuring different API keys produce different upstream sessions.
-	if account.Platform != PlatformGrok && promptCacheKey != "" {
-		isolatedSessionID := generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey))
-		upstreamReq.Header.Set("session_id", isolatedSessionID)
-		if upstreamReq.Header.Get("conversation_id") != "" {
-			upstreamReq.Header.Set("conversation_id", isolatedSessionID)
-		}
-	}
 	if account.Type == AccountTypeOAuth && account.Platform != PlatformGrok {
 		// buildUpstreamRequest 保留 Messages bridge 的 body/session 兼容行为，并会先
 		// 清除身份头。真正发送前恢复完整 Codex 身份，避免 ChatGPT Codex 上游因缺失

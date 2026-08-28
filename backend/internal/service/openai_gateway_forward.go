@@ -865,8 +865,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return nil, err
 		}
-		// 内部重试每次都会重建 request，必须重复应用与 body 相同的指纹 IDs。
-		applyCodexFingerprintHeaders(upstreamReq.Header, fingerprintIDs)
 
 		proxyURL := resolveAccountProxyURL(account)
 
@@ -1119,8 +1117,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	}
 	// 故障转移换号后，不能把已知由旧账号签发的回合状态继续送往新账号。
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
 	if account.Type == AccountTypeOAuth {
-		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
 		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。
 		clientConversationID := strings.TrimSpace(req.Header.Get("conversation_id"))
 		req.Header.Del("conversation_id")
@@ -1146,10 +1144,25 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		}
 		if promptCacheKey != "" {
 			isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
+			// Messages compatibility uses the UUID-shaped cache identity expected by
+			// the Codex bridge. Resolve it here so the request is finalized once and
+			// the Messages caller does not need a second session rewrite.
+			if compatMessagesBridge {
+				isolated = generateSessionUUID(isolated)
+			}
 			req.Header.Set("session_id", isolated)
 			if !compatMessagesBridge || clientConversationID != "" {
 				req.Header.Set("conversation_id", isolated)
 			}
+		}
+	} else if account.Platform != PlatformGrok && compatMessagesBridge && strings.TrimSpace(promptCacheKey) != "" {
+		// API-key Messages compatibility has no OAuth fingerprint snapshot. Keep
+		// its established UUID-shaped cache session, generated once in the builder
+		// rather than rewritten again by ForwardAsAnthropic.
+		isolated := generateSessionUUID(isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey))
+		req.Header.Set("session_id", isolated)
+		if strings.TrimSpace(req.Header.Get("conversation_id")) != "" {
+			req.Header.Set("conversation_id", isolated)
 		}
 	} else if isOpenAIResponsesCompactPath(c) {
 		// compact 上游是 unary JSON 协议：API-key 账号也显式声明 Accept，
@@ -1183,6 +1196,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 会话级 beta 头行为。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
+	// Finalize headers from the same snapshot used for client_metadata. The
+	// regular Responses loop reapplies this defensively; Messages reaches this
+	// builder directly, so the builder must also close the identity tuple.
+	applyStagedCodexFingerprintHeaders(c, account, req.Header)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 
 	return req, nil

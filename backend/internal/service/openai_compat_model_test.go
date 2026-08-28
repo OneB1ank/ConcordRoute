@@ -1155,6 +1155,46 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 	}
 }
 
+func TestForwardAsAnthropic_OAuthCockpitMessagesAlignsFingerprintHeaders(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	upstream := &httpUpstreamRecorder{resp: openAICompatSSECompletedResponse("resp_oauth_cockpit", "gpt-5.4")}
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := newTestOAuthAccount(7001, map[string]any{
+		codexFingerprintModeExtraKey: "cockpit",
+		"openai_device_id":           "client-installation",
+	})
+	account.Credentials = map[string]any{
+		"access_token":       "oauth-token",
+		"chatgpt_account_id": "chatgpt-acc",
+	}
+	require.Equal(t, codexFingerprintCockpit, account.GetCodexFingerprintMode())
+
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("session-id", "client-session")
+	c.Request.Header.Set("x-client-request-id", "per-request-id")
+	require.False(t, isOpenAIResponsesCompactPath(c))
+	preIDs := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header, map[string]any{"prompt_cache_key": "stable-cache"})
+	require.NotNil(t, preIDs)
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache", "gpt-5.4")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Equal(t, upstream.lastReq.Header.Get("session_id"), upstream.lastReq.Header.Get("session-id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("thread-id"))
+	require.Equal(t, upstream.lastReq.Header.Get("thread-id"), upstream.lastReq.Header.Get("x-client-request-id"))
+}
+
 func TestForwardAsAnthropic_OAuthDigestFallbackReusesTurnStateWithoutExplicitKey(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
