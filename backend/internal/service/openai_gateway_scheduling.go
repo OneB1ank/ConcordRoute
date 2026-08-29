@@ -176,22 +176,21 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 }
 
 // GenerateCockpitSessionHash generates the account-affinity seed used by the
-// Cockpit identity topology.  Cockpit treats the conversation identity as the
-// primary scheduling key so two conversations that share a client-level
-// session header do not collapse onto the same account.
+// Cockpit identity topology.  Cockpit first uses the client's session-id for
+// account affinity; the final Codex session/cache identity is aligned later
+// from the explicit prompt_cache_key when one is present.
 //
-// Priority:
-//  1. body client_metadata.thread_id (or top-level thread_id)
-//  2. body prompt_cache_key
-//  3. header session-id
-//  4. body client_metadata.session_id
-//  5. the remaining compatible session headers
-//  6. content-derived fallback
+// Priority for account affinity:
+//  1. header session-id/session_id
+//  2. other compatible session headers
+//  3. body metadata.user_id/conversation_id/thread_id
+//  4. body prompt_cache_key as a first-request stability fallback
+//  5. content-derived fallback
 func (s *OpenAIGatewayService) GenerateCockpitSessionHash(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
 	}
-	seed := cockpitRequestConversationSeed(c, body)
+	seed := cockpitAccountAffinitySeed(c, body)
 	if seed == "" && len(body) > 0 {
 		seed = deriveOpenAIContentSessionSeed(body)
 	}
@@ -213,7 +212,7 @@ func (s *OpenAIGatewayService) GenerateCockpitExplicitSessionHash(c *gin.Context
 	if c == nil {
 		return ""
 	}
-	seed := cockpitRequestConversationSeed(c, body)
+	seed := cockpitAccountAffinitySeed(c, body)
 	if seed == "" {
 		return ""
 	}
@@ -265,20 +264,39 @@ func (s *OpenAIGatewayService) generateOpenAIAccountSessionHash(c *gin.Context, 
 	return s.GenerateSessionHash(c, body)
 }
 
-func cockpitRequestConversationSeed(c *gin.Context, body []byte) string {
-	if len(body) > 0 {
-		for _, path := range []string{"client_metadata.thread_id", "thread_id", "prompt_cache_key"} {
-			if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
-				return value
-			}
-		}
-	}
+func cockpitAccountAffinitySeed(c *gin.Context, body []byte) string {
+	// The client session header is the first account-affinity signal.  This is
+	// intentionally separate from the final server-generated Codex identities.
 	if value := strings.TrimSpace(c.GetHeader(codexSessionIDHeader)); value != "" {
 		return value
 	}
-	if len(body) > 0 {
-		if value := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.session_id").String()); value != "" {
+	if value := strings.TrimSpace(c.GetHeader("session_id")); value != "" {
+		return value
+	}
+	for _, header := range []string{
+		openCodeSessionAffinityHeader,
+		openCodeSessionIDHeader,
+		openCodeNativeSessionHeader,
+		codeBuddyConversationHeader,
+		"x-client-request-id",
+		"x-amp-thread-id",
+	} {
+		if value := strings.TrimSpace(c.GetHeader(header)); value != "" {
 			return value
+		}
+	}
+	if len(body) > 0 {
+		for _, path := range []string{
+			"metadata.user_id",
+			"client_metadata.session_id",
+			"conversation_id",
+			"client_metadata.thread_id",
+			"thread_id",
+			"prompt_cache_key",
+		} {
+			if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+				return value
+			}
 		}
 	}
 	if value := explicitOpenAIHeaderSessionID(c); value != "" {

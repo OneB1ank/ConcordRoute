@@ -162,6 +162,32 @@ func TestCockpitIdentityGraph_ServerFieldsAndClientCacheKey(t *testing.T) {
 	}
 }
 
+func TestCockpitIdentityGraph_ExplicitCacheKeyDrivesFinalConversationSeed(t *testing.T) {
+	account := newTestOAuthAccount(104, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	base := codexFingerprintSource{
+		clientSessionID: "client-session",
+		threadID:        "client-thread-a",
+		promptCacheKey:  "cache-a",
+	}
+	first := resolveCodexFingerprintIDsWithSource(account, base, codexFingerprintCockpit)
+	require.NotNil(t, first)
+
+	changedThread := base
+	changedThread.threadID = "client-thread-b"
+	second := resolveCodexFingerprintIDsWithSource(account, changedThread, codexFingerprintCockpit)
+	require.NotNil(t, second)
+	assert.Equal(t, first.sessionID, second.sessionID)
+	assert.Equal(t, first.threadID, second.threadID)
+	assert.Equal(t, "cache-a", first.promptCacheKey)
+
+	changedCache := base
+	changedCache.promptCacheKey = "cache-b"
+	third := resolveCodexFingerprintIDsWithSource(account, changedCache, codexFingerprintCockpit)
+	require.NotNil(t, third)
+	assert.NotEqual(t, first.sessionID, third.sessionID)
+	assert.NotEqual(t, first.threadID, third.threadID)
+}
+
 func TestNormalizeCodexWindowIDUsesOfficialWireShape(t *testing.T) {
 	threadID := uuid.Must(uuid.NewV7()).String()
 	assert.Equal(t, threadID+":0", normalizeCodexWindowID("", threadID))

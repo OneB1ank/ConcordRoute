@@ -378,16 +378,19 @@ func TestOpenAIGatewayService_GenerateCockpitSessionHash_Priority(t *testing.T) 
 		return svc.GenerateCockpitSessionHash(c, []byte(body))
 	}
 
+	// Account affinity follows the client session-id even when body conversation
+	// markers differ; cache alignment is handled by the fingerprint stage.
 	threadHash := hash(`{"client_metadata":{"thread_id":"thread-a","session_id":"body-session"},"prompt_cache_key":"cache-a"}`)
-	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("thread-a")), threadHash)
-	require.Equal(t, threadHash, hash(`{"client_metadata":{"thread_id":"thread-a","session_id":"changed"},"prompt_cache_key":"changed"}`))
-	require.NotEqual(t, threadHash, hash(`{"client_metadata":{"thread_id":"thread-b"},"prompt_cache_key":"cache-a"}`))
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("header-session")), threadHash)
+	require.Equal(t, threadHash, hash(`{"client_metadata":{"thread_id":"thread-b","session_id":"changed"},"prompt_cache_key":"changed"}`))
 
-	cacheHash := hash(`{"client_metadata":{"session_id":"body-session"},"prompt_cache_key":"cache-a"}`)
+	c.Request.Header.Del(codexSessionIDHeader)
+	c.Request.Header.Del("conversation_id")
+	cacheHash := hash(`{"prompt_cache_key":"cache-a"}`)
 	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("cache-a")), cacheHash)
 
 	headerHash := hash(`{"client_metadata":{"session_id":"body-session"}}`)
-	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("header-session")), headerHash)
+	require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("body-session")), headerHash)
 
 	c.Request.Header.Del(codexSessionIDHeader)
 	bodySessionHash := hash(`{"client_metadata":{"session_id":"body-session"}}`)
@@ -410,7 +413,7 @@ func TestOpenAIGatewayService_CockpitExplicitHashMatchesSchedulingHash(t *testin
 
 	require.Equal(t, svc.GenerateCockpitExplicitSessionHash(c, bodyA), svc.GenerateCockpitSessionHash(c, bodyA))
 	require.Equal(t, svc.GenerateCockpitExplicitSessionHash(c, bodyB), svc.GenerateCockpitSessionHash(c, bodyB))
-	require.NotEqual(t, svc.GenerateCockpitSessionHash(c, bodyA), svc.GenerateCockpitSessionHash(c, bodyB))
+	require.Equal(t, svc.GenerateCockpitSessionHash(c, bodyA), svc.GenerateCockpitSessionHash(c, bodyB), "shared client session-id is the account-affinity seed")
 	require.Equal(t, svc.GenerateSessionHash(c, bodyA), svc.GenerateSessionHash(c, bodyB), "普通模式继续由共享 session-id 头保持原有粘性")
 }
 
@@ -432,7 +435,7 @@ func TestOpenAIGatewayService_AccountSessionHashUsesCockpitOnlyForCodexSignal(t 
 	c.Request.Header.Set("User-Agent", "Codex Desktop/0.145.0 (Windows)")
 	cockpitA := svc.generateOpenAIAccountSessionHash(c, bodyA, account)
 	cockpitB := svc.generateOpenAIAccountSessionHash(c, bodyB, account)
-	require.NotEqual(t, cockpitA, cockpitB, "Codex traffic uses conversation-first Cockpit affinity")
+	require.Equal(t, cockpitA, cockpitB, "Codex account affinity follows the shared client session-id")
 }
 
 func TestOpenAIGatewayService_ClientSessionHeaderPriority(t *testing.T) {

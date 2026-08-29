@@ -442,12 +442,14 @@ func resolveOfficialCockpitPromptCacheKey(sessionID, promptCacheKey string) stri
 	return strings.TrimSpace(sessionID)
 }
 
-// resolveCockpitConversationSeed uses client conversation markers only as the
-// deterministic input for server-generated session and thread identities.
+// resolveCockpitConversationSeed chooses the final Codex conversation seed.
+// An explicit prompt_cache_key is the strongest conversation/cache marker;
+// thread/session markers are fallbacks.  Account affinity is resolved
+// separately from the client's session-id in the gateway scheduler.
 func resolveCockpitConversationSeed(source codexFingerprintSource) string {
 	return firstNonEmptyCodexValue(
-		source.threadID,
 		source.promptCacheKey,
+		source.threadID,
 		source.originalSessionID,
 		source.clientSessionID,
 	)
