@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,6 +64,29 @@ func TestIncrementUserPlatformQuotaUsage_SyncCallsCache(t *testing.T) {
 // fakeQuotaRepo 实现 UserPlatformQuotaRepository 最小子集
 type fakeQuotaRepo struct {
 	rec *UserPlatformQuotaRecord
+}
+
+type countingQuotaRepo struct {
+	*fakeQuotaRepo
+	calls atomic.Int32
+}
+
+func (f *countingQuotaRepo) GetByUserPlatform(ctx context.Context, userID int64, platform string) (*UserPlatformQuotaRecord, error) {
+	f.calls.Add(1)
+	return f.fakeQuotaRepo.GetByUserPlatform(ctx, userID, platform)
+}
+
+type recheckQuotaCache struct {
+	*fakeFullCache
+	hit      *UserPlatformQuotaCacheEntry
+	getCalls atomic.Int32
+}
+
+func (f *recheckQuotaCache) GetUserPlatformQuotaCache(_ context.Context, _ int64, _ string) (*UserPlatformQuotaCacheEntry, bool, error) {
+	if f.getCalls.Add(1) == 1 {
+		return nil, false, nil
+	}
+	return f.hit, true, nil
 }
 
 func (f *fakeQuotaRepo) GetByUserPlatform(_ context.Context, _ int64, _ string) (*UserPlatformQuotaRecord, error) {
@@ -683,6 +707,39 @@ func TestCheckUserPlatformQuotaEligibility_NoRow_WritesSentinel(t *testing.T) {
 	}
 	if cache.getLastSetTTL() != 3600*time.Second {
 		t.Errorf("sentinel ttl = %v, want 3600s", cache.getLastSetTTL())
+	}
+}
+
+func TestCheckUserPlatformQuotaEligibility_RechecksCacheInsideSingleflight(t *testing.T) {
+	daily := 10.0
+	cache := &recheckQuotaCache{
+		fakeFullCache: &fakeFullCache{},
+		hit: &UserPlatformQuotaCacheEntry{
+			SchemaVersion:    UserPlatformQuotaCacheSchemaV1,
+			DailyUsageUSD:    1,
+			DailyLimitUSD:    &daily,
+			DailyWindowStart: currentDayStart(),
+			WeeklyWindowStart: func() *time.Time {
+				s := timezone.StartOfWeek(time.Now())
+				return &s
+			}(),
+			MonthlyWindowStart: func() *time.Time {
+				s := time.Now()
+				return &s
+			}(),
+		},
+	}
+	repo := &countingQuotaRepo{fakeQuotaRepo: &fakeQuotaRepo{}}
+	svc := newServiceForPreflight(t, repo, cache)
+
+	if err := svc.checkUserPlatformQuotaEligibility(context.Background(), 42, "openai"); err != nil {
+		t.Fatalf("cache recheck should allow under-limit entry, got %v", err)
+	}
+	if got := repo.calls.Load(); got != 0 {
+		t.Fatalf("cache recheck should avoid DB query, got %d calls", got)
+	}
+	if got := cache.getCalls.Load(); got != 2 {
+		t.Fatalf("expected outer miss plus singleflight recheck, got %d cache reads", got)
 	}
 }
 
