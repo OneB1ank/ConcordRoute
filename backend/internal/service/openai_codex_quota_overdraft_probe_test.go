@@ -923,7 +923,7 @@ func TestCodexQuotaOverdraftProbeKeepsStableConversationAndRotatesTurn(t *testin
 	normalConversation := resolveCodexFingerprintIDs(account, "real-client-session", codexFingerprintCockpit)
 	require.NotNil(t, normalConversation)
 	require.Equal(t, normalConversation.installationID, firstHeader.Get("x-codex-installation-id"))
-	require.Equal(t, normalConversation.sessionID, firstHeader.Get("session-id"))
+	require.NotEqual(t, normalConversation.sessionID, firstHeader.Get("session-id"))
 	require.NotEqual(t, normalConversation.threadID, firstHeader.Get("thread-id"))
 }
 

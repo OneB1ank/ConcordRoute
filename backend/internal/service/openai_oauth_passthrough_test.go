@@ -267,6 +267,8 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 
 func TestOpenAIGatewayService_OAuthPassthroughShadowUsesParentCodexIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const sessionID = "018f0000-0000-7000-8000-000000000011"
+	const threadID = "018f0000-0000-7000-8000-000000000012"
 
 	parentID := int64(700)
 	parent := newTestOAuthAccount(parentID, map[string]any{
@@ -289,9 +291,9 @@ func TestOpenAIGatewayService_OAuthPassthroughShadowUsesParentCodexIdentity(t *t
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"client-cache","input":"hello","client_metadata":{"session_id":"client-session","thread_id":"client-thread","x-codex-installation-id":"client-installation"}}`)
+	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"client-cache","input":"hello","client_metadata":{"session_id":"` + sessionID + `","thread_id":"` + threadID + `","x-codex-installation-id":"client-installation"}}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set("session-id", "client-session")
+	c.Request.Header.Set("session-id", sessionID)
 
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusBadRequest,
@@ -307,14 +309,16 @@ func TestOpenAIGatewayService_OAuthPassthroughShadowUsesParentCodexIdentity(t *t
 	_, err := svc.Forward(context.Background(), c, shadow, body)
 	require.Error(t, err)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, resolveConvergedCockpitSessionID(parent, "client-thread"), upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, resolveConvergedCockpitThreadID(parent, "client-thread"), upstream.lastReq.Header.Get("thread-id"))
-	require.Equal(t, resolveConvergedCockpitSessionID(parent, "client-thread"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
-	require.Equal(t, resolveConvergedCockpitThreadID(parent, "client-thread"), gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
+	require.Equal(t, sessionID, upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, threadID, upstream.lastReq.Header.Get("thread-id"))
+	require.Equal(t, "client-cache", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, threadID, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
 }
 
 func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const sessionID = "018f0000-0000-7000-8000-000000000021"
+	const threadID = "018f0000-0000-7000-8000-000000000022"
 
 	parentID := int64(710)
 	parent := newTestOAuthAccount(parentID, map[string]any{
@@ -333,9 +337,9 @@ func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *tes
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"transform-cache","input":"hello","client_metadata":{"session_id":"transform-session","thread_id":"transform-thread"}}`)
+	body := []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_key":"transform-cache","input":"hello","client_metadata":{"session_id":"` + sessionID + `","thread_id":"` + threadID + `"}}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set("session-id", "transform-session")
+	c.Request.Header.Set("session-id", sessionID)
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -350,9 +354,9 @@ func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *tes
 	_, err := svc.Forward(context.Background(), c, shadow, body)
 	require.Error(t, err)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, resolveConvergedCockpitSessionID(parent, "transform-thread"), upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, resolveConvergedCockpitThreadID(parent, "transform-thread"), upstream.lastReq.Header.Get("thread-id"))
-	require.Equal(t, resolveConvergedCockpitSessionID(parent, "transform-thread"), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, sessionID, upstream.lastReq.Header.Get("session-id"))
+	require.Equal(t, threadID, upstream.lastReq.Header.Get("thread-id"))
+	require.Equal(t, "transform-cache", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 }
 
 func TestOpenAIGatewayService_OpenAIOAuthHTTPForwardsTLSProfile(t *testing.T) {

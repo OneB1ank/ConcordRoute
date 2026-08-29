@@ -259,11 +259,18 @@ func deriveStableUUIDv7(seed string) string {
 		return ""
 	}
 	if existing, ok := codexFallbackUUIDv7.Load(seed); ok {
-		return existing.(string)
+		if value, valid := existing.(string); valid {
+			return value
+		}
+		codexFallbackUUIDv7.Delete(seed)
 	}
 	generated := newCodexUUIDv7().String()
 	actual, _ := codexFallbackUUIDv7.LoadOrStore(seed, generated)
-	return actual.(string)
+	if value, valid := actual.(string); valid {
+		return value
+	}
+	codexFallbackUUIDv7.Store(seed, generated)
+	return generated
 }
 
 func normalizeCodexUUIDv7(raw, fallbackSeed string) string {
@@ -386,19 +393,6 @@ func resolveConvergedSessionID(account *Account) string {
 	return deriveStableUUIDv7("sub2api:codex-session-id:v3:" + seed)
 }
 
-// resolveConvergedCockpitSessionID 按账号和对话种子稳定派生 Cockpit session_id。
-// installation_id 仍保持账号级固定；相同对话跨请求稳定，不同对话相互隔离。
-func resolveConvergedCockpitSessionID(account *Account, conversationSeed string) string {
-	if account == nil || strings.TrimSpace(conversationSeed) == "" {
-		return ""
-	}
-	seed := resolveCodexFingerprintSeed(account)
-	if seed == "" {
-		return ""
-	}
-	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, strings.TrimSpace(conversationSeed)))
-}
-
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
 // 每个真实 Codex 会话（不同客户端启动实例）获得一个独立线程，
 // 模拟正常用户 spawn 子代理或开多窗口的模式。
@@ -411,19 +405,6 @@ func resolveConvergedThreadID(account *Account, clientSessionID string) string {
 		return ""
 	}
 	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
-}
-
-// resolveConvergedCockpitThreadID 按 Cockpit 对话种子稳定派生子线程 UUIDv7。
-// 根线程直接复用 session_id；仅当客户端提供不同 thread 值时使用该函数。
-func resolveConvergedCockpitThreadID(account *Account, threadSeed string) string {
-	if account == nil || strings.TrimSpace(threadSeed) == "" {
-		return ""
-	}
-	seed := resolveCodexFingerprintSeed(account)
-	if seed == "" {
-		return ""
-	}
-	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-cockpit-thread-id:v2:%s:%s", seed, strings.TrimSpace(threadSeed)))
 }
 
 // resolveConvergedPromptCacheKey 按账号和客户端原始缓存键稳定派生上游缓存键。
@@ -595,18 +576,6 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 	}
 
 	return nil
-}
-
-// resolveCockpitConversationSeed 返回 Cockpit 的对话级种子。
-// thread_id 是最精确的对话标识；prompt_cache_key 可在部分客户端缺少
-// thread_id 时隔离对话；session-id 仅作为最后回退，保持旧客户端兼容。
-func resolveCockpitConversationSeed(source codexFingerprintSource) string {
-	return firstNonEmptyCodexValue(
-		source.threadID,
-		source.promptCacheKey,
-		source.originalSessionID,
-		source.clientSessionID,
-	)
 }
 
 // extractCodexStringField 读取 map 中的非空字符串字段。
