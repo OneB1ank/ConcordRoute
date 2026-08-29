@@ -139,6 +139,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, firstClientMessage),
 			account,
 		)
+		_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
 		stageCodexFingerprintIDs(c, firstFingerprintIDs)
 	}
 

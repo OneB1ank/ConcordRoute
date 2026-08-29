@@ -20,6 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai_compat"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -309,10 +310,18 @@ func TestOpenAIGatewayService_OAuthPassthroughShadowUsesParentCodexIdentity(t *t
 	_, err := svc.Forward(context.Background(), c, shadow, body)
 	require.Error(t, err)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, sessionID, upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, threadID, upstream.lastReq.Header.Get("thread-id"))
+	gotSession := upstream.lastReq.Header.Get("session-id")
+	gotThread := upstream.lastReq.Header.Get("thread-id")
+	require.NotEqual(t, sessionID, gotSession, "Cockpit must derive a server-side session from the client seed")
+	require.NotEqual(t, threadID, gotThread, "Cockpit must derive a server-side thread from the client seed")
+	parsedSession, err := uuid.Parse(gotSession)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsedSession.Version())
+	parsedThread, err := uuid.Parse(gotThread)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsedThread.Version())
 	require.Equal(t, "client-cache", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
-	require.Equal(t, threadID, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
+	require.Equal(t, gotThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
 }
 
 func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *testing.T) {
@@ -354,8 +363,16 @@ func TestOpenAIGatewayService_OAuthTransformShadowUsesParentCodexIdentity(t *tes
 	_, err := svc.Forward(context.Background(), c, shadow, body)
 	require.Error(t, err)
 	require.Equal(t, parent.GetOpenAIDeviceID(), upstream.lastReq.Header.Get("x-codex-installation-id"))
-	require.Equal(t, sessionID, upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, threadID, upstream.lastReq.Header.Get("thread-id"))
+	gotSession := upstream.lastReq.Header.Get("session-id")
+	gotThread := upstream.lastReq.Header.Get("thread-id")
+	require.NotEqual(t, sessionID, gotSession, "Cockpit must derive a server-side session from the client seed")
+	require.NotEqual(t, threadID, gotThread, "Cockpit must derive a server-side thread from the client seed")
+	parsedSession, err := uuid.Parse(gotSession)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsedSession.Version())
+	parsedThread, err := uuid.Parse(gotThread)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsedThread.Version())
 	require.Equal(t, "transform-cache", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 }
 

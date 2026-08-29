@@ -348,11 +348,19 @@ func (s *OpenAIGatewayService) handleOpenAIWSDialTransientFailure(ctx context.Co
 	if !errors.As(err, &dialErr) || dialErr == nil {
 		return UpstreamErrorDecision{Policy: ErrorPolicyNone}
 	}
+	// A handshake 429 is an HTTP response received before any streaming turn
+	// exists. Treat it as an account-level upstream response so quota/reset
+	// headers are persisted and scheduling observes the cooldown. The stream
+	// event path below intentionally keeps its request-scoped semantics.
+	if dialErr.StatusCode == http.StatusTooManyRequests {
+		return s.applyOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody, canonicalModel)
+	}
 	return s.applyOpenAIWSEventErrorPolicy(ctx, account, canonicalModel, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody)
 }
 
-// applyOpenAIWSEventErrorPolicy 将握手和事件错误接入统一账号策略。
-// 请求级错误保持原样，响应尚未输出时由调用方依据返回决策决定是否故障转移。
+// applyOpenAIWSEventErrorPolicy 处理 WS 建连后的事件错误。
+// 握手阶段的 HTTP 429 由 handleOpenAIWSDialTransientFailure 走账号级路径，
+// 以便保存配额/重置头；事件级限流仍保持请求级语义。
 func (s *OpenAIGatewayService) applyOpenAIWSEventErrorPolicy(
 	ctx context.Context,
 	account *Account,

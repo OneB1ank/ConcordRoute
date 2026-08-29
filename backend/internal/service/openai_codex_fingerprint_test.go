@@ -2,9 +2,12 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,189 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type codexIdentityPersistenceRepo struct {
+	AccountRepository
+	account *Account
+	latest  *Account
+	updates []map[string]any
+}
+
+func (r *codexIdentityPersistenceRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	if r.account == nil || r.account.ID != id {
+		return nil, nil
+	}
+	if r.latest != nil {
+		return r.latest, nil
+	}
+	return r.account, nil
+}
+
+func (r *codexIdentityPersistenceRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
+	if r.account == nil || r.account.ID != id {
+		return nil
+	}
+	target := r.account
+	if r.latest != nil {
+		target = r.latest
+	}
+	if target.Extra == nil {
+		target.Extra = make(map[string]any)
+	}
+	for key, value := range updates {
+		target.Extra[key] = value
+	}
+	copied := make(map[string]any, len(updates))
+	for key, value := range updates {
+		copied[key] = value
+	}
+	r.updates = append(r.updates, copied)
+	return nil
+}
+
+func TestDeriveStableUUIDv7ForAccount_PersistsCompleteValueAcrossRestart(t *testing.T) {
+	account := newTestOAuthAccount(901, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	repo := &codexIdentityPersistenceRepo{account: account}
+	seed := "sub2api:test-conversation-seed"
+
+	codexFallbackUUIDv7 = sync.Map{}
+	codexIdentityPersistedHashes = sync.Map{}
+	first := deriveStableUUIDv7ForAccount(account, seed)
+	require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account))
+	firstParsed, err := uuid.Parse(first)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), firstParsed.Version())
+
+	encoded, err := json.Marshal(account.Extra)
+	require.NoError(t, err)
+	var restoredExtra map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &restoredExtra))
+	fresh := &Account{ID: account.ID, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: restoredExtra}
+	codexFallbackUUIDv7 = sync.Map{}
+	codexIdentityPersistedHashes = sync.Map{}
+	second := deriveStableUUIDv7ForAccount(fresh, seed)
+	assert.Equal(t, first, second, "同一种子在重启/新实例后应复用完整 UUIDv7")
+}
+
+func TestDeriveStableUUIDv7ForAccount_HotCacheIsAccountScoped(t *testing.T) {
+	seed := "same-conversation-seed"
+	accountA := newTestOAuthAccount(905, nil)
+	accountB := newTestOAuthAccount(906, nil)
+	codexIdentityHotCache = sync.Map{}
+	first := deriveStableUUIDv7ForAccount(accountA, seed)
+	second := deriveStableUUIDv7ForAccount(accountB, seed)
+	assert.NotEqual(t, first, second, "不同账号不得复用同一个进程内 prompt/session 身份")
+	assert.Equal(t, first, deriveStableUUIDv7ForAccount(accountA, seed))
+	assert.Equal(t, second, deriveStableUUIDv7ForAccount(accountB, seed))
+}
+
+func TestPersistCodexIdentityBindings_WritesEmptyMapAfterExpiry(t *testing.T) {
+	now := time.Now().UnixMilli()
+	account := newTestOAuthAccount(903, map[string]any{
+		CodexIdentityBindingsExtraKey: map[string]any{
+			"expired": codexIdentityBinding{
+				UUID:         newCodexUUIDv7().String(),
+				CreatedAtMS:  now - codexIdentityBindingIdleTTL.Milliseconds() - 1,
+				LastUsedAtMS: now - codexIdentityBindingIdleTTL.Milliseconds() - 1,
+			},
+		},
+	})
+	repo := &codexIdentityPersistenceRepo{account: account}
+	codexIdentityPersistedHashes = sync.Map{}
+
+	require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account))
+	require.Len(t, repo.updates, 1, "expired bindings must clear the durable Extra row")
+	stored, ok := repo.updates[0][CodexIdentityBindingsExtraKey].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, stored)
+	assert.Empty(t, readCodexIdentityBindings(account))
+}
+
+func TestPersistCodexIdentityBindings_MergeUsesNewestLastUsed(t *testing.T) {
+	now := time.Now().UnixMilli()
+	key := codexIdentitySeedKey("merge-seed")
+	latestUUID := newCodexUUIDv7().String()
+	currentUUID := newCodexUUIDv7().String()
+	latest := newTestOAuthAccount(904, map[string]any{
+		CodexIdentityBindingsExtraKey: map[string]any{
+			key: codexIdentityBinding{UUID: latestUUID, CreatedAtMS: now - 1000, LastUsedAtMS: now - 1000},
+		},
+	})
+	current := newTestOAuthAccount(904, map[string]any{
+		CodexIdentityBindingsExtraKey: map[string]any{
+			key: codexIdentityBinding{UUID: currentUUID, CreatedAtMS: now - 2000, LastUsedAtMS: now - 2000},
+		},
+	})
+	repo := &codexIdentityPersistenceRepo{account: current, latest: latest}
+	codexIdentityPersistedHashes = sync.Map{}
+
+	require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, current))
+	merged := readCodexIdentityBindings(latest)
+	binding, ok := parseCodexIdentityBinding(merged[key])
+	require.True(t, ok)
+	assert.Equal(t, latestUUID, binding.UUID, "older in-memory snapshot must not overwrite newer durable activity")
+}
+
+func TestDeriveStableUUIDv7ForAccount_NewSeedUsesCurrentUnixMillisecond(t *testing.T) {
+	account := newTestOAuthAccount(902, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	codexFallbackUUIDv7 = sync.Map{}
+	start := time.Now().UnixMilli()
+	value := deriveStableUUIDv7ForAccount(account, "sub2api:test-new-seed")
+	end := time.Now().UnixMilli()
+	parsed, err := uuid.Parse(value)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsed.Version())
+	var timestamp int64
+	for _, b := range parsed[:6] {
+		timestamp = (timestamp << 8) | int64(b)
+	}
+	assert.GreaterOrEqual(t, timestamp, start)
+	assert.LessOrEqual(t, timestamp, end)
+}
+
+func TestPruneCodexIdentityBindings_ExpiresIdleAndKeepsHotCacheConsistent(t *testing.T) {
+	now := time.Now().UnixMilli()
+	oldKey := codexIdentitySeedKey("old-seed")
+	keepKey := codexIdentitySeedKey("keep-seed")
+	oldUUID := newCodexUUIDv7().String()
+	keepUUID := newCodexUUIDv7().String()
+	bindings := map[string]any{
+		oldKey:  codexIdentityBinding{UUID: oldUUID, CreatedAtMS: now - (codexIdentityBindingIdleTTL.Milliseconds() + 1), LastUsedAtMS: now - (codexIdentityBindingIdleTTL.Milliseconds() + 1)},
+		keepKey: codexIdentityBinding{UUID: keepUUID, CreatedAtMS: now, LastUsedAtMS: now},
+	}
+	codexIdentityHotCache = sync.Map{}
+	codexIdentityHotCache.Store(oldKey, codexIdentityHotBinding{UUID: oldUUID, LastUsedAtMS: now})
+	codexIdentityHotCache.Store(keepKey, codexIdentityHotBinding{UUID: keepUUID, LastUsedAtMS: now})
+
+	changed := pruneCodexIdentityBindings(bindings, now, keepKey)
+	require.True(t, changed)
+	_, exists := bindings[oldKey]
+	assert.False(t, exists)
+	_, exists = codexIdentityHotCache.Load(oldKey)
+	assert.False(t, exists)
+	_, exists = bindings[keepKey]
+	assert.True(t, exists)
+}
+
+func TestPruneCodexIdentityBindings_UsesLRUAndProtectsCurrentSeed(t *testing.T) {
+	now := time.Now().UnixMilli()
+	bindings := make(map[string]any, codexIdentityBindingMaxEntries+1)
+	oldestKey := ""
+	for i := 0; i < codexIdentityBindingMaxEntries+1; i++ {
+		key := fmt.Sprintf("seed-%04d", i)
+		if i == 0 {
+			oldestKey = key
+		}
+		bindings[key] = codexIdentityBinding{UUID: newCodexUUIDv7().String(), CreatedAtMS: now - int64(codexIdentityBindingMaxEntries-i+1), LastUsedAtMS: now - int64(codexIdentityBindingMaxEntries-i+1)}
+	}
+	currentKey := fmt.Sprintf("seed-%04d", codexIdentityBindingMaxEntries)
+	pruneCodexIdentityBindings(bindings, now, currentKey)
+	require.Len(t, bindings, codexIdentityBindingMaxEntries)
+	_, exists := bindings[oldestKey]
+	assert.False(t, exists)
+	_, exists = bindings[currentKey]
+	assert.True(t, exists)
+}
 
 func newTestOAuthAccount(id int64, extra map[string]any) *Account {
 	account := &Account{
@@ -129,6 +315,264 @@ func TestCockpitIdentityGraph_HeaderOnlyCacheKeyPreservesBodyShape(t *testing.T)
 	body := map[string]any{}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
 	assert.NotContains(t, body, "prompt_cache_key")
+}
+
+func TestCockpitRootTurnID_TopLevelMatchesTurnAndRewritesAcrossCarriers(t *testing.T) {
+	account := newTestOAuthAccount(105, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	root := uuid.Must(uuid.NewV7()).String()
+	body := map[string]any{
+		"root_turn_id":     root,
+		"prompt_cache_key": "cache-root",
+		"client_metadata": map[string]any{
+			"root_turn_id":          root,
+			"x-codex-turn-metadata": fmt.Sprintf(`{"root_turn_id":%q}`, root),
+		},
+	}
+
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
+	require.NotNil(t, ids)
+	require.NotEmpty(t, ids.rootTurnID)
+	parsed, err := uuid.Parse(ids.rootTurnID)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(7), parsed.Version())
+	assert.Equal(t, uuid.RFC4122, parsed.Variant())
+	assert.NotEqual(t, root, ids.rootTurnID)
+	assert.Equal(t, ids.turnID, ids.rootTurnID)
+
+	headers := make(http.Header)
+	headers.Set("x-codex-turn-metadata", fmt.Sprintf(`{"root_turn_id":%q}`, root))
+	applyCodexFingerprintHeaders(headers, ids)
+	var headerMeta map[string]any
+	require.NoError(t, json.Unmarshal([]byte(headers.Get("x-codex-turn-metadata")), &headerMeta))
+	assert.Equal(t, ids.rootTurnID, headerMeta["root_turn_id"])
+
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.Equal(t, ids.rootTurnID, body["root_turn_id"])
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
+
+	restored := restoreCodexFingerprintResponsePayload([]byte(fmt.Sprintf(`{"root_turn_id":%q}`, ids.rootTurnID)), ids)
+	assert.JSONEq(t, fmt.Sprintf(`{"root_turn_id":%q}`, root), string(restored))
+}
+
+func TestCockpitRootTurnID_ChildInheritsClientRoot(t *testing.T) {
+	account := newTestOAuthAccount(107, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	root := uuid.Must(uuid.NewV7()).String()
+	parent := uuid.Must(uuid.NewV7()).String()
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"parent_turn_id": parent,
+		"root_turn_id":   root,
+	})
+	require.NotNil(t, ids)
+	assert.Equal(t, root, ids.rootTurnID)
+	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
+}
+
+func TestCockpitRootTurnID_MissingRemainsAbsent(t *testing.T) {
+	account := newTestOAuthAccount(106, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{"prompt_cache_key": "cache-only"})
+	require.NotNil(t, ids)
+	assert.Empty(t, ids.originalRootTurnID)
+	assert.Empty(t, ids.rootTurnID)
+	body := map[string]any{}
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, metadata, "root_turn_id")
+}
+
+func TestCockpitContextWindowID_IsStablePerThreadGeneration(t *testing.T) {
+	account := newTestOAuthAccount(108, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	contextID := uuid.Must(uuid.NewV7()).String()
+	base := map[string]any{
+		"session_id":        uuid.Must(uuid.NewV7()).String(),
+		"thread_id":         uuid.Must(uuid.NewV7()).String(),
+		"window_id":         "client-thread:0",
+		"context_window_id": contextID,
+	}
+	first := resolveCodexFingerprintIDsFromRequest(account, nil, base)
+	require.NotNil(t, first)
+	parsed, err := uuid.Parse(first.contextWindowID)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(7), parsed.Version())
+	assert.Equal(t, uuid.RFC4122, parsed.Variant())
+	assert.NotEqual(t, contextID, first.contextWindowID)
+
+	second := resolveCodexFingerprintIDsFromRequest(account, nil, base)
+	require.NotNil(t, second)
+	assert.Equal(t, first.threadID, second.threadID)
+	assert.Equal(t, first.windowID, second.windowID)
+	assert.Equal(t, first.contextWindowID, second.contextWindowID)
+
+	rotated := map[string]any{
+		"session_id":        base["session_id"],
+		"thread_id":         base["thread_id"],
+		"window_id":         "client-thread:1",
+		"context_window_id": contextID,
+	}
+	third := resolveCodexFingerprintIDsFromRequest(account, nil, rotated)
+	require.NotNil(t, third)
+	assert.NotEqual(t, first.windowID, third.windowID)
+	assert.NotEqual(t, first.contextWindowID, third.contextWindowID)
+}
+
+func TestCockpitContextWindowID_MissingIsGenerated(t *testing.T) {
+	account := newTestOAuthAccount(109, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"session_id": uuid.Must(uuid.NewV7()).String(),
+		"window_id":  "client-thread:0",
+	})
+	require.NotNil(t, ids)
+	assert.Empty(t, ids.originalContextWindowID)
+	parsed, err := uuid.Parse(ids.contextWindowID)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(7), parsed.Version())
+	assert.Equal(t, uuid.RFC4122, parsed.Variant())
+	body := map[string]any{}
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ids.contextWindowID, metadata["context_window_id"])
+}
+
+func TestCodexExtendedTurnIdentityVersionGate(t *testing.T) {
+	assert.False(t, codexSupportsExtendedTurnIdentity("0.150.9"))
+	assert.False(t, codexSupportsExtendedTurnIdentity("0.145.0"))
+	assert.True(t, codexSupportsExtendedTurnIdentity("0.151.0-alpha.7.1"))
+	assert.True(t, codexSupportsExtendedTurnIdentity("0.151.0"))
+	assert.True(t, codexSupportsExtendedTurnIdentity(""), "缺少版本的兼容路径保持既有行为")
+}
+
+func TestCodexClientVersionFromHeadersUsesConservativeMinimum(t *testing.T) {
+	olderUA := make(http.Header)
+	olderUA.Set("version", "0.151.0")
+	olderUA.Set("User-Agent", "Codex Desktop/0.145.0 (Windows 10; x86_64)")
+	assert.Equal(t, "0.145.0", codexClientVersionFromHeaders(olderUA))
+
+	olderHeader := make(http.Header)
+	olderHeader.Set("version", "0.145.0")
+	olderHeader.Set("User-Agent", "Codex Desktop/0.151.0 (Windows 10; x86_64)")
+	assert.Equal(t, "0.145.0", codexClientVersionFromHeaders(olderHeader))
+}
+
+func TestCodexFingerprintPre151OmitsExtendedTurnIdentity(t *testing.T) {
+	account := newTestOAuthAccount(109, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	body := map[string]any{
+		"prompt_cache_key":  "pre-151-cache",
+		"root_turn_id":      uuid.Must(uuid.NewV7()).String(),
+		"context_window_id": uuid.Must(uuid.NewV7()).String(),
+		"client_metadata": map[string]any{
+			"x-codex-turn-metadata": `{"parent_turn_id":"parent","root_turn_id":"root","context_window_id":"context"}`,
+		},
+	}
+	bodyHeaders := http.Header{}
+	bodyHeaders.Set("User-Agent", "Codex Desktop/0.150.9 (Windows 10; x86_64)")
+	source := extractCockpitFingerprintSource(bodyHeaders, body)
+	require.Equal(t, "0.150.9", source.clientVersion)
+	ids := resolveCodexFingerprintIDsWithSource(account, source, codexFingerprintCockpit)
+	require.NotNil(t, ids)
+	assert.False(t, ids.extendedTurnIdentity)
+	assert.Empty(t, ids.rootTurnID)
+	assert.Empty(t, ids.contextWindowID)
+
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.NotContains(t, body, "parent_turn_id")
+	assert.NotContains(t, body, "root_turn_id")
+	assert.NotContains(t, body, "context_window_id")
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, metadata, "root_turn_id")
+	assert.NotContains(t, metadata, "context_window_id")
+	assert.NotContains(t, metadata, "parent_turn_id")
+
+	headers := make(http.Header)
+	headers.Set("User-Agent", "Codex Desktop/0.150.9 (Windows 10; x86_64)")
+	headers.Set("x-codex-parent-turn-id", "parent")
+	headers.Set("x-codex-root-turn-id", "root")
+	headers.Set("x-codex-context-window-id", "context")
+	headers.Set("x-codex-turn-metadata", `{"parent_turn_id":"parent","root_turn_id":"root","context_window_id":"context"}`)
+	applyCodexFingerprintHeaders(headers, ids)
+	assert.Empty(t, headers.Get("x-codex-parent-turn-id"))
+	assert.Empty(t, headers.Get("x-codex-root-turn-id"))
+	assert.Empty(t, headers.Get("x-codex-context-window-id"))
+	var headerMetadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(headers.Get("x-codex-turn-metadata")), &headerMetadata))
+	assert.NotContains(t, headerMetadata, "parent_turn_id")
+	assert.NotContains(t, headerMetadata, "root_turn_id")
+	assert.NotContains(t, headerMetadata, "context_window_id")
+}
+
+func TestCodexFingerprint151PreservesParentTurnIdentity(t *testing.T) {
+	account := newTestOAuthAccount(111, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	parent := uuid.Must(uuid.NewV7()).String()
+	source := codexFingerprintSource{
+		clientVersion:        "0.151.0-alpha.7.1",
+		clientSessionID:      "client-session",
+		originalSessionID:    uuid.Must(uuid.NewV7()).String(),
+		parentTurnID:         parent,
+		rootTurnID:           uuid.Must(uuid.NewV7()).String(),
+		promptCacheKey:       "cache-parent",
+		promptCacheKeyInBody: true,
+	}
+	ids := resolveCodexFingerprintIDsWithSource(account, source, codexFingerprintCockpit)
+	require.NotNil(t, ids)
+	assert.True(t, ids.extendedTurnIdentity)
+	assert.Equal(t, parent, ids.parentTurnID)
+
+	body := map[string]any{"prompt_cache_key": "cache-parent"}
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.Equal(t, parent, body["parent_turn_id"])
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, parent, metadata["parent_turn_id"])
+}
+
+func TestCodexFingerprintPre151RawBodyRemovesExtendedTurnIdentity(t *testing.T) {
+	account := newTestOAuthAccount(112, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	headers := make(http.Header)
+	headers.Set("User-Agent", "Codex Desktop/0.150.9 (Windows 10; x86_64)")
+	body := []byte(`{"prompt_cache_key":"raw-cache","parent_turn_id":"parent","root_turn_id":"root","context_window_id":"context","client_metadata":{"parent_turn_id":"parent","root_turn_id":"root","context_window_id":"context","x-codex-turn-metadata":"{\"parent_turn_id\":\"parent\",\"root_turn_id\":\"root\",\"context_window_id\":\"context\"}"}}`)
+	ids := resolveCodexFingerprintIDsFromRawRequest(account, headers, body)
+	require.NotNil(t, ids)
+	assert.False(t, ids.extendedTurnIdentity)
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	require.NoError(t, err)
+	require.True(t, changed)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(updated, &decoded))
+	assert.NotContains(t, decoded, "parent_turn_id")
+	assert.NotContains(t, decoded, "root_turn_id")
+	assert.NotContains(t, decoded, "context_window_id")
+	metadata, ok := decoded["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, metadata, "parent_turn_id")
+	assert.NotContains(t, metadata, "root_turn_id")
+	assert.NotContains(t, metadata, "context_window_id")
+}
+
+func TestCockpitContextWindowID_RewritesBodyAndMetadata(t *testing.T) {
+	account := newTestOAuthAccount(110, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	clientContext := uuid.Must(uuid.NewV7()).String()
+	body := map[string]any{
+		"session_id":        uuid.Must(uuid.NewV7()).String(),
+		"window_id":         "client-thread:0",
+		"context_window_id": clientContext,
+		"client_metadata": map[string]any{
+			"x-codex-turn-metadata": fmt.Sprintf(`{"context_window_id":%q}`, clientContext),
+		},
+	}
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
+	require.NotNil(t, ids)
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.Equal(t, ids.contextWindowID, body["context_window_id"])
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	metadataJSON, ok := metadata["x-codex-turn-metadata"].(string)
+	require.True(t, ok)
+	var turnMetadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(metadataJSON), &turnMetadata))
+	assert.Equal(t, ids.contextWindowID, turnMetadata["context_window_id"])
 }
 
 func TestCockpitIdentityGraph_ServerFieldsAndClientCacheKey(t *testing.T) {

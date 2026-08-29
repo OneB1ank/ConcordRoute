@@ -55,6 +55,9 @@ func (s *OpenAIGatewayService) prepareMessagesCodexFingerprint(
 		resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, reqBody),
 		account,
 	)
+	// Persist newly-created UUIDv7 bindings so a restart does not split this
+	// conversation into a different cache identity.
+	_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
 	if ids == nil {
 		return body, promptCacheKey, nil
 	}

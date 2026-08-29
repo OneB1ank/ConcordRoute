@@ -92,6 +92,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body),
 				account,
 			)
+			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
 		}
 
 		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, compactRequest)
@@ -110,6 +111,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body),
 				account,
 			)
+			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
 			if fingerprintIDs != nil {
 				updatedBody, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(body, fingerprintIDs)
 				if fingerprintErr != nil {

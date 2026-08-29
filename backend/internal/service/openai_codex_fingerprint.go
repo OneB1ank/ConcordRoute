@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -11,8 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -81,6 +84,38 @@ const (
 )
 
 const codexFingerprintModeExtraKey = "codex_fingerprint_mode"
+
+// codexExtendedTurnIdentityMinVersion is the first Codex engine version whose
+// wire metadata includes context_window_id, parent_turn_id and root_turn_id.
+// Older clients keep the 0.145-era metadata shape.
+const codexExtendedTurnIdentityMinVersion = "0.151.0"
+
+func codexSupportsExtendedTurnIdentity(version string) bool {
+	version = NormalizeCodexClientVersion(version)
+	// An absent version is common on compatibility/probe paths. Preserve the
+	// existing behavior there; an explicitly older client is gated off.
+	return version == "" || CompareVersions(version, codexExtendedTurnIdentityMinVersion) >= 0
+}
+
+func codexClientVersionFromHeaders(h http.Header) string {
+	if h == nil {
+		return ""
+	}
+	versionHeader := NormalizeCodexClientVersion(h.Get("version"))
+	uaVersion := NormalizeCodexClientVersion(openai.CodexUserAgentVersion(h.Get("User-Agent")))
+	if versionHeader != "" && uaVersion != "" {
+		// A mixed request must use the older declaration for capability gating;
+		// this prevents a stale UA from receiving fields it does not understand.
+		if CompareVersions(versionHeader, uaVersion) <= 0 {
+			return versionHeader
+		}
+		return uaVersion
+	}
+	if versionHeader != "" {
+		return versionHeader
+	}
+	return uaVersion
+}
 
 // CodexFingerprintSeedExtraKey 保存账号级随机指纹种子。种子随账号持久化，
 // 避免不同部署中相同的本地自增账号 ID 派生出相同的设备和会话标识。
@@ -156,6 +191,347 @@ func deriveStableUUIDv4(seed string) string {
 }
 
 var codexFallbackUUIDv7 sync.Map
+
+const (
+	codexIdentityBindingIdleTTL    = 7 * 24 * time.Hour
+	codexIdentityBindingTouchEvery = 5 * time.Minute
+	codexIdentityHotCacheTTL       = 24 * time.Hour
+	codexIdentityBindingMaxEntries = 1024
+)
+
+// CodexIdentityBindingsExtraKey stores complete UUIDv7 values keyed by a
+// hashed conversation seed.  The binding is persisted with the OAuth account
+// so a process restart or a second gateway instance reuses the same UUID
+// instead of creating a new timestamped identity and breaking cache affinity.
+const CodexIdentityBindingsExtraKey = "codex_identity_bindings_v1"
+
+type codexIdentityBinding struct {
+	UUID         string `json:"uuid"`
+	CreatedAtMS  int64  `json:"created_at_ms"`
+	LastUsedAtMS int64  `json:"last_used_at_ms"`
+}
+
+var codexIdentityBindingLocks sync.Map    // account ID -> *sync.Mutex
+var codexIdentityPersistedHashes sync.Map // account ID -> sha256 of bindings JSON
+var codexIdentityHotCache sync.Map        // account+seed -> codexIdentityHotBinding
+var codexIdentityHotCacheOps atomic.Uint64
+
+type codexIdentityHotBinding struct {
+	UUID         string
+	LastUsedAtMS int64
+}
+
+func codexIdentityBindingLock(accountID int64) *sync.Mutex {
+	if existing, ok := codexIdentityBindingLocks.Load(accountID); ok {
+		return existing.(*sync.Mutex)
+	}
+	created := &sync.Mutex{}
+	actual, _ := codexIdentityBindingLocks.LoadOrStore(accountID, created)
+	return actual.(*sync.Mutex)
+}
+
+func codexIdentitySeedKey(seed string) string {
+	h := sha256.Sum256([]byte(strings.TrimSpace(seed)))
+	return fmt.Sprintf("%x", h[:])
+}
+
+func codexIdentityOwnerID(account *Account) int64 {
+	if account != nil && account.ParentAccountID != nil && *account.ParentAccountID != 0 {
+		return *account.ParentAccountID
+	}
+	if account == nil {
+		return 0
+	}
+	return account.ID
+}
+
+func codexIdentityHotKey(account *Account, seed string) string {
+	return fmt.Sprintf("%d:%s", codexIdentityOwnerID(account), codexIdentitySeedKey(seed))
+}
+
+func deleteCodexIdentityHotCacheSeed(seedKey string) {
+	codexIdentityHotCache.Range(func(key, _ any) bool {
+		keyString, ok := key.(string)
+		if ok && (keyString == seedKey || strings.HasSuffix(keyString, ":"+seedKey)) {
+			codexIdentityHotCache.Delete(key)
+		}
+		return true
+	})
+}
+
+func readCodexIdentityBindings(account *Account) map[string]any {
+	if account == nil || account.Extra == nil {
+		return nil
+	}
+	raw, ok := account.Extra[CodexIdentityBindingsExtraKey]
+	if !ok {
+		return nil
+	}
+	if bindings, ok := raw.(map[string]any); ok {
+		return bindings
+	}
+	return nil
+}
+
+func parseCodexIdentityBinding(raw any) (codexIdentityBinding, bool) {
+	switch value := raw.(type) {
+	case string:
+		if parsed, err := uuid.Parse(value); err == nil && parsed.Version() == uuid.Version(7) && parsed.Variant() == uuid.RFC4122 {
+			return codexIdentityBinding{UUID: parsed.String()}, true
+		}
+	case map[string]any:
+		candidate, _ := value["uuid"].(string)
+		parsed, err := uuid.Parse(strings.TrimSpace(candidate))
+		if err != nil || parsed.Version() != uuid.Version(7) || parsed.Variant() != uuid.RFC4122 {
+			return codexIdentityBinding{}, false
+		}
+		created, _ := value["created_at_ms"].(float64)
+		lastUsed, _ := value["last_used_at_ms"].(float64)
+		return codexIdentityBinding{UUID: parsed.String(), CreatedAtMS: int64(created), LastUsedAtMS: int64(lastUsed)}, true
+	case codexIdentityBinding:
+		parsed, err := uuid.Parse(value.UUID)
+		if err == nil && parsed.Version() == uuid.Version(7) && parsed.Variant() == uuid.RFC4122 {
+			return value, true
+		}
+	}
+	return codexIdentityBinding{}, false
+}
+
+// deriveStableUUIDv7ForAccount first consults the account's durable binding.
+// On a miss it generates exactly once using the current Unix millisecond and
+// records the complete UUID in Extra.  Callers persist the changed Extra via
+// AccountRepository after the request snapshot is built.
+func deriveStableUUIDv7ForAccount(account *Account, seed string) string {
+	seed = strings.TrimSpace(seed)
+	if account == nil || seed == "" {
+		return deriveStableUUIDv7(seed)
+	}
+	lock := codexIdentityBindingLock(account.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	key := codexIdentitySeedKey(seed)
+	bindings := readCodexIdentityBindings(account)
+	nowMS := time.Now().UnixMilli()
+	if bindings != nil {
+		pruneCodexIdentityBindings(bindings, nowMS, key)
+		if binding, ok := parseCodexIdentityBinding(bindings[key]); ok {
+			if binding.CreatedAtMS == 0 {
+				binding.CreatedAtMS = nowMS
+			}
+			if binding.LastUsedAtMS == 0 || nowMS-binding.LastUsedAtMS >= codexIdentityBindingTouchEvery.Milliseconds() {
+				binding.LastUsedAtMS = nowMS
+				bindings[key] = binding
+			}
+			codexIdentityHotCache.Store(codexIdentityHotKey(account, seed), codexIdentityHotBinding{UUID: binding.UUID, LastUsedAtMS: nowMS})
+			sweepCodexIdentityHotCache()
+			return binding.UUID
+		}
+	}
+	hotKey := codexIdentityHotKey(account, seed)
+	if raw, ok := codexIdentityHotCache.Load(hotKey); ok {
+		if hot, valid := raw.(codexIdentityHotBinding); valid && hot.UUID != "" && (hot.LastUsedAtMS == 0 || nowMS-hot.LastUsedAtMS < codexIdentityHotCacheTTL.Milliseconds()) {
+			if bindings == nil {
+				bindings = make(map[string]any)
+				if account.Extra == nil {
+					account.Extra = make(map[string]any)
+				}
+				account.Extra[CodexIdentityBindingsExtraKey] = bindings
+			}
+			bindings[key] = codexIdentityBinding{UUID: hot.UUID, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
+			codexIdentityHotCache.Store(hotKey, codexIdentityHotBinding{UUID: hot.UUID, LastUsedAtMS: nowMS})
+			return hot.UUID
+		}
+		codexIdentityHotCache.Delete(hotKey)
+	}
+	value := newCodexUUIDv7().String()
+	if bindings == nil {
+		bindings = make(map[string]any)
+		if account.Extra == nil {
+			account.Extra = make(map[string]any)
+		}
+		account.Extra[CodexIdentityBindingsExtraKey] = bindings
+	}
+	bindings[key] = codexIdentityBinding{UUID: value, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
+	codexIdentityHotCache.Store(hotKey, codexIdentityHotBinding{UUID: value, LastUsedAtMS: nowMS})
+	pruneCodexIdentityBindings(bindings, nowMS, key)
+	sweepCodexIdentityHotCache()
+	return value
+}
+
+// pruneCodexIdentityBindings applies a sliding idle TTL and true LRU cap to
+// durable server-derived identities.  The durable account map is authoritative;
+// entries removed here are also removed from the process-local hot cache so an
+// evicted identity cannot be resurrected after the next request.
+func pruneCodexIdentityBindings(bindings map[string]any, nowMS int64, protectedKey string) bool {
+	if len(bindings) == 0 {
+		return false
+	}
+	changed := false
+	for key, raw := range bindings {
+		binding, ok := parseCodexIdentityBinding(raw)
+		if !ok {
+			delete(bindings, key)
+			changed = true
+			continue
+		}
+		lastUsed := binding.LastUsedAtMS
+		if lastUsed == 0 {
+			lastUsed = binding.CreatedAtMS
+		}
+		if lastUsed > 0 && nowMS-lastUsed >= codexIdentityBindingIdleTTL.Milliseconds() {
+			delete(bindings, key)
+			deleteCodexIdentityHotCacheSeed(key)
+			changed = true
+			continue
+		}
+		if binding.LastUsedAtMS == 0 {
+			binding.LastUsedAtMS = nowMS
+			bindings[key] = binding
+			changed = true
+		}
+	}
+	for len(bindings) > codexIdentityBindingMaxEntries {
+		oldestKey := ""
+		var oldest int64
+		for key, raw := range bindings {
+			if key == protectedKey && len(bindings) > 1 {
+				continue
+			}
+			binding, ok := parseCodexIdentityBinding(raw)
+			if !ok {
+				oldestKey = key
+				break
+			}
+			used := binding.LastUsedAtMS
+			if used == 0 {
+				used = binding.CreatedAtMS
+			}
+			if oldestKey == "" || used < oldest || (used == oldest && key < oldestKey) {
+				oldestKey, oldest = key, used
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(bindings, oldestKey)
+		deleteCodexIdentityHotCacheSeed(oldestKey)
+		changed = true
+	}
+	return changed
+}
+
+func sweepCodexIdentityHotCache() {
+	if codexIdentityHotCacheOps.Add(1)%256 != 0 {
+		return
+	}
+	cutoff := time.Now().Add(-codexIdentityHotCacheTTL).UnixMilli()
+	codexIdentityHotCache.Range(func(key, raw any) bool {
+		binding, ok := raw.(codexIdentityHotBinding)
+		if !ok || binding.LastUsedAtMS == 0 || binding.LastUsedAtMS < cutoff {
+			codexIdentityHotCache.Delete(key)
+		}
+		return true
+	})
+}
+
+func codexIdentityBindingRecency(binding codexIdentityBinding) int64 {
+	if binding.LastUsedAtMS != 0 {
+		return binding.LastUsedAtMS
+	}
+	return binding.CreatedAtMS
+}
+
+// mergeCodexIdentityBindings keeps the durable value with the newest observed
+// activity for each seed.  Requests may hold distinct Account snapshots, so a
+// blind current-wins merge can resurrect an older UUID or erase a newer touch.
+func mergeCodexIdentityBindings(latest, current map[string]any) map[string]any {
+	merged := make(map[string]any, len(latest)+len(current))
+	for key, value := range latest {
+		merged[key] = value
+	}
+	for key, currentRaw := range current {
+		latestRaw, exists := merged[key]
+		if !exists {
+			merged[key] = currentRaw
+			continue
+		}
+		currentBinding, currentOK := parseCodexIdentityBinding(currentRaw)
+		latestBinding, latestOK := parseCodexIdentityBinding(latestRaw)
+		switch {
+		case currentOK && !latestOK:
+			merged[key] = currentRaw
+		case !currentOK && latestOK:
+			// Keep the valid durable value; prune will remove malformed entries.
+		case currentOK && latestOK && codexIdentityBindingRecency(currentBinding) > codexIdentityBindingRecency(latestBinding):
+			merged[key] = currentRaw
+		}
+	}
+	return merged
+}
+
+// persistCodexIdentityBindings writes only the bounded identity map.  The
+// hash gate keeps the hot path read-only after the first binding, while the
+// account-scoped lock prevents concurrent first requests from overwriting one
+// another in the local object.  Repository failures are returned to callers so
+// deployments can log them without changing the request identity snapshot.
+func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, account *Account) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Lightweight unit-test repositories and optional deployments may not
+			// implement Extra persistence.  Keep the already-built request snapshot
+			// usable while surfacing the condition to callers that choose to log it.
+			err = fmt.Errorf("persist codex identity bindings: repository unavailable: %v", recovered)
+		}
+	}()
+	if repo == nil || account == nil || account.ID == 0 {
+		return nil
+	}
+	lock := codexIdentityBindingLock(account.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	if account.Extra == nil {
+		return nil
+	}
+	if _, exists := account.Extra[CodexIdentityBindingsExtraKey]; !exists {
+		return nil
+	}
+	bindings := readCodexIdentityBindings(account)
+	if bindings == nil {
+		bindings = make(map[string]any)
+		account.Extra[CodexIdentityBindingsExtraKey] = bindings
+	}
+	pruneCodexIdentityBindings(bindings, time.Now().UnixMilli(), "")
+
+	// Merge with the latest row before writing.  Two requests can arrive on
+	// distinct Account objects during startup; without this read-modify-merge,
+	// the second first-seen conversation could erase the first binding.
+	if latest, err := repo.GetByID(ctx, account.ID); err == nil && latest != nil {
+		latestBindings := readCodexIdentityBindings(latest)
+		if latestBindings != nil {
+			pruneCodexIdentityBindings(latestBindings, time.Now().UnixMilli(), "")
+			bindings = mergeCodexIdentityBindings(latestBindings, bindings)
+			pruneCodexIdentityBindings(bindings, time.Now().UnixMilli(), "")
+			account.Extra[CodexIdentityBindingsExtraKey] = bindings
+		}
+	}
+	// An expired/invalid map is intentionally persisted as an empty object so
+	// stale rows are removed from Extra instead of surviving indefinitely.
+	encoded, err := json.Marshal(bindings)
+	if err != nil {
+		return fmt.Errorf("marshal codex identity bindings: %w", err)
+	}
+	hash := sha256.Sum256(encoded)
+	hashKey := fmt.Sprintf("%d", account.ID)
+	hashString := fmt.Sprintf("%x", hash[:])
+	if previous, ok := codexIdentityPersistedHashes.Load(hashKey); ok && previous == hashString {
+		return nil
+	}
+	if err := repo.UpdateExtra(ctx, account.ID, map[string]any{CodexIdentityBindingsExtraKey: bindings}); err != nil {
+		return fmt.Errorf("persist codex identity bindings: %w", err)
+	}
+	codexIdentityPersistedHashes.Store(hashKey, hashString)
+	return nil
+}
 
 // codexUUIDv7Context mirrors uuid 1.20.0's shared ContextV7 used by
 // Codex's Rust runtime: a 41-bit random seed is selected whenever the
@@ -301,6 +677,72 @@ func normalizeCodexWindowID(raw, threadID string) string {
 	return threadID + ":0"
 }
 
+const (
+	codexContextWindowIdleTTL = 24 * time.Hour
+	codexContextWindowMaxKeys = 1024
+)
+
+type codexContextWindowBinding struct {
+	UUID       string
+	LastUsedMS int64
+}
+
+var codexContextWindowState = struct {
+	sync.Mutex
+	items map[string]codexContextWindowBinding
+}{items: make(map[string]codexContextWindowBinding)}
+
+// resolveConvergedContextWindowID keeps one server-generated UUIDv7 for each
+// account/thread/window-generation/client-window-seed tuple. It is process-local
+// and bounded; the durable account identity table is intentionally not used for
+// window IDs. A missing client value is left missing by the caller.
+func resolveConvergedContextWindowID(account *Account, threadID, windowID, original string) string {
+	if account == nil || strings.TrimSpace(threadID) == "" {
+		return ""
+	}
+	generation := "0"
+	if idx := strings.LastIndex(strings.TrimSpace(windowID), ":"); idx >= 0 {
+		if value := strings.TrimSpace(windowID[idx+1:]); value != "" {
+			if _, err := strconv.ParseUint(value, 10, 64); err == nil {
+				generation = value
+			}
+		}
+	}
+	key := fmt.Sprintf("%d:%s:%s:%s", account.ID, strings.TrimSpace(threadID), generation, codexIdentitySeedKey(original))
+	now := time.Now().UnixMilli()
+	codexContextWindowState.Lock()
+	defer codexContextWindowState.Unlock()
+	for existingKey, binding := range codexContextWindowState.items {
+		if binding.LastUsedMS > 0 && now-binding.LastUsedMS >= codexContextWindowIdleTTL.Milliseconds() {
+			delete(codexContextWindowState.items, existingKey)
+		}
+	}
+	if binding, ok := codexContextWindowState.items[key]; ok {
+		binding.LastUsedMS = now
+		codexContextWindowState.items[key] = binding
+		return binding.UUID
+	}
+	value := newCodexUUIDv7().String()
+	codexContextWindowState.items[key] = codexContextWindowBinding{UUID: value, LastUsedMS: now}
+	for len(codexContextWindowState.items) > codexContextWindowMaxKeys {
+		oldestKey := ""
+		var oldest int64
+		for candidate, binding := range codexContextWindowState.items {
+			if candidate == key {
+				continue
+			}
+			if oldestKey == "" || binding.LastUsedMS < oldest {
+				oldestKey, oldest = candidate, binding.LastUsedMS
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(codexContextWindowState.items, oldestKey)
+	}
+	return value
+}
+
 // EnsureCodexFingerprintSeed 为新建的 OpenAI OAuth 账号补齐随机种子。
 // 已有种子保持不变，保证数据库备份、恢复和进程重启后身份继续稳定。
 func EnsureCodexFingerprintSeed(account *Account) string {
@@ -390,7 +832,7 @@ func resolveConvergedSessionID(account *Account) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7("sub2api:codex-session-id:v3:" + seed)
+	return deriveStableUUIDv7ForAccount(account, "sub2api:codex-session-id:v3:"+seed)
 }
 
 // resolveConvergedCockpitSessionID derives one stable server-side session per
@@ -403,7 +845,7 @@ func resolveConvergedCockpitSessionID(account *Account, conversationSeed string)
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, strings.TrimSpace(conversationSeed)))
+	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, strings.TrimSpace(conversationSeed)))
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
@@ -417,7 +859,23 @@ func resolveConvergedThreadID(account *Account, clientSessionID string) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
+	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
+}
+
+// resolveCodexRootTurnID follows Codex turn-tree semantics without creating an
+// account-persistent root mapping. A supplied root without a parent denotes a
+// top-level turn, whose root is the newly generated turn ID. A supplied root
+// with a parent is a child lineage value and is inherited verbatim. Missing
+// root values remain missing for older clients such as Codex 0.145.
+func resolveCodexRootTurnID(originalRootTurnID, parentTurnID, turnID string) string {
+	originalRootTurnID = strings.TrimSpace(originalRootTurnID)
+	if originalRootTurnID == "" {
+		return ""
+	}
+	if strings.TrimSpace(parentTurnID) == "" {
+		return strings.TrimSpace(turnID)
+	}
+	return originalRootTurnID
 }
 
 // resolveConvergedPromptCacheKey 按账号和客户端原始缓存键稳定派生上游缓存键。
@@ -430,7 +888,7 @@ func resolveConvergedPromptCacheKey(account *Account, promptCacheKey string) str
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-prompt-cache-key:v3:%s:%s", seed, strings.TrimSpace(promptCacheKey)))
+	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-prompt-cache-key:v3:%s:%s", seed, strings.TrimSpace(promptCacheKey)))
 }
 
 // resolveOfficialCockpitPromptCacheKey 对齐 Codex 默认规则：显式缓存键原样保留，
@@ -457,14 +915,20 @@ func resolveCockpitConversationSeed(source codexFingerprintSource) string {
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
 type codexFingerprintSource struct {
-	installationID       string
-	clientSessionID      string
-	originalSessionID    string
-	threadID             string
-	turnID               string
-	windowID             string
-	promptCacheKey       string
-	promptCacheKeyInBody bool
+	clientVersion         string
+	installationID        string
+	clientSessionID       string
+	originalSessionID     string
+	threadID              string
+	turnID                string
+	parentTurnID          string
+	rootTurnID            string
+	windowID              string
+	contextWindowID       string
+	promptCacheKey        string
+	promptCacheKeyInBody  bool
+	rootTurnIDInBody      bool
+	contextWindowIDInBody bool
 }
 
 // codexFingerprintIDs 收敛后的完整 ID 集合。
@@ -473,24 +937,33 @@ type codexFingerprintSource struct {
 type codexFingerprintIDs struct {
 	// stagedAccountID 记录本次请求实际调度的账号。Spark 影子的身份字段由父账号
 	// 派生，但暂存值只能由同一个影子尝试读取，避免 OAuth→OAuth failover 误用。
-	stagedAccountID        int64
-	stagedAccountBound     bool
-	mode                   codexFingerprintMode
-	originalInstallationID string
-	installationID         string
-	originalSessionID      string
-	sessionID              string
-	originalThreadID       string
-	threadID               string
-	originalTurnID         string
-	turnID                 string
-	turnStartedAtUnixMS    int64
-	originalWindowID       string
-	windowID               string
-	originalPromptCacheKey string
-	promptCacheKey         string
+	stagedAccountID         int64
+	stagedAccountBound      bool
+	mode                    codexFingerprintMode
+	extendedTurnIdentity    bool
+	originalInstallationID  string
+	installationID          string
+	originalSessionID       string
+	sessionID               string
+	originalThreadID        string
+	threadID                string
+	originalTurnID          string
+	turnID                  string
+	originalParentTurnID    string
+	parentTurnID            string
+	originalRootTurnID      string
+	rootTurnID              string
+	originalContextWindowID string
+	contextWindowID         string
+	contextWindowIDInBody   bool
+	turnStartedAtUnixMS     int64
+	originalWindowID        string
+	windowID                string
+	originalPromptCacheKey  string
+	promptCacheKey          string
 	// promptCacheKeyInBody 区分原请求体字段与仅用于 Header 的兼容缓存键。
 	promptCacheKeyInBody bool
+	rootTurnIDInBody     bool
 }
 
 // bindCodexFingerprintIDsToAccount 将派生结果绑定到本次实际调度账号。
@@ -519,14 +992,20 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 	}
 
 	ids := &codexFingerprintIDs{
-		mode:                   mode,
-		turnStartedAtUnixMS:    time.Now().UnixMilli(),
-		originalInstallationID: strings.TrimSpace(source.installationID),
-		originalSessionID:      strings.TrimSpace(source.originalSessionID),
-		originalThreadID:       strings.TrimSpace(source.threadID),
-		originalTurnID:         strings.TrimSpace(source.turnID),
-		originalWindowID:       strings.TrimSpace(source.windowID),
-		originalPromptCacheKey: strings.TrimSpace(source.promptCacheKey),
+		mode:                    mode,
+		extendedTurnIdentity:    codexSupportsExtendedTurnIdentity(source.clientVersion),
+		turnStartedAtUnixMS:     time.Now().UnixMilli(),
+		originalInstallationID:  strings.TrimSpace(source.installationID),
+		originalSessionID:       strings.TrimSpace(source.originalSessionID),
+		originalThreadID:        strings.TrimSpace(source.threadID),
+		originalTurnID:          strings.TrimSpace(source.turnID),
+		originalParentTurnID:    strings.TrimSpace(source.parentTurnID),
+		originalRootTurnID:      strings.TrimSpace(source.rootTurnID),
+		originalContextWindowID: strings.TrimSpace(source.contextWindowID),
+		originalWindowID:        strings.TrimSpace(source.windowID),
+		originalPromptCacheKey:  strings.TrimSpace(source.promptCacheKey),
+		rootTurnIDInBody:        source.rootTurnIDInBody,
+		contextWindowIDInBody:   source.contextWindowIDInBody,
 	}
 	if ids.originalSessionID == "" {
 		ids.originalSessionID = strings.TrimSpace(source.clientSessionID)
@@ -554,7 +1033,14 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			ids.threadID = ids.sessionID
 		}
 		ids.turnID = newCodexUUIDv7().String()
-		ids.windowID = ids.threadID + ":0"
+		if ids.extendedTurnIdentity {
+			ids.parentTurnID = ids.originalParentTurnID
+			ids.rootTurnID = resolveCodexRootTurnID(ids.originalRootTurnID, ids.originalParentTurnID, ids.turnID)
+		}
+		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
+		if ids.extendedTurnIdentity {
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID, ids.originalContextWindowID)
+		}
 		return ids
 
 	case codexFingerprintCockpit:
@@ -576,7 +1062,14 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		}
 
 		ids.turnID = newCodexUUIDv7().String()
-		ids.windowID = ids.threadID + ":0"
+		if ids.extendedTurnIdentity {
+			ids.parentTurnID = ids.originalParentTurnID
+			ids.rootTurnID = resolveCodexRootTurnID(ids.originalRootTurnID, ids.originalParentTurnID, ids.turnID)
+		}
+		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
+		if ids.extendedTurnIdentity {
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID, ids.originalContextWindowID)
+		}
 		ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, source.promptCacheKey)
 		// Preserve whether the client supplied the key in the body. Header-only
 		// compatibility keys stay header-only; an explicit body key is copied
@@ -591,7 +1084,14 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		}
 		ids.threadID = ids.sessionID
 		ids.turnID = newCodexUUIDv7().String()
-		ids.windowID = ids.threadID + ":0"
+		if ids.extendedTurnIdentity {
+			ids.parentTurnID = ids.originalParentTurnID
+			ids.rootTurnID = resolveCodexRootTurnID(ids.originalRootTurnID, ids.originalParentTurnID, ids.turnID)
+		}
+		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
+		if ids.extendedTurnIdentity {
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID, ids.originalContextWindowID)
+		}
 		return ids
 	}
 
@@ -628,7 +1128,10 @@ func firstNonEmptyCodexValue(values ...string) string {
 
 // extractCockpitFingerprintSource 按 Cockpit 的兼容顺序从头和请求体提取身份来源。
 func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) codexFingerprintSource {
-	source := codexFingerprintSource{clientSessionID: extractClientSessionID(h)}
+	source := codexFingerprintSource{
+		clientSessionID: extractClientSessionID(h),
+		clientVersion:   codexClientVersionFromHeaders(h),
+	}
 	clientMetadata, _ := reqBody["client_metadata"].(map[string]any)
 	embeddedTurnMetadata := extractCodexStringField(clientMetadata, "x-codex-turn-metadata")
 	headerTurnMetadata := ""
@@ -681,6 +1184,21 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		extractCodexTurnMetadataField(embeddedTurnMetadata, "turn_id"),
 		extractCodexTurnMetadataField(headerTurnMetadata, "turn_id"),
 	)
+	source.parentTurnID = firstNonEmptyCodexValue(
+		extractCodexStringField(reqBody, "parent_turn_id"),
+		extractCodexStringField(clientMetadata, "parent_turn_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "parent_turn_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "parent_turn_id"),
+		h.Get("x-codex-parent-turn-id"),
+	)
+	source.rootTurnID = firstNonEmptyCodexValue(
+		extractCodexStringField(reqBody, "root_turn_id"),
+		extractCodexStringField(clientMetadata, "root_turn_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "root_turn_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "root_turn_id"),
+		h.Get("x-codex-root-turn-id"),
+	)
+	source.rootTurnIDInBody = extractCodexStringField(reqBody, "root_turn_id") != ""
 	source.windowID = firstNonEmptyCodexValue(
 		extractCodexStringField(clientMetadata, "x-codex-window-id"),
 		extractCodexStringField(reqBody, "window_id"),
@@ -688,6 +1206,14 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		extractCodexTurnMetadataField(embeddedTurnMetadata, "window_id"),
 		extractCodexTurnMetadataField(headerTurnMetadata, "window_id"),
 	)
+	source.contextWindowID = firstNonEmptyCodexValue(
+		extractCodexStringField(reqBody, "context_window_id"),
+		extractCodexStringField(clientMetadata, "context_window_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "context_window_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "context_window_id"),
+		h.Get("x-codex-context-window-id"),
+	)
+	source.contextWindowIDInBody = extractCodexStringField(reqBody, "context_window_id") != ""
 	source.promptCacheKey = extractCodexStringField(reqBody, "prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
 	if source.promptCacheKey == "" {
@@ -708,7 +1234,10 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 // extractCockpitFingerprintSourceRaw 从原始 JSON 中局部读取 Cockpit 身份字段，
 // 避免 OAuth 透传路径为大请求体做整包反序列化。
 func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerprintSource {
-	source := codexFingerprintSource{clientSessionID: extractClientSessionID(h)}
+	source := codexFingerprintSource{
+		clientSessionID: extractClientSessionID(h),
+		clientVersion:   codexClientVersionFromHeaders(h),
+	}
 	read := func(path string) string {
 		return strings.TrimSpace(gjson.GetBytes(body, path).String())
 	}
@@ -763,6 +1292,21 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		extractCodexTurnMetadataField(embeddedTurnMetadata, "turn_id"),
 		extractCodexTurnMetadataField(headerTurnMetadata, "turn_id"),
 	)
+	source.parentTurnID = firstNonEmptyCodexValue(
+		read("parent_turn_id"),
+		read("client_metadata.parent_turn_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "parent_turn_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "parent_turn_id"),
+		h.Get("x-codex-parent-turn-id"),
+	)
+	source.rootTurnID = firstNonEmptyCodexValue(
+		read("root_turn_id"),
+		read("client_metadata.root_turn_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "root_turn_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "root_turn_id"),
+		h.Get("x-codex-root-turn-id"),
+	)
+	source.rootTurnIDInBody = read("root_turn_id") != ""
 	source.windowID = firstNonEmptyCodexValue(
 		read("client_metadata.x-codex-window-id"),
 		read("window_id"),
@@ -770,6 +1314,14 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		extractCodexTurnMetadataField(embeddedTurnMetadata, "window_id"),
 		extractCodexTurnMetadataField(headerTurnMetadata, "window_id"),
 	)
+	source.contextWindowID = firstNonEmptyCodexValue(
+		read("context_window_id"),
+		read("client_metadata.context_window_id"),
+		extractCodexTurnMetadataField(embeddedTurnMetadata, "context_window_id"),
+		extractCodexTurnMetadataField(headerTurnMetadata, "context_window_id"),
+		h.Get("x-codex-context-window-id"),
+	)
+	source.contextWindowIDInBody = read("context_window_id") != ""
 	source.promptCacheKey = read("prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
 	if source.promptCacheKey == "" {
@@ -838,8 +1390,11 @@ func resolveCodexFingerprintIDsFromRawRequest(account *Account, clientHeaders ht
 func codexFingerprintResponseMappings(ids *codexFingerprintIDs) [][2]string {
 	return [][2]string{
 		{ids.windowID, ids.originalWindowID},
+		{ids.contextWindowID, ids.originalContextWindowID},
 		{ids.promptCacheKey, ids.originalPromptCacheKey},
 		{ids.turnID, ids.originalTurnID},
+		{ids.parentTurnID, ids.originalParentTurnID},
+		{ids.rootTurnID, ids.originalRootTurnID},
 		{ids.installationID, ids.originalInstallationID},
 		{ids.sessionID, ids.originalSessionID},
 		{ids.threadID, ids.originalThreadID},
@@ -860,8 +1415,12 @@ func restoreCodexFingerprintFieldValue(field, value string, ids *codexFingerprin
 		from, to = ids.threadID, ids.originalThreadID
 	case "turn_id", "turn-id":
 		from, to = ids.turnID, ids.originalTurnID
+	case "root_turn_id", "root-turn-id", "x-codex-root-turn-id":
+		from, to = ids.rootTurnID, ids.originalRootTurnID
 	case "window_id", "window-id", "x-codex-window-id":
 		from, to = ids.windowID, ids.originalWindowID
+	case "context_window_id", "context-window-id", "x-codex-context-window-id":
+		from, to = ids.contextWindowID, ids.originalContextWindowID
 	case "prompt_cache_key", "prompt-cache-key", "conversation_id":
 		from, to = ids.promptCacheKey, ids.originalPromptCacheKey
 	default:
@@ -1050,6 +1609,9 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	if h == nil || ids == nil {
 		return
 	}
+	if !ids.extendedTurnIdentity {
+		stripUnsupportedCodexExtendedTurnIdentity(h)
+	}
 
 	// 所有非 off 模式都收敛 installation_id
 	h.Set("x-codex-installation-id", ids.installationID)
@@ -1080,8 +1642,17 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMS,
 	}
+	if ids.parentTurnID != "" {
+		fields["parent_turn_id"] = ids.parentTurnID
+	}
+	if ids.rootTurnID != "" {
+		fields["root_turn_id"] = ids.rootTurnID
+	}
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" {
 		fields["prompt_cache_key"] = ids.promptCacheKey
+	}
+	if ids.contextWindowID != "" {
+		fields["context_window_id"] = ids.contextWindowID
 	}
 	rewriteCodexTurnMetadataFields(h, fields)
 }
@@ -1107,11 +1678,79 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	h.Set("x-codex-turn-metadata", string(rebuilt))
 }
 
+// stripUnsupportedCodexExtendedTurnIdentity removes fields introduced after
+// Codex 0.151 from requests sent on older client wire contracts.
+func stripUnsupportedCodexExtendedTurnIdentity(h http.Header) {
+	if h == nil {
+		return
+	}
+	for _, key := range []string{
+		"parent_turn_id", "root_turn_id", "context_window_id",
+		"x-codex-parent-turn-id", "x-codex-root-turn-id", "x-codex-context-window-id",
+	} {
+		h.Del(key)
+	}
+	raw := strings.TrimSpace(h.Get("x-codex-turn-metadata"))
+	if raw == "" {
+		return
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return
+	}
+	if stripUnsupportedCodexExtendedTurnIdentityMap(metadata) {
+		if rebuilt, err := json.Marshal(metadata); err == nil {
+			h.Set("x-codex-turn-metadata", string(rebuilt))
+		}
+	}
+}
+
+func stripUnsupportedCodexExtendedTurnIdentityMap(values map[string]any) bool {
+	if values == nil {
+		return false
+	}
+	modified := false
+	for _, key := range []string{
+		"parent_turn_id", "root_turn_id", "context_window_id",
+		"parent-turn-id", "root-turn-id", "context-window-id",
+		"x-codex-parent-turn-id", "x-codex-root-turn-id", "x-codex-context-window-id",
+	} {
+		if _, exists := values[key]; exists {
+			delete(values, key)
+			modified = true
+		}
+	}
+	if raw, ok := values["x-codex-turn-metadata"].(string); ok && strings.TrimSpace(raw) != "" {
+		var nested map[string]any
+		if err := json.Unmarshal([]byte(raw), &nested); err == nil && stripUnsupportedCodexExtendedTurnIdentityMap(nested) {
+			if rebuilt, err := json.Marshal(nested); err == nil {
+				values["x-codex-turn-metadata"] = string(rebuilt)
+				modified = true
+			}
+		}
+	}
+	return modified
+}
+
+func stripUnsupportedCodexExtendedTurnIdentityBody(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	modified := stripUnsupportedCodexExtendedTurnIdentityMap(reqBody)
+	if metadata, ok := reqBody["client_metadata"].(map[string]any); ok && stripUnsupportedCodexExtendedTurnIdentityMap(metadata) {
+		modified = true
+	}
+	return modified
+}
+
 // applyCodexFingerprintClientMetadata 按预计算的收敛 ID 改写请求体中的 client_metadata。
 // 使用与头改写相同的 ids 实例，确保 turn_id 等随机字段一致。
 func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFingerprintIDs) bool {
 	if reqBody == nil || ids == nil {
 		return false
+	}
+	if !ids.extendedTurnIdentity {
+		stripUnsupportedCodexExtendedTurnIdentityBody(reqBody)
 	}
 
 	existing, _ := reqBody["client_metadata"].(map[string]any)
@@ -1124,6 +1763,15 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" && ids.promptCacheKeyInBody {
 		reqBody["prompt_cache_key"] = ids.promptCacheKey
 	}
+	if ids.rootTurnID != "" && ids.rootTurnIDInBody {
+		reqBody["root_turn_id"] = ids.rootTurnID
+	}
+	if ids.contextWindowID != "" && ids.contextWindowIDInBody {
+		reqBody["context_window_id"] = ids.contextWindowID
+	}
+	if ids.extendedTurnIdentity && ids.parentTurnID != "" {
+		reqBody["parent_turn_id"] = ids.parentTurnID
+	}
 	reqBody["client_metadata"] = existing
 	return true
 }
@@ -1133,6 +1781,9 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *codexFingerprintIDs) bool {
 	if existing == nil || ids == nil {
 		return false
+	}
+	if !ids.extendedTurnIdentity {
+		stripUnsupportedCodexExtendedTurnIdentityMap(existing)
 	}
 
 	modified := false
@@ -1154,6 +1805,15 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["thread_id"] = ids.threadID
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
+	if ids.extendedTurnIdentity && ids.parentTurnID != "" {
+		existing["parent_turn_id"] = ids.parentTurnID
+	}
+	if ids.rootTurnID != "" {
+		existing["root_turn_id"] = ids.rootTurnID
+	}
+	if ids.contextWindowID != "" {
+		existing["context_window_id"] = ids.contextWindowID
+	}
 
 	fields := map[string]any{
 		"installation_id":         ids.installationID,
@@ -1163,8 +1823,17 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMS,
 	}
+	if ids.extendedTurnIdentity && ids.parentTurnID != "" {
+		fields["parent_turn_id"] = ids.parentTurnID
+	}
+	if ids.rootTurnID != "" {
+		fields["root_turn_id"] = ids.rootTurnID
+	}
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" {
 		fields["prompt_cache_key"] = ids.promptCacheKey
+	}
+	if ids.contextWindowID != "" {
+		fields["context_window_id"] = ids.contextWindowID
 	}
 	rewriteClientMetadataEmbeddedTurnMetadata(existing, fields)
 	return true
@@ -1201,6 +1870,32 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 		updated, err = sjson.SetBytes(updated, "prompt_cache_key", ids.promptCacheKey)
 		if err != nil {
 			return body, false, fmt.Errorf("splice converged prompt_cache_key: %w", err)
+		}
+	}
+	if ids.rootTurnID != "" && ids.rootTurnIDInBody {
+		updated, err = sjson.SetBytes(updated, "root_turn_id", ids.rootTurnID)
+		if err != nil {
+			return body, false, fmt.Errorf("splice converged root_turn_id: %w", err)
+		}
+	}
+	if ids.contextWindowID != "" && ids.contextWindowIDInBody {
+		updated, err = sjson.SetBytes(updated, "context_window_id", ids.contextWindowID)
+		if err != nil {
+			return body, false, fmt.Errorf("splice converged context_window_id: %w", err)
+		}
+	}
+	if ids.extendedTurnIdentity && ids.parentTurnID != "" {
+		updated, err = sjson.SetBytes(updated, "parent_turn_id", ids.parentTurnID)
+		if err != nil {
+			return body, false, fmt.Errorf("splice converged parent_turn_id: %w", err)
+		}
+	}
+	if !ids.extendedTurnIdentity {
+		for _, path := range []string{"parent_turn_id", "root_turn_id", "context_window_id"} {
+			updated, err = sjson.DeleteBytes(updated, path)
+			if err != nil {
+				return body, false, fmt.Errorf("remove unsupported %s: %w", path, err)
+			}
 		}
 	}
 	return updated, true, nil

@@ -430,6 +430,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
 				account,
 			)
+			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
 		}
 		codexResult := codexTransformResult{}
 		if compatMessagesBridge {
@@ -453,6 +454,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
 				account,
 			)
+			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
 			// Messages 兼容桥可能把 prompt_cache_key 从 Body 移到 Header；Cockpit
 			// 仍使用服务器派生的 session 作为上游缓存键。
 			if fingerprintIDs != nil && fingerprintIDs.mode == codexFingerprintCockpit && fingerprintIDs.promptCacheKey == "" && codexResult.PromptCacheKey != "" {
