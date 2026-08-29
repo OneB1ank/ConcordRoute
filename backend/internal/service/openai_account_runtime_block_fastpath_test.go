@@ -27,6 +27,59 @@ func TestOpenAI429FastPath_MarksOAuthAccountCoolingDown(t *testing.T) {
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(apiKeyAccount))
 }
 
+func TestOpenAI429FastPath_SparkQuotaIsModelScoped(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	account := &Account{ID: 420, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	body := []byte(`{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	shouldDisable := svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, headers, body, "gpt-5.3-codex-spark")
+
+	require.False(t, shouldDisable)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.3-codex-spark", repo.modelRateLimitCalls[0].scope)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAI429FastPath_SparkTransientUsesShortModelCooldown(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	account := &Account{ID: 421, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"try again later"}}`)
+
+	shouldDisable := svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, body, "gpt-5.3-codex-spark")
+
+	require.False(t, shouldDisable)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.3-codex-spark", repo.modelRateLimitCalls[0].scope)
+	require.Less(t, time.Until(repo.modelRateLimitCalls[0].resetAt), time.Minute)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
+func TestOpenAIWSSemantic429_IgnoresHandshakeQuotaHeadersForOrdinaryModel(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	account := &Account{ID: 422, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	body := []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+
+	decision := svc.handleOpenAIWSErrorEventTransientFailure(context.Background(), account, "gpt-5.3-codex", headers, body)
+
+	require.False(t, decision.StopScheduling)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 // TestOpenAI429FastPath_SkipsSparkShadow 外审第8轮 P1:spark 影子被选中后若 /responses 返回 429,
 // 不得按 global x-codex-* 信号写内存运行时熔断(否则 spark 被冷却到 global reset、单影子场景无可用账号)。
 func TestOpenAI429FastPath_SkipsSparkShadow(t *testing.T) {

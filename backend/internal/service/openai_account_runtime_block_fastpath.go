@@ -166,6 +166,10 @@ func (s *OpenAIGatewayService) applyOpenAIAccountUpstreamErrorInternal(
 	if len(canonicalModel) > 0 {
 		preferredModel = canonicalModel[0]
 	}
+	if statusCode == http.StatusTooManyRequests && s.rateLimitService != nil &&
+		s.rateLimitService.HandleOpenAICodexSparkRateLimit(stateCtx, account, preferredModel, statusCode, headers, responseBody) {
+		return decision
+	}
 	if statusCode == http.StatusTooManyRequests && s.codexQuotaOverdraft != nil &&
 		s.codexQuotaOverdraft.HandleQuota429(stateCtx, account, headers, responseBody, preferredModel) {
 		// 明确的订阅额度 429 交给账号级 CPA 透支状态机；普通瞬时 429 仍走既有路径。

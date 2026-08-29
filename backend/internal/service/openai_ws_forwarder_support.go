@@ -367,7 +367,25 @@ func (s *OpenAIGatewayService) applyOpenAIWSEventErrorPolicy(
 	if account != nil && account.Platform == PlatformGrok {
 		return s.applyGrokAccountUpstreamError(ctx, account, statusCode, headers, payload, canonicalModel)
 	}
+	if statusCode == http.StatusTooManyRequests && len(payload) > 0 {
+		headers = openAIWSSemantic429Headers(account, canonicalModel, headers)
+		if isCodexSparkModel(canonicalModel) && isOpenAIOAuthAccount(account) ||
+			openAIStreamFailedEventIsDefiniteQuotaLimit(payload, extractUpstreamErrorMessage(payload)) {
+			return s.applyOpenAIAccountUpstreamError(ctx, account, statusCode, headers, payload, canonicalModel)
+		}
+		return s.applyOpenAIAccountStreamRateLimitError(ctx, account, statusCode, headers, payload, canonicalModel)
+	}
 	return s.applyOpenAIAccountUpstreamError(ctx, account, statusCode, headers, payload, canonicalModel)
+}
+
+// openAIWSSemantic429Headers discards connection-level quota snapshots for
+// ordinary post-handshake WS errors.  Spark OAuth quota errors are the scoped
+// exception because their model-level handler needs the x-codex-* headers.
+func openAIWSSemantic429Headers(account *Account, model string, headers http.Header) http.Header {
+	if isCodexSparkModel(model) && isOpenAIOAuthAccount(account) {
+		return headers
+	}
+	return nil
 }
 
 // shouldFailoverOpenAIWSError 使用对应平台的 HTTP 错误分类作为 WS 握手和事件错误的默认切号规则。

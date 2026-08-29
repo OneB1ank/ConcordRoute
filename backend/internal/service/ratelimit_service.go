@@ -2336,6 +2336,52 @@ func (s *RateLimitService) HandleOpenAIImageRateLimit(ctx context.Context, accou
 	return true
 }
 
+// HandleOpenAICodexSparkRateLimit keeps Spark's subscription-window 429 scoped
+// to the requested model.  The x-codex-* headers on a Spark response describe
+// that model's quota and must not pause every model on the OAuth account.
+// Transient 429s use the short configurable fallback cooldown.
+func (s *RateLimitService) HandleOpenAICodexSparkRateLimit(ctx context.Context, account *Account, requestedModel string, statusCode int, headers http.Header, responseBody []byte) bool {
+	if s == nil || account == nil || s.accountRepo == nil || statusCode != http.StatusTooManyRequests || !isOpenAIOAuthAccount(account) {
+		return false
+	}
+	if !isCodexSparkModel(requestedModel) || !account.ShouldHandleErrorCode(statusCode) {
+		return false
+	}
+	modelKey := strings.TrimSpace(modelRateLimitKeyForUpstreamModelNotFound(ctx, account, requestedModel))
+	if modelKey == "" {
+		return false
+	}
+
+	now := time.Now()
+	var resetAt *time.Time
+	if classifyCodexQuota429(headers, responseBody) == codexQuota429QuotaExhausted {
+		resetAt = s.calculateOpenAI429ResetTime(headers)
+		if resetAt == nil {
+			if resetUnix := parseOpenAIRateLimitResetTime(responseBody); resetUnix != nil {
+				candidate := time.Unix(*resetUnix, 0)
+				if candidate.After(now) {
+					resetAt = &candidate
+				}
+			}
+		}
+	}
+	if resetAt == nil || !resetAt.After(now) {
+		cooldown, enabled := s.get429FallbackCooldown(ctx, account)
+		if !enabled || cooldown <= 0 {
+			// Keep the model isolated even when the optional fallback pause is
+			// disabled; the caller must not escalate this semantic 429 to account scope.
+			return true
+		}
+		candidate := now.Add(cooldown)
+		resetAt = &candidate
+	}
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, *resetAt, openAICodexSparkRateLimitReason); err != nil {
+		slog.Warn("openai_codex_spark_model_rate_limit_set_failed", "account_id", account.ID, "model", modelKey, "error", err)
+	}
+	slog.Info("openai_codex_spark_model_rate_limited", "account_id", account.ID, "model", modelKey, "reset_at", *resetAt)
+	return true
+}
+
 func isOpenAIImageRateLimitError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusTooManyRequests || len(body) == 0 {
 		return false
