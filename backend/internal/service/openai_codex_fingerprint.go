@@ -2,12 +2,15 @@ package service
 
 import (
 	"bytes"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -152,6 +155,145 @@ func deriveStableUUIDv4(seed string) string {
 		b[10:16])
 }
 
+var codexFallbackUUIDv7 sync.Map
+
+// codexUUIDv7Context mirrors uuid 1.20.0's shared ContextV7 used by
+// Codex's Rust runtime: a 41-bit random seed is selected whenever the
+// millisecond changes, then a 42-bit counter advances monotonically while
+// the clock is stationary or moves backwards.
+const codexUUIDv7MaxCounter = (uint64(1) << 42) - 1
+
+type codexUUIDv7Context struct {
+	mu          sync.Mutex
+	initialized bool
+	timestampMS uint64
+	lastSeedMS  uint64
+	counter     uint64
+}
+
+var codexUUIDv7Shared codexUUIDv7Context
+
+func codexUUIDv7Random41() uint64 {
+	var b [8]byte
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		// This path is only reached when the OS random source fails. Keep the
+		// shape valid and let the UUID random tail provide additional entropy.
+		return uint64(time.Now().UnixNano()) & ((uint64(1) << 41) - 1)
+	}
+	return binary.BigEndian.Uint64(b[:]) & ((uint64(1) << 41) - 1)
+}
+
+// encodeCodexUUIDv7 applies uuid 1.20.0's counter/variant layout exactly.
+// The top 12 counter bits are shifted around the RFC variant gap; the
+// remaining 30 counter bits follow it, and the rest of the 74-bit suffix is
+// random.
+func encodeCodexUUIDv7(timestampMS, counter uint64, randomBytes [16]byte) uuid.UUID {
+	counter &= codexUUIDv7MaxCounter
+	counter44 := (counter & ((uint64(1) << 30) - 1)) | ((counter >> 30) << 32)
+
+	var cr [16]byte
+	cb := [6]byte{
+		byte(counter44 >> 36),
+		byte(counter44 >> 28),
+		byte(counter44 >> 20),
+		byte(counter44 >> 12),
+		byte(counter44 >> 4),
+		byte(counter44 & 0x0f),
+	}
+	cr[0], cr[1], cr[2], cr[3], cr[4] = cb[0], cb[1], cb[2], cb[3], cb[4]
+	cr[5] = (cb[5] << 4) | (randomBytes[5] & 0x0f)
+	copy(cr[6:], randomBytes[6:])
+
+	var out [16]byte
+	out[0] = byte(timestampMS >> 40)
+	out[1] = byte(timestampMS >> 32)
+	out[2] = byte(timestampMS >> 24)
+	out[3] = byte(timestampMS >> 16)
+	out[4] = byte(timestampMS >> 8)
+	out[5] = byte(timestampMS)
+	out[6] = 0x70 | (cr[0] & 0x0f)
+	out[7] = cr[1]
+	out[8] = 0x80 | (cr[2] & 0x3f)
+	copy(out[9:], cr[3:10])
+	return uuid.UUID(out)
+}
+
+func newCodexUUIDv7() uuid.UUID {
+	now := time.Now().UnixMilli()
+	if now < 0 {
+		now = 0
+	}
+	nowMS := uint64(now)
+
+	codexUUIDv7Shared.mu.Lock()
+	if !codexUUIDv7Shared.initialized || nowMS > codexUUIDv7Shared.lastSeedMS {
+		codexUUIDv7Shared.initialized = true
+		codexUUIDv7Shared.timestampMS = nowMS
+		codexUUIDv7Shared.lastSeedMS = nowMS
+		codexUUIDv7Shared.counter = codexUUIDv7Random41()
+	} else {
+		codexUUIDv7Shared.counter++
+		if codexUUIDv7Shared.counter > codexUUIDv7MaxCounter {
+			codexUUIDv7Shared.timestampMS++
+			codexUUIDv7Shared.lastSeedMS = codexUUIDv7Shared.timestampMS
+			codexUUIDv7Shared.counter = codexUUIDv7Random41()
+		}
+	}
+	timestampMS := codexUUIDv7Shared.timestampMS
+	counter := codexUUIDv7Shared.counter
+	codexUUIDv7Shared.mu.Unlock()
+
+	var randomBytes [16]byte
+	if _, err := cryptorand.Read(randomBytes[:]); err != nil {
+		return uuid.Must(uuid.NewV7())
+	}
+	return encodeCodexUUIDv7(timestampMS, counter, randomBytes)
+}
+
+// deriveStableUUIDv7 为缺少官方身份字段的桥接请求生成一次 UUIDv7。
+// 生成器使用与 Codex Rust uuid 1.20.0 相同的 ContextV7 低 74 位布局；
+// 结果按种子缓存，使同一进程内的同一账号/对话保持稳定，避免每轮请求改变缓存亲和。
+func deriveStableUUIDv7(seed string) string {
+	seed = strings.TrimSpace(seed)
+	if seed == "" {
+		return ""
+	}
+	if existing, ok := codexFallbackUUIDv7.Load(seed); ok {
+		return existing.(string)
+	}
+	generated := newCodexUUIDv7().String()
+	actual, _ := codexFallbackUUIDv7.LoadOrStore(seed, generated)
+	return actual.(string)
+}
+
+func normalizeCodexUUIDv7(raw, fallbackSeed string) string {
+	raw = strings.TrimSpace(raw)
+	if parsed, err := uuid.Parse(raw); err == nil && parsed.Version() == uuid.Version(7) {
+		return parsed.String()
+	}
+	if strings.TrimSpace(fallbackSeed) == "" {
+		return ""
+	}
+	return deriveStableUUIDv7(fallbackSeed)
+}
+
+// normalizeCodexWindowID 保留官方 <thread_id>:<generation> 线格式。
+// 客户端缺少或携带旧式裸 UUID 时，按当前出站 thread_id 回退到首个窗口。
+func normalizeCodexWindowID(raw, threadID string) string {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return ""
+	}
+	raw = strings.TrimSpace(raw)
+	if idx := strings.LastIndex(raw, ":"); idx > 0 && idx < len(raw)-1 {
+		generation := strings.TrimSpace(raw[idx+1:])
+		if n, err := strconv.ParseUint(generation, 10, 64); err == nil {
+			return threadID + ":" + strconv.FormatUint(n, 10)
+		}
+	}
+	return threadID + ":0"
+}
+
 // EnsureCodexFingerprintSeed 为新建的 OpenAI OAuth 账号补齐随机种子。
 // 已有种子保持不变，保证数据库备份、恢复和进程重启后身份继续稳定。
 func EnsureCodexFingerprintSeed(account *Account) string {
@@ -241,7 +383,7 @@ func resolveConvergedSessionID(account *Account) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4("sub2api:codex-session-id:v2:" + seed)
+	return deriveStableUUIDv7("sub2api:codex-session-id:v3:" + seed)
 }
 
 // resolveConvergedCockpitSessionID 按账号和对话种子稳定派生 Cockpit session_id。
@@ -254,7 +396,7 @@ func resolveConvergedCockpitSessionID(account *Account, conversationSeed string)
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-cockpit-session-id:v1:%s:%s", seed, strings.TrimSpace(conversationSeed)))
+	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, strings.TrimSpace(conversationSeed)))
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
@@ -268,7 +410,20 @@ func resolveConvergedThreadID(account *Account, clientSessionID string) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-thread-id:v2:%s:%s", seed, clientSessionID))
+	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
+}
+
+// resolveConvergedCockpitThreadID 按 Cockpit 对话种子稳定派生子线程 UUIDv7。
+// 根线程直接复用 session_id；仅当客户端提供不同 thread 值时使用该函数。
+func resolveConvergedCockpitThreadID(account *Account, threadSeed string) string {
+	if account == nil || strings.TrimSpace(threadSeed) == "" {
+		return ""
+	}
+	seed := resolveCodexFingerprintSeed(account)
+	if seed == "" {
+		return ""
+	}
+	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-cockpit-thread-id:v2:%s:%s", seed, strings.TrimSpace(threadSeed)))
 }
 
 // resolveConvergedPromptCacheKey 按账号和客户端原始缓存键稳定派生上游缓存键。
@@ -281,7 +436,16 @@ func resolveConvergedPromptCacheKey(account *Account, promptCacheKey string) str
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-prompt-cache-key:v2:%s:%s", seed, strings.TrimSpace(promptCacheKey)))
+	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-prompt-cache-key:v3:%s:%s", seed, strings.TrimSpace(promptCacheKey)))
+}
+
+// resolveOfficialCockpitPromptCacheKey 对齐 Codex 默认规则：显式缓存键原样保留，
+// 缺省时使用根 session_id；不再为缓存键额外构造一个带伪时间戳的 UUIDv7。
+func resolveOfficialCockpitPromptCacheKey(sessionID, promptCacheKey string) string {
+	if key := strings.TrimSpace(promptCacheKey); key != "" {
+		return key
+	}
+	return strings.TrimSpace(sessionID)
 }
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
@@ -382,30 +546,42 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		if ids.threadID == "" {
 			ids.threadID = ids.sessionID
 		}
-		ids.turnID = uuid.Must(uuid.NewV7()).String()
+		ids.turnID = newCodexUUIDv7().String()
 		ids.windowID = ids.threadID + ":0"
 		return ids
 
 	case codexFingerprintCockpit:
-		// Cockpit 把 installation 固定在账号级，但 session/thread/cache 都绑定
-		// 到同一个对话种子。这样既保留单设备外观，又避免多个独立对话共享
-		// 一个异常长寿命 session。缺少任何对话信号时回退旧账号级 session，
-		// 保持不携带身份字段的旧客户端兼容。
+		// Cockpit 使用服务器派生值作为出站身份主值；客户端字段只参与
+		// 对话种子和响应关联，避免共享账号暴露多个原始客户端 session/thread。
+		// Keep the highest-quality conversation signal as a seed, but never
+		// expose the client value directly: derive a server-owned UUIDv7.
 		conversationSeed := resolveCockpitConversationSeed(source)
-		ids.sessionID = resolveConvergedCockpitSessionID(account, conversationSeed)
-		if ids.sessionID == "" {
-			ids.sessionID = resolveConvergedSessionID(account)
+		if strings.TrimSpace(conversationSeed) == "" {
+			conversationSeed = "default"
 		}
+		ids.sessionID = resolveConvergedCockpitSessionID(account, conversationSeed)
 		if ids.sessionID == "" {
 			return nil
 		}
-		ids.threadID = resolveConvergedThreadID(account, conversationSeed)
-		if ids.threadID == "" {
+
+		if strings.TrimSpace(source.threadID) == "" || strings.TrimSpace(source.threadID) == strings.TrimSpace(source.originalSessionID) {
+			// Official root threads share the session ID.
 			ids.threadID = ids.sessionID
+		} else {
+			ids.threadID = resolveConvergedCockpitThreadID(account, source.threadID)
+			if ids.threadID == "" {
+				ids.threadID = ids.sessionID
+			}
 		}
-		ids.turnID = uuid.Must(uuid.NewV7()).String()
-		ids.windowID = ids.threadID + ":0"
-		ids.promptCacheKey = resolveConvergedPromptCacheKey(account, source.promptCacheKey)
+
+		ids.turnID = newCodexUUIDv7().String()
+		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
+		// Derive the upstream cache key from the server session; retain only the
+		// original value in ids.originalPromptCacheKey for response correlation.
+		ids.promptCacheKey = ids.sessionID
+		// Preserve whether the client supplied the key in the body. Header-only
+		// compatibility keys must stay header-only; injecting a new body field
+		// changes the request shape and can split upstream cache prefixes.
 		ids.promptCacheKeyInBody = source.promptCacheKeyInBody
 		return ids
 
@@ -415,7 +591,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			return nil
 		}
 		ids.threadID = ids.sessionID
-		ids.turnID = uuid.Must(uuid.NewV7()).String()
+		ids.turnID = newCodexUUIDv7().String()
 		ids.windowID = ids.threadID + ":0"
 		return ids
 	}

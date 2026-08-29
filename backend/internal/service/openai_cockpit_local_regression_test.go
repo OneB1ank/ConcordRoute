@@ -134,7 +134,8 @@ func TestLocalCockpitIdentityTopologyAndFailover(t *testing.T) {
 	require.NotEqual(t, conversationA1.ids.threadID, conversationB.ids.threadID)
 	require.NotEqual(t, conversationA1.ids.promptCacheKey, conversationB.ids.promptCacheKey)
 
-	// Failover must regenerate every account-scoped stable identity for the selected account.
+	// Failover must regenerate all server-owned Cockpit identities for the
+	// selected account, including the derived upstream cache key.
 	require.True(t, conversationA1.ids.stagedAccountBound)
 	require.Equal(t, accountA.ID, conversationA1.ids.stagedAccountID)
 	require.True(t, failoverA.ids.stagedAccountBound)

@@ -60,7 +60,7 @@ func (s *OpenAIGatewayService) prepareMessagesCodexFingerprint(
 	}
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey == "" && strings.TrimSpace(promptCacheKey) != "" {
 		ids.originalPromptCacheKey = strings.TrimSpace(promptCacheKey)
-		ids.promptCacheKey = resolveConvergedPromptCacheKey(fingerprintAccount, promptCacheKey)
+		ids.promptCacheKey = ids.sessionID
 	}
 	applyCodexFingerprintClientMetadata(reqBody, ids)
 	stageCodexFingerprintIDs(c, ids)

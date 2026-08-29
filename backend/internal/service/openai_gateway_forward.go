@@ -453,10 +453,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
 				account,
 			)
-			// Messages 兼容桥会把 prompt_cache_key 从 Body 移到 Header；Cockpit 模式仍需对该键做账号级稳定派生。
+			// Messages 兼容桥可能把 prompt_cache_key 从 Body 移到 Header；Cockpit
+			// 仍使用服务器派生的 session 作为上游缓存键。
 			if fingerprintIDs != nil && fingerprintIDs.mode == codexFingerprintCockpit && fingerprintIDs.promptCacheKey == "" && codexResult.PromptCacheKey != "" {
 				fingerprintIDs.originalPromptCacheKey = strings.TrimSpace(codexResult.PromptCacheKey)
-				fingerprintIDs.promptCacheKey = resolveConvergedPromptCacheKey(fingerprintAccount, codexResult.PromptCacheKey)
+				fingerprintIDs.promptCacheKey = fingerprintIDs.sessionID
 			}
 			if applyCodexFingerprintClientMetadata(decoded, fingerprintIDs) {
 				markDecodedModified()

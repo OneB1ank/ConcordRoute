@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -43,6 +45,176 @@ func TestDeriveStableUUIDv4_ValidFormat(t *testing.T) {
 	require.NoError(t, err, "应返回合法 UUID 格式")
 	assert.Equal(t, uuid.Version(4), parsed.Version(), "应为 UUIDv4")
 	assert.Equal(t, uuid.RFC4122, parsed.Variant(), "应为 RFC4122 变体")
+}
+
+func TestDeriveStableUUIDv7_DeterministicAndCanonical(t *testing.T) {
+	a := deriveStableUUIDv7("test-seed-1")
+	b := deriveStableUUIDv7("test-seed-1")
+	require.Equal(t, a, b)
+	parsed, err := uuid.Parse(a)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(7), parsed.Version())
+	assert.Equal(t, uuid.RFC4122, parsed.Variant())
+	createdMS := (uint64(parsed[0]) << 40) | (uint64(parsed[1]) << 32) | (uint64(parsed[2]) << 24) | (uint64(parsed[3]) << 16) | (uint64(parsed[4]) << 8) | uint64(parsed[5])
+	assert.LessOrEqual(t, time.Duration(time.Now().UnixMilli()-int64(createdMS))*time.Millisecond, 5*time.Second)
+}
+
+func TestEncodeCodexUUIDv7_MatchesRustLayout(t *testing.T) {
+	var randomBytes [16]byte
+	for i := range randomBytes {
+		randomBytes[i] = byte(i)
+	}
+	timestampMS := uint64(0x0123456789ab)
+	counter := uint64(0x2a3456789ab)
+	got := encodeCodexUUIDv7(timestampMS, counter, randomBytes)
+
+	// uuid 1.20.0: shift the upper 12 counter bits around the RFC variant
+	// gap, retain the low 30 bits, then overlay the random 74-bit suffix.
+	counter44 := (counter & ((uint64(1) << 30) - 1)) | ((counter >> 30) << 32)
+	assert.Equal(t, byte(0x70)|byte(counter44>>36)&0x0f, got[6])
+	assert.Equal(t, byte(counter44>>28), got[7])
+	assert.Equal(t, byte(0x80)|byte(counter44>>20)&0x3f, got[8])
+	assert.Equal(t, byte(counter44>>12), got[9])
+	assert.Equal(t, byte(counter44>>4), got[10])
+	assert.Equal(t, byte(counter44<<4)|0x05, got[11])
+	assert.Equal(t, byte(0x06), got[12])
+	assert.Equal(t, byte(0x07), got[13])
+	assert.Equal(t, byte(0x08), got[14])
+	assert.Equal(t, byte(0x09), got[15])
+	assert.Equal(t, uuid.Version(7), got.Version())
+	assert.Equal(t, uuid.RFC4122, got.Variant())
+}
+
+func TestNewCodexUUIDv7_MonotonicWithinClockTick(t *testing.T) {
+	first := newCodexUUIDv7()
+	second := newCodexUUIDv7()
+	assert.Less(t, bytes.Compare(first[:], second[:]), 0, "官方 ContextV7 低 74 位应保持单调")
+}
+
+func TestCockpitIdentityGraph_RootAndChildTopology(t *testing.T) {
+	account := newTestOAuthAccount(100, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	root := codexFingerprintSource{
+		originalSessionID: "not-a-uuid",
+	}
+	rootIDs := resolveCodexFingerprintIDsWithSource(account, root, codexFingerprintCockpit)
+	require.NotNil(t, rootIDs)
+	rootSession, err := uuid.Parse(rootIDs.sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(7), rootSession.Version())
+	assert.Equal(t, rootIDs.sessionID, rootIDs.threadID)
+	assert.Equal(t, rootIDs.sessionID, rootIDs.promptCacheKey)
+
+	child := root
+	child.threadID = "child-thread"
+	child.promptCacheKey = ""
+	child.turnID = uuid.Must(uuid.NewV7()).String()
+	child.windowID = uuid.Must(uuid.NewV7()).String()
+	childIDs := resolveCodexFingerprintIDsWithSource(account, child, codexFingerprintCockpit)
+	require.NotNil(t, childIDs)
+	assert.NotEqual(t, childIDs.sessionID, childIDs.threadID)
+	assert.NotEqual(t, child.turnID, childIDs.turnID)
+	assert.Equal(t, childIDs.threadID+":0", childIDs.windowID)
+	assert.Equal(t, childIDs.sessionID, childIDs.promptCacheKey)
+}
+
+func TestCockpitIdentityGraph_HeaderOnlyCacheKeyPreservesBodyShape(t *testing.T) {
+	account := newTestOAuthAccount(101, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	ids := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		originalSessionID:    "session",
+		promptCacheKey:       "header-cache",
+		promptCacheKeyInBody: false,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, ids)
+	body := map[string]any{}
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.NotContains(t, body, "prompt_cache_key")
+}
+
+func TestCockpitIdentityGraph_ServerDerivesCanonicalClientUUIDv7(t *testing.T) {
+	account := newTestOAuthAccount(102, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	sessionID := uuid.Must(uuid.NewV7()).String()
+	threadID := uuid.Must(uuid.NewV7()).String()
+	turnID := uuid.Must(uuid.NewV7()).String()
+	windowID := threadID + ":0"
+	ids := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		originalSessionID: sessionID,
+		threadID:          threadID,
+		turnID:            turnID,
+		windowID:          windowID,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, ids)
+	assert.Equal(t, resolveConvergedCockpitSessionID(account, threadID), ids.sessionID)
+	assert.Equal(t, resolveConvergedCockpitThreadID(account, threadID), ids.threadID)
+	assert.NotEqual(t, sessionID, ids.sessionID)
+	assert.NotEqual(t, threadID, ids.threadID)
+	assert.NotEqual(t, turnID, ids.turnID)
+	assert.Equal(t, ids.threadID+":0", ids.windowID)
+	assert.Equal(t, ids.sessionID, ids.promptCacheKey)
+}
+
+func TestNormalizeCodexWindowIDUsesOfficialWireShape(t *testing.T) {
+	threadID := uuid.Must(uuid.NewV7()).String()
+	assert.Equal(t, threadID+":0", normalizeCodexWindowID("", threadID))
+	assert.Equal(t, threadID+":3", normalizeCodexWindowID("foreign-thread:3", threadID))
+	assert.Equal(t, threadID+":0", normalizeCodexWindowID(uuid.Must(uuid.NewV7()).String(), threadID))
+	assert.Empty(t, normalizeCodexWindowID("thread:0", ""))
+}
+
+func TestCockpitIdentityGraph_LocalSimulation(t *testing.T) {
+	account := newTestOAuthAccount(103, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	rootSession := uuid.Must(uuid.NewV7()).String()
+	root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		originalSessionID: rootSession,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, root)
+
+	installation, err := uuid.Parse(root.installationID)
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Version(4), installation.Version())
+	for name, value := range map[string]string{
+		"session_id": root.sessionID,
+		"thread_id":  root.threadID,
+		"turn_id":    root.turnID,
+		"cache_key":  root.promptCacheKey,
+	} {
+		parsed, parseErr := uuid.Parse(value)
+		require.NoError(t, parseErr, name)
+		assert.Equal(t, uuid.Version(7), parsed.Version(), name)
+		assert.Equal(t, uuid.RFC4122, parsed.Variant(), name)
+	}
+	assert.Equal(t, root.threadID+":0", root.windowID)
+	assert.Equal(t, root.sessionID, root.threadID)
+	assert.Equal(t, root.sessionID, root.promptCacheKey)
+
+	childThread := uuid.Must(uuid.NewV7()).String()
+	childTurn := uuid.Must(uuid.NewV7()).String()
+	childWindow := childThread + ":0"
+	child := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		originalSessionID:    rootSession,
+		threadID:             childThread,
+		turnID:               childTurn,
+		windowID:             childWindow,
+		promptCacheKey:       "child-cache",
+		promptCacheKeyInBody: true,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, child)
+	assert.NotEqual(t, root.sessionID, child.sessionID)
+	assert.Equal(t, resolveConvergedCockpitThreadID(account, childThread), child.threadID)
+	assert.NotEqual(t, child.sessionID, child.threadID)
+	assert.NotEqual(t, childTurn, child.turnID)
+	assert.Equal(t, child.threadID+":0", child.windowID)
+
+	headers := make(http.Header)
+	applyCodexFingerprintHeaders(headers, child)
+	body := map[string]any{}
+	require.True(t, applyCodexFingerprintClientMetadata(body, child))
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, headers.Get("session-id"), metadata["session_id"])
+	assert.Equal(t, headers.Get("thread-id"), metadata["thread_id"])
+	assert.Equal(t, headers.Get("x-codex-window-id"), metadata["x-codex-window-id"])
+	assert.Equal(t, child.promptCacheKey, body["prompt_cache_key"])
+	t.Logf("installation_id=%s session_id=%s thread_id=%s turn_id=%s window_id=%s prompt_cache_key=%s", root.installationID, child.sessionID, child.threadID, child.turnID, child.windowID, child.promptCacheKey)
 }
 
 func TestCodexFingerprintSeed_ShadowUsesParentSeed(t *testing.T) {
@@ -463,8 +635,9 @@ func TestCockpitMode_UsesBodyFallbackAndRewritesPromptCacheKey(t *testing.T) {
 	require.NotNil(t, ids)
 	assert.Equal(t, codexFingerprintCockpit, ids.mode)
 	assert.Equal(t, resolveConvergedCockpitSessionID(account, "body-thread-A"), ids.sessionID)
-	assert.Equal(t, resolveConvergedThreadID(account, "body-thread-A"), ids.threadID)
-	expectedCacheKey := resolveConvergedPromptCacheKey(account, "client-cache-A")
+	assert.Equal(t, resolveConvergedCockpitThreadID(account, "body-thread-A"), ids.threadID)
+	expectedCacheKey := ids.sessionID
+	assert.NotEqual(t, "client-cache-A", ids.promptCacheKey)
 	assert.Equal(t, expectedCacheKey, ids.promptCacheKey)
 
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
@@ -541,9 +714,9 @@ func TestCockpitMode_ThreadSeedPrefersBodyThreadThenPromptCache(t *testing.T) {
 	require.NotNil(t, idsThread)
 	require.NotNil(t, idsCacheA)
 	require.NotNil(t, idsCacheB)
-	assert.Equal(t, resolveConvergedThreadID(account, "body-thread"), idsThread.threadID)
-	assert.Equal(t, resolveConvergedThreadID(account, "cache-a"), idsCacheA.threadID)
-	assert.Equal(t, resolveConvergedThreadID(account, "cache-b"), idsCacheB.threadID)
+	assert.Equal(t, resolveConvergedCockpitThreadID(account, "body-thread"), idsThread.threadID)
+	assert.Equal(t, idsCacheA.sessionID, idsCacheA.threadID, "缺少 thread_id 时 root thread 与 session 相同")
+	assert.Equal(t, idsCacheB.sessionID, idsCacheB.threadID, "缺少 thread_id 时 root thread 与 session 相同")
 	assert.Equal(t, resolveConvergedCockpitSessionID(account, "body-thread"), idsThread.sessionID)
 	assert.Equal(t, resolveConvergedCockpitSessionID(account, "cache-a"), idsCacheA.sessionID)
 	assert.Equal(t, resolveConvergedCockpitSessionID(account, "cache-b"), idsCacheB.sessionID)
@@ -817,8 +990,9 @@ func TestCockpitMode_RawBodyFallbackAndPromptCacheRewrite(t *testing.T) {
 
 	ids := resolveCodexFingerprintIDsFromRawRequest(account, nil, body)
 	require.NotNil(t, ids)
-	assert.Equal(t, resolveConvergedThreadID(account, "raw-thread"), ids.threadID)
-	expectedCacheKey := resolveConvergedPromptCacheKey(account, "raw-cache")
+	assert.Equal(t, resolveConvergedCockpitThreadID(account, "raw-thread"), ids.threadID)
+	expectedCacheKey := ids.sessionID
+	assert.NotEqual(t, "raw-cache", ids.promptCacheKey)
 	assert.Equal(t, expectedCacheKey, ids.promptCacheKey)
 
 	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
@@ -847,8 +1021,8 @@ func TestCockpitMode_ExtractsOriginalIdentityFromEmbeddedTurnMetadata(t *testing
 	assert.Equal(t, "embedded-turn", ids.originalTurnID)
 	assert.Equal(t, "embedded-window", ids.originalWindowID)
 	assert.Equal(t, "embedded-cache", ids.originalPromptCacheKey)
-	assert.Equal(t, resolveConvergedThreadID(account, "embedded-thread"), ids.threadID)
-	assert.Equal(t, resolveConvergedPromptCacheKey(account, "embedded-cache"), ids.promptCacheKey)
+	assert.Equal(t, resolveConvergedCockpitThreadID(account, "embedded-thread"), ids.threadID)
+	assert.Equal(t, ids.sessionID, ids.promptCacheKey)
 }
 
 func TestStageCodexFingerprintIDs_NilClearsPriorAttempt(t *testing.T) {
