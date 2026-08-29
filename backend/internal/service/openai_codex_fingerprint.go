@@ -223,11 +223,16 @@ type codexIdentityHotBinding struct {
 
 func codexIdentityBindingLock(accountID int64) *sync.Mutex {
 	if existing, ok := codexIdentityBindingLocks.Load(accountID); ok {
-		return existing.(*sync.Mutex)
+		if mutex, ok := existing.(*sync.Mutex); ok {
+			return mutex
+		}
 	}
 	created := &sync.Mutex{}
 	actual, _ := codexIdentityBindingLocks.LoadOrStore(accountID, created)
-	return actual.(*sync.Mutex)
+	if mutex, ok := actual.(*sync.Mutex); ok {
+		return mutex
+	}
+	return created
 }
 
 func codexIdentitySeedKey(seed string) string {
@@ -647,17 +652,6 @@ func deriveStableUUIDv7(seed string) string {
 	}
 	codexFallbackUUIDv7.Store(seed, generated)
 	return generated
-}
-
-func normalizeCodexUUIDv7(raw, fallbackSeed string) string {
-	raw = strings.TrimSpace(raw)
-	if parsed, err := uuid.Parse(raw); err == nil && parsed.Version() == uuid.Version(7) && parsed.Variant() == uuid.RFC4122 {
-		return parsed.String()
-	}
-	if strings.TrimSpace(fallbackSeed) == "" {
-		return ""
-	}
-	return deriveStableUUIDv7(fallbackSeed)
 }
 
 // normalizeCodexWindowID 保留官方 <thread_id>:<generation> 线格式。

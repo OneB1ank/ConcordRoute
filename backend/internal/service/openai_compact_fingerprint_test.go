@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -52,8 +53,18 @@ func TestOpenAIOAuthCompactConvergesFingerprintHeadersWithoutChangingSchema(t *t
 			require.Error(t, err)
 			require.NotNil(t, upstream.lastReq)
 			require.Equal(t, resolveConvergedInstallationID(account), upstream.lastReq.Header.Get("x-codex-installation-id"))
-			require.Equal(t, sessionID, upstream.lastReq.Header.Get("session-id"))
-			require.Equal(t, threadID, upstream.lastReq.Header.Get("thread-id"))
+			gotSession := upstream.lastReq.Header.Get("session-id")
+			gotThread := upstream.lastReq.Header.Get("thread-id")
+			require.NotEqual(t, sessionID, gotSession, "Cockpit derives server-side session identity")
+			require.NotEqual(t, threadID, gotThread, "Cockpit derives server-side thread identity")
+			parsedSession, err := uuid.Parse(gotSession)
+			require.NoError(t, err)
+			require.Equal(t, uuid.Version(7), parsedSession.Version())
+			require.Equal(t, uuid.RFC4122, parsedSession.Variant())
+			parsedThread, err := uuid.Parse(gotThread)
+			require.NoError(t, err)
+			require.Equal(t, uuid.Version(7), parsedThread.Version())
+			require.Equal(t, uuid.RFC4122, parsedThread.Variant())
 			require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata").Exists())
 			require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 		})
