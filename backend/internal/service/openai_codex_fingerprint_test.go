@@ -113,7 +113,7 @@ func TestCockpitIdentityGraph_RootAndChildTopology(t *testing.T) {
 	childIDs := resolveCodexFingerprintIDsWithSource(account, child, codexFingerprintCockpit)
 	require.NotNil(t, childIDs)
 	assert.NotEqual(t, childIDs.sessionID, childIDs.threadID)
-	assert.Equal(t, child.turnID, childIDs.turnID)
+	assert.NotEqual(t, child.turnID, childIDs.turnID)
 	assert.Equal(t, childIDs.threadID+":0", childIDs.windowID)
 	assert.Equal(t, childIDs.sessionID, childIDs.promptCacheKey)
 }
@@ -131,7 +131,7 @@ func TestCockpitIdentityGraph_HeaderOnlyCacheKeyPreservesBodyShape(t *testing.T)
 	assert.NotContains(t, body, "prompt_cache_key")
 }
 
-func TestCockpitIdentityGraph_PrefersValidClientUUIDv7(t *testing.T) {
+func TestCockpitIdentityGraph_ServerFieldsAndClientCacheKey(t *testing.T) {
 	account := newTestOAuthAccount(102, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	sessionID := uuid.Must(uuid.NewV7()).String()
 	threadID := uuid.Must(uuid.NewV7()).String()
@@ -142,13 +142,24 @@ func TestCockpitIdentityGraph_PrefersValidClientUUIDv7(t *testing.T) {
 		threadID:          threadID,
 		turnID:            turnID,
 		windowID:          windowID,
+		promptCacheKey:    "client-cache",
 	}, codexFingerprintCockpit)
 	require.NotNil(t, ids)
-	assert.Equal(t, sessionID, ids.sessionID)
-	assert.Equal(t, threadID, ids.threadID)
-	assert.Equal(t, turnID, ids.turnID)
-	assert.Equal(t, threadID+":0", ids.windowID)
-	assert.Equal(t, ids.sessionID, ids.promptCacheKey)
+	assert.NotEqual(t, sessionID, ids.sessionID)
+	assert.NotEqual(t, threadID, ids.threadID)
+	assert.NotEqual(t, turnID, ids.turnID)
+	assert.NotEqual(t, windowID, ids.windowID)
+	assert.Equal(t, "client-cache", ids.promptCacheKey)
+	for name, value := range map[string]string{
+		"session_id": ids.sessionID,
+		"thread_id":  ids.threadID,
+		"turn_id":    ids.turnID,
+	} {
+		parsed, parseErr := uuid.Parse(value)
+		require.NoError(t, parseErr, name)
+		assert.Equal(t, uuid.Version(7), parsed.Version(), name)
+		assert.Equal(t, uuid.RFC4122, parsed.Variant(), name)
+	}
 }
 
 func TestNormalizeCodexWindowIDUsesOfficialWireShape(t *testing.T) {
@@ -197,10 +208,10 @@ func TestCockpitIdentityGraph_LocalSimulation(t *testing.T) {
 		promptCacheKeyInBody: true,
 	}, codexFingerprintCockpit)
 	require.NotNil(t, child)
-	assert.Equal(t, root.sessionID, child.sessionID)
-	assert.Equal(t, childThread, child.threadID)
+	assert.NotEqual(t, root.sessionID, child.sessionID)
+	assert.NotEqual(t, childThread, child.threadID)
 	assert.NotEqual(t, child.sessionID, child.threadID)
-	assert.Equal(t, childTurn, child.turnID)
+	assert.NotEqual(t, childTurn, child.turnID)
 	assert.Equal(t, child.threadID+":0", child.windowID)
 	assert.Equal(t, "child-cache", child.promptCacheKey)
 
@@ -716,8 +727,8 @@ func TestCockpitMode_ThreadSeedPrefersBodyThreadThenPromptCache(t *testing.T) {
 	assert.NotEqual(t, "body-thread", idsThread.threadID)
 	assert.NotEqual(t, idsCacheA.sessionID, idsCacheA.threadID, "缺少 thread_id 时使用稳定 fallback thread")
 	assert.NotEqual(t, idsCacheB.sessionID, idsCacheB.threadID, "缺少 thread_id 时使用稳定 fallback thread")
-	assert.Equal(t, idsCacheA.sessionID, idsCacheB.sessionID)
-	assert.Equal(t, idsCacheA.threadID, idsCacheB.threadID)
+	assert.NotEqual(t, idsCacheA.sessionID, idsCacheB.sessionID, "不同客户端缓存键应隔离服务端 session")
+	assert.NotEqual(t, idsCacheA.threadID, idsCacheB.threadID, "不同客户端缓存键应隔离服务端 thread")
 	assert.Equal(t, "cache-a", idsCacheA.promptCacheKey)
 	assert.Equal(t, "cache-b", idsCacheB.promptCacheKey)
 }

@@ -128,15 +128,15 @@ func TestLocalCockpitIdentityTopologyAndFailover(t *testing.T) {
 	require.Equal(t, conversationA1.headers, retryA1.headers)
 	require.Equal(t, conversationA1.body, retryA1.body)
 
-	// Different conversations in one client session retain the session anchor,
-	// while thread and explicit cache identities remain isolated.
+	// Different conversations receive isolated server-derived session/thread
+	// identities, while explicit client cache identities remain isolated.
 	require.Equal(t, conversationA1.ids.installationID, conversationB.ids.installationID)
-	require.Equal(t, conversationA1.ids.sessionID, conversationB.ids.sessionID)
+	require.NotEqual(t, conversationA1.ids.sessionID, conversationB.ids.sessionID)
 	require.NotEqual(t, conversationA1.ids.threadID, conversationB.ids.threadID)
 	require.NotEqual(t, conversationA1.ids.promptCacheKey, conversationB.ids.promptCacheKey)
 
-	// Failover changes only server fallbacks; valid client identities remain
-	// reusable, while invalid/missing values are account-scoped.
+	// Failover changes server-derived identities with the account, while the
+	// explicit client cache key remains reusable for the same conversation.
 	require.True(t, conversationA1.ids.stagedAccountBound)
 	require.Equal(t, accountA.ID, conversationA1.ids.stagedAccountID)
 	require.True(t, failoverA.ids.stagedAccountBound)

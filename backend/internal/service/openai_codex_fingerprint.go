@@ -393,6 +393,19 @@ func resolveConvergedSessionID(account *Account) string {
 	return deriveStableUUIDv7("sub2api:codex-session-id:v3:" + seed)
 }
 
+// resolveConvergedCockpitSessionID derives one stable server-side session per
+// Cockpit conversation while keeping the installation identity account-scoped.
+func resolveConvergedCockpitSessionID(account *Account, conversationSeed string) string {
+	if account == nil || strings.TrimSpace(conversationSeed) == "" {
+		return ""
+	}
+	seed := resolveCodexFingerprintSeed(account)
+	if seed == "" {
+		return ""
+	}
+	return deriveStableUUIDv7(fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, strings.TrimSpace(conversationSeed)))
+}
+
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
 // 每个真实 Codex 会话（不同客户端启动实例）获得一个独立线程，
 // 模拟正常用户 spawn 子代理或开多窗口的模式。
@@ -427,6 +440,17 @@ func resolveOfficialCockpitPromptCacheKey(sessionID, promptCacheKey string) stri
 		return key
 	}
 	return strings.TrimSpace(sessionID)
+}
+
+// resolveCockpitConversationSeed uses client conversation markers only as the
+// deterministic input for server-generated session and thread identities.
+func resolveCockpitConversationSeed(source codexFingerprintSource) string {
+	return firstNonEmptyCodexValue(
+		source.threadID,
+		source.promptCacheKey,
+		source.originalSessionID,
+		source.clientSessionID,
+	)
 }
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
@@ -532,35 +556,29 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		return ids
 
 	case codexFingerprintCockpit:
-		// Preserve valid client identities. Server-generated values are strictly
-		// fallbacks for missing or malformed UUIDv7 fields, avoiding cache splits
-		// caused by rewriting a stable client conversation on every request.
-		seed := resolveCodexFingerprintSeed(account)
-		sessionRaw := firstNonEmptyCodexValue(source.originalSessionID, source.clientSessionID)
-		sessionFallback := fmt.Sprintf("sub2api:codex-cockpit-session-fallback:v1:%s:%s", seed, firstNonEmptyCodexValue(sessionRaw, source.threadID, source.promptCacheKey, "default"))
-		ids.sessionID = normalizeCodexUUIDv7(sessionRaw, sessionFallback)
+		// Cockpit keeps device and conversation identity server-derived. Client
+		// conversation fields are used only as a stable seed; the explicit
+		// prompt_cache_key remains the one client-controlled cache identity.
+		conversationSeed := resolveCockpitConversationSeed(source)
+		ids.sessionID = resolveConvergedCockpitSessionID(account, conversationSeed)
+		if ids.sessionID == "" {
+			ids.sessionID = resolveConvergedSessionID(account)
+		}
 		if ids.sessionID == "" {
 			return nil
 		}
 
-		threadRaw := strings.TrimSpace(source.threadID)
-		threadFallback := fmt.Sprintf("sub2api:codex-cockpit-thread-fallback:v1:%s:%s", seed, firstNonEmptyCodexValue(threadRaw, sessionRaw, ids.sessionID))
-		ids.threadID = normalizeCodexUUIDv7(threadRaw, threadFallback)
+		ids.threadID = resolveConvergedThreadID(account, conversationSeed)
 		if ids.threadID == "" {
 			ids.threadID = ids.sessionID
 		}
 
-		if turnRaw := strings.TrimSpace(source.turnID); turnRaw != "" {
-			ids.turnID = normalizeCodexUUIDv7(turnRaw, "")
-		}
-		if ids.turnID == "" {
-			ids.turnID = newCodexUUIDv7().String()
-		}
-		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
+		ids.turnID = newCodexUUIDv7().String()
+		ids.windowID = ids.threadID + ":0"
 		ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, source.promptCacheKey)
 		// Preserve whether the client supplied the key in the body. Header-only
-		// compatibility keys must stay header-only; injecting a new body field
-		// changes the request shape and can split upstream cache prefixes.
+		// compatibility keys stay header-only; an explicit body key is copied
+		// byte-for-byte so upstream cache prefixes remain stable.
 		ids.promptCacheKeyInBody = source.promptCacheKeyInBody
 		return ids
 
