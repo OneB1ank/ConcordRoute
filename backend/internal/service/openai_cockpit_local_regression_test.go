@@ -128,14 +128,15 @@ func TestLocalCockpitIdentityTopologyAndFailover(t *testing.T) {
 	require.Equal(t, conversationA1.headers, retryA1.headers)
 	require.Equal(t, conversationA1.body, retryA1.body)
 
-	// Different conversations on one account share only the installation identity.
+	// Different conversations in one client session retain the session anchor,
+	// while thread and explicit cache identities remain isolated.
 	require.Equal(t, conversationA1.ids.installationID, conversationB.ids.installationID)
-	require.NotEqual(t, conversationA1.ids.sessionID, conversationB.ids.sessionID)
+	require.Equal(t, conversationA1.ids.sessionID, conversationB.ids.sessionID)
 	require.NotEqual(t, conversationA1.ids.threadID, conversationB.ids.threadID)
 	require.NotEqual(t, conversationA1.ids.promptCacheKey, conversationB.ids.promptCacheKey)
 
-	// Failover must regenerate all server-owned Cockpit identities for the
-	// selected account, including the derived upstream cache key.
+	// Failover changes only server fallbacks; valid client identities remain
+	// reusable, while invalid/missing values are account-scoped.
 	require.True(t, conversationA1.ids.stagedAccountBound)
 	require.Equal(t, accountA.ID, conversationA1.ids.stagedAccountID)
 	require.True(t, failoverA.ids.stagedAccountBound)
@@ -143,5 +144,5 @@ func TestLocalCockpitIdentityTopologyAndFailover(t *testing.T) {
 	require.NotEqual(t, conversationA1.ids.installationID, failoverA.ids.installationID)
 	require.NotEqual(t, conversationA1.ids.sessionID, failoverA.ids.sessionID)
 	require.NotEqual(t, conversationA1.ids.threadID, failoverA.ids.threadID)
-	require.NotEqual(t, conversationA1.ids.promptCacheKey, failoverA.ids.promptCacheKey)
+	require.Equal(t, conversationA1.ids.promptCacheKey, failoverA.ids.promptCacheKey)
 }
