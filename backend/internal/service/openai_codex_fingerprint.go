@@ -251,7 +251,7 @@ func rememberCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs, key
 	defer codexPromptCacheCarry.Unlock()
 	if _, exists := codexPromptCacheCarry.items[cacheKey]; !exists && len(codexPromptCacheCarry.items) >= codexPromptCacheCarryMaxEntries {
 		var oldestKey string
-		var oldest int64 = now
+		oldest := now
 		for candidate, entry := range codexPromptCacheCarry.items {
 			if entry.LastUsedAt <= oldest {
 				oldestKey, oldest = candidate, entry.LastUsedAt
