@@ -606,7 +606,7 @@ func TestCockpitIdentityGraph_ServerFieldsAndClientCacheKey(t *testing.T) {
 	}
 }
 
-func TestCockpitIdentityGraph_ExplicitCacheKeyDrivesFinalConversationSeed(t *testing.T) {
+func TestCockpitIdentityGraph_ClientSessionAndThreadKeepServerIdentityAcrossCacheRotation(t *testing.T) {
 	account := newTestOAuthAccount(104, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	base := codexFingerprintSource{
 		clientSessionID: "client-session",
@@ -621,15 +621,16 @@ func TestCockpitIdentityGraph_ExplicitCacheKeyDrivesFinalConversationSeed(t *tes
 	second := resolveCodexFingerprintIDsWithSource(account, changedThread, codexFingerprintCockpit)
 	require.NotNil(t, second)
 	assert.Equal(t, first.sessionID, second.sessionID)
-	assert.Equal(t, first.threadID, second.threadID)
+	assert.NotEqual(t, first.threadID, second.threadID, "客户端 thread 变化应切换服务器 thread")
 	assert.Equal(t, "cache-a", first.promptCacheKey)
 
 	changedCache := base
 	changedCache.promptCacheKey = "cache-b"
 	third := resolveCodexFingerprintIDsWithSource(account, changedCache, codexFingerprintCockpit)
 	require.NotNil(t, third)
-	assert.NotEqual(t, first.sessionID, third.sessionID)
-	assert.NotEqual(t, first.threadID, third.threadID)
+	assert.Equal(t, first.sessionID, third.sessionID, "客户端缓存键轮换不应切分服务器 session")
+	assert.Equal(t, first.threadID, third.threadID, "客户端缓存键轮换不应切分服务器 thread")
+	assert.Equal(t, "cache-b", third.promptCacheKey, "显式缓存键仍由客户端控制并原样保留")
 }
 
 func TestNormalizeCodexWindowIDUsesOfficialWireShape(t *testing.T) {
@@ -678,7 +679,7 @@ func TestCockpitIdentityGraph_LocalSimulation(t *testing.T) {
 		promptCacheKeyInBody: true,
 	}, codexFingerprintCockpit)
 	require.NotNil(t, child)
-	assert.NotEqual(t, root.sessionID, child.sessionID)
+	assert.Equal(t, root.sessionID, child.sessionID, "同一客户端 session 下的子线程保持服务器 session")
 	assert.NotEqual(t, childThread, child.threadID)
 	assert.NotEqual(t, child.sessionID, child.threadID)
 	assert.NotEqual(t, childTurn, child.turnID)
@@ -1166,7 +1167,7 @@ func TestCockpitMode_PromptCacheFallbackKeepsConversationStable(t *testing.T) {
 	assert.NotEqual(t, idsA.turnID, idsB.turnID, "不同请求仍应生成独立 turn")
 }
 
-func TestCockpitMode_ThreadSeedPrefersBodyThreadThenPromptCache(t *testing.T) {
+func TestCockpitMode_ThreadSeedPrefersSessionAndThreadThenPromptCache(t *testing.T) {
 	account := newTestOAuthAccount(9, map[string]any{
 		codexFingerprintModeExtraKey: "cockpit",
 	})
@@ -1197,8 +1198,8 @@ func TestCockpitMode_ThreadSeedPrefersBodyThreadThenPromptCache(t *testing.T) {
 	assert.NotEqual(t, "body-thread", idsThread.threadID)
 	assert.NotEqual(t, idsCacheA.sessionID, idsCacheA.threadID, "缺少 thread_id 时使用稳定 fallback thread")
 	assert.NotEqual(t, idsCacheB.sessionID, idsCacheB.threadID, "缺少 thread_id 时使用稳定 fallback thread")
-	assert.NotEqual(t, idsCacheA.sessionID, idsCacheB.sessionID, "不同客户端缓存键应隔离服务端 session")
-	assert.NotEqual(t, idsCacheA.threadID, idsCacheB.threadID, "不同客户端缓存键应隔离服务端 thread")
+	assert.Equal(t, idsCacheA.sessionID, idsCacheB.sessionID, "缓存键轮换不应改变稳定客户端 session")
+	assert.Equal(t, idsCacheA.threadID, idsCacheB.threadID, "缓存键轮换不应改变稳定客户端 thread")
 	assert.Equal(t, "cache-a", idsCacheA.promptCacheKey)
 	assert.Equal(t, "cache-b", idsCacheB.promptCacheKey)
 }

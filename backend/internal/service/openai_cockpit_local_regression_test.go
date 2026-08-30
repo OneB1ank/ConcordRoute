@@ -110,7 +110,9 @@ func TestLocalCockpitIdentityTopologyAndFailover(t *testing.T) {
 	conversationA1 := captureLocalCockpitIdentity(t, accountA, "thread-a", "cache-a", "session-shared", nil)
 	conversationA2 := captureLocalCockpitIdentity(t, accountA, "thread-a", "cache-a", "session-shared", nil)
 	retryA1 := captureLocalCockpitIdentity(t, accountA, "thread-a", "cache-a", "session-shared", conversationA1.ids)
-	conversationB := captureLocalCockpitIdentity(t, accountA, "thread-b", "cache-b", "session-shared", nil)
+	// A distinct conversation carries its own client session marker. Prompt
+	// cache rotation within one session is covered by the fingerprint tests.
+	conversationB := captureLocalCockpitIdentity(t, accountA, "thread-b", "cache-b", "session-b", nil)
 	failoverA := captureLocalCockpitIdentity(t, accountB, "thread-a", "cache-a", "session-shared", nil)
 
 	for _, snapshot := range []localCockpitIdentitySnapshot{conversationA1, conversationA2, retryA1, conversationB, failoverA} {

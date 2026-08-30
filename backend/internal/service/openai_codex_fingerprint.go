@@ -894,16 +894,28 @@ func resolveOfficialCockpitPromptCacheKey(sessionID, promptCacheKey string) stri
 	return strings.TrimSpace(sessionID)
 }
 
-// resolveCockpitConversationSeed chooses the final Codex conversation seed.
-// An explicit prompt_cache_key is the strongest conversation/cache marker;
-// thread/session markers are fallbacks.  Account affinity is resolved
-// separately from the client's session-id in the gateway scheduler.
-func resolveCockpitConversationSeed(source codexFingerprintSource) string {
+// resolveCockpitSessionSeed chooses the stable server-side session seed.
+// Session markers are preferred so a client-side prompt_cache_key rotation
+// (for example after compaction) does not split the server session binding.
+func resolveCockpitSessionSeed(source codexFingerprintSource) string {
 	return firstNonEmptyCodexValue(
-		source.promptCacheKey,
-		source.threadID,
-		source.originalSessionID,
 		source.clientSessionID,
+		source.originalSessionID,
+		source.threadID,
+		source.promptCacheKey,
+	)
+}
+
+// resolveCockpitThreadSeed keeps thread identity tied to the client's thread
+// marker when present, while still falling back to the stable session marker.
+// The explicit prompt_cache_key is only a last-resort seed and never replaces
+// the client-owned cache key in the forwarded request.
+func resolveCockpitThreadSeed(source codexFingerprintSource) string {
+	return firstNonEmptyCodexValue(
+		source.threadID,
+		source.clientSessionID,
+		source.originalSessionID,
+		source.promptCacheKey,
 	)
 }
 
@@ -1041,8 +1053,9 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		// Cockpit keeps device and conversation identity server-derived. Client
 		// conversation fields are used only as a stable seed; the explicit
 		// prompt_cache_key remains the one client-controlled cache identity.
-		conversationSeed := resolveCockpitConversationSeed(source)
-		ids.sessionID = resolveConvergedCockpitSessionID(account, conversationSeed)
+		sessionSeed := resolveCockpitSessionSeed(source)
+		threadSeed := resolveCockpitThreadSeed(source)
+		ids.sessionID = resolveConvergedCockpitSessionID(account, sessionSeed)
 		if ids.sessionID == "" {
 			ids.sessionID = resolveConvergedSessionID(account)
 		}
@@ -1050,7 +1063,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			return nil
 		}
 
-		ids.threadID = resolveConvergedThreadID(account, conversationSeed)
+		ids.threadID = resolveConvergedThreadID(account, threadSeed)
 		if ids.threadID == "" {
 			ids.threadID = ids.sessionID
 		}
