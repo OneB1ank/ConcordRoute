@@ -2,7 +2,7 @@
   <div>
     <!-- Window stats row (above progress bar) -->
     <div
-      v-if="windowStats && (windowStats.requests > 0 || windowStats.tokens > 0)"
+      v-if="windowStats && hasVisibleStats(windowStats)"
       class="mb-0.5 flex items-center"
     >
       <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
@@ -27,7 +27,7 @@
 
     <!-- Usage generated after the account entered overdraft mode. -->
     <div
-      v-if="overdraftStats && (overdraftStats.requests > 0 || overdraftStats.tokens > 0)"
+      v-if="overdraftStats && hasVisibleStats(overdraftStats)"
       class="mb-0.5 flex items-center"
       data-testid="overdraft-stats"
     >
@@ -278,5 +278,11 @@ const formatOverdraftUserCost = computed(() => {
   }
   return formatBalanceAmount(props.overdraftStats.user_cost, { fractionDigits: 2 })
 })
+
+const hasVisibleStats = (stats: WindowStats) =>
+  stats.requests > 0 ||
+  stats.tokens > 0 ||
+  stats.cost > 0 ||
+  (stats.user_cost != null && stats.user_cost > 0)
 
 </script>

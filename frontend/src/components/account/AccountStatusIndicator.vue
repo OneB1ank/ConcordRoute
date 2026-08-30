@@ -262,6 +262,7 @@ const isTempUnschedulable = computed(() => {
 
 type TempUnschedReason = {
   status_code?: unknown
+  source?: unknown
 }
 
 // 解析存储原因只用于状态去重；异常或旧格式继续按独立暂停展示。
@@ -276,13 +277,15 @@ const tempUnschedReason = computed<TempUnschedReason | null>(() => {
 })
 
 // 标准限流链可能同时写入账号级 429 和临时暂停，它们属于同一调度事实。
+// Codex 透支终态也会写入带 codex_quota_overdraft source 的临时暂停；
+// 账号已有明确 429 恢复时间时，界面只保留“限流中”这一条状态。
 const isRateLimitDerivedTempUnsched = computed(() => {
   if (!isRateLimited.value) return false
   if (props.account.platform === 'grok' && props.account.temp_unschedulable_reason === 'legacy grok rate limited') {
     return true
   }
   const reason = tempUnschedReason.value
-  return reason?.status_code === 429
+  return reason?.status_code === 429 || reason?.source === 'codex_quota_overdraft'
 })
 
 // 独立原因仍与账号级 429 并列，只有同一次 429 的派生暂停被合并。

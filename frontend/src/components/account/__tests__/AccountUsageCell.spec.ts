@@ -17,10 +17,20 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  const testMessages: Record<string, string> = {
+    'admin.accounts.usageWindow.estimatedWeeklyTotal': '周总 ≈ {amount}',
+    'admin.accounts.usageWindow.estimatedWeeklyTotalHint': '≈ 表示预估值；根据当前 7 天窗口的已用费用和使用率计算，会随窗口数据更新而变化。',
+    'admin.accounts.usageWindow.overdraftReasonQuotaLimited': '额度已耗尽',
+    'admin.accounts.usageWindow.overdraftReasonTransientFailure': '瞬时限流'
+  }
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string, params?: Record<string, unknown>) =>
+        Object.entries(params ?? {}).reduce(
+          (result, [name, value]) => result.replace(`{${name}}`, String(value)),
+          testMessages[key] ?? key
+        )
     })
   }
 })
@@ -469,6 +479,27 @@ describe('AccountUsageCell', () => {
     expect(getUsage).toHaveBeenCalledWith(2011, 'active', true)
   })
 
+  it('OpenAI OAuth 用量查询失败时显示错误，不静默回落为短横线', async () => {
+    getUsage.mockRejectedValueOnce(new Error('usage request failed'))
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 2012, platform: 'openai', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="openai-usage-error"]').text()).toContain('common.error')
+    expect(wrapper.find('[data-testid="codex-overdraft-status"]').exists()).toBe(false)
+  })
+
   it('OpenAI OAuth 用量列显示带确认流程的手动重置入口', async () => {
     getUsage.mockResolvedValue({
       five_hour: {
@@ -587,7 +618,7 @@ describe('AccountUsageCell', () => {
         stubs: {
           UsageProgressBar: {
             props: ['label', 'utilization', 'resetsAt', 'windowStats', 'color'],
-            template: '<div class="usage-bar">{{ label }}|{{ utilization }}</div>'
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ windowStats?.tokens }}</div>'
           },
           AccountQuotaInfo: true
         }
@@ -705,8 +736,8 @@ describe('AccountUsageCell', () => {
 	await flushPromises()
 
 	expect(getUsage).toHaveBeenCalledWith(2002)
-	expect(wrapper.text()).toContain('5h|0|27700')
-	expect(wrapper.text()).toContain('7d|0|27700')
+    expect(wrapper.text()).toContain('5h|0|27700')
+    expect(wrapper.text()).toContain('7d|0|27700')
   })
 
   it('OpenAI OAuth 在行数据刷新但仍无 codex 快照时会重新拉取 usage', async () => {
@@ -764,7 +795,7 @@ describe('AccountUsageCell', () => {
 	})
 
 	await flushPromises()
-	expect(wrapper.text()).toContain('5h|0|100')
+    expect(wrapper.text()).toContain('5h|0|100')
 	expect(getUsage).toHaveBeenCalledTimes(1)
 
 	await wrapper.setProps({
@@ -779,7 +810,7 @@ describe('AccountUsageCell', () => {
 
 	await flushPromises()
 	expect(getUsage).toHaveBeenCalledTimes(2)
-	expect(wrapper.text()).toContain('5h|0|200')
+    expect(wrapper.text()).toContain('5h|0|200')
   })
 
   it('Qoder COSY 账号会展示上游月度 credits 用量，并支持主动刷新', async () => {
@@ -974,6 +1005,82 @@ describe('AccountUsageCell', () => {
   expect(wrapper.text()).toContain('7d|100|106540000')
   })
 
+  it('OpenAI OAuth 保留 5h/7d 用量，并按 7d 使用率估算周总额', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 100,
+        resets_at: '2026-08-31T06:00:00Z',
+        remaining_seconds: 3600,
+        window_stats: { requests: 20, tokens: 2000, cost: 50 }
+      },
+      seven_day: {
+        utilization: 22,
+        resets_at: '2026-09-06T06:00:00Z',
+        remaining_seconds: 518400,
+        window_stats: { requests: 1000, tokens: 140400000, cost: 119.65 }
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 2200, platform: 'openai', type: 'oauth' }) },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'windowStats', 'color'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ windowStats?.tokens }}</div>'
+          },
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('5h|100')
+    expect(wrapper.text()).toContain('5h|100|2000')
+    expect(wrapper.text()).toContain('7d|22')
+    expect(wrapper.get('[data-testid="openai-weekly-estimate"]').text()).toBe('周总 ≈ $543.86')
+  })
+
+  it.each([
+    { utilization: 0, cost: 119.65 },
+    { utilization: 101, cost: 119.65 },
+    { utilization: 22, cost: 0 },
+    { utilization: 22, cost: undefined }
+  ])('OpenAI OAuth 不为无效周窗口数据显示估算（$utilization%, $cost）', async ({ utilization, cost }) => {
+    getUsage.mockResolvedValue({
+      five_hour: null,
+      seven_day: {
+        utilization,
+        resets_at: '2026-09-06T06:00:00Z',
+        remaining_seconds: 518400,
+        window_stats: cost === undefined ? undefined : { requests: 100, tokens: 1000, cost }
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 2210 + utilization + (cost === undefined ? 1000 : 0),
+          platform: 'openai',
+          type: 'oauth'
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="openai-weekly-estimate"]').exists()).toBe(false)
+  })
+
   it.each([
     { status: 'preparing', label: 'admin.accounts.usageWindow.overdraftPreparing' },
     { status: 'active', label: 'admin.accounts.usageWindow.overdraftActive' },
@@ -992,7 +1099,8 @@ describe('AccountUsageCell', () => {
         used_percent: status === 'preparing' ? 95 : 99,
         prearm_percent: 95,
         start_percent: 98,
-        recover_at: '2026-08-25T06:00:00Z'
+        recover_at: '2026-08-25T06:00:00Z',
+        overdraft_started_at: '2026-08-25T01:00:00Z'
       }
     })
 
@@ -1027,7 +1135,8 @@ describe('AccountUsageCell', () => {
         utilization: 100,
         resets_at: '2026-08-31T06:00:00Z',
         remaining_seconds: 3600,
-        overdraft_stats: { requests: 7, tokens: 1234, cost: 2.5, user_cost: 3 }
+        overdraft_stats: { requests: 7, tokens: 1234, cost: 2.5, user_cost: 3 },
+        overdraft_started: '2026-08-30T01:00:00Z'
       },
       codex_quota_overdraft: {
         status: 'preparing',
@@ -1059,8 +1168,133 @@ describe('AccountUsageCell', () => {
     await flushPromises()
 
     const status = wrapper.get('[data-testid="codex-overdraft-status"]').text()
-    expect(status).toContain('7d · 100.0% · 2/5 · transient_failure')
+    expect(status).toContain('7d · 100.0% · 2/5 · 瞬时限流')
     expect(wrapper.text()).toContain('7d|100|1234')
+  })
+
+  it('透支状态将 quota_limited 本地化为中文', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: { utilization: 0, resets_at: null, remaining_seconds: 0 },
+      seven_day: {
+        utilization: 100,
+        resets_at: '2026-08-31T06:00:00Z',
+        remaining_seconds: 3600,
+        overdraft_stats: { requests: 0, tokens: 0, cost: 12.34, user_cost: 12.34 }
+      },
+      codex_quota_overdraft: {
+        status: 'terminated',
+        quota_window: '7d',
+        used_percent: 100,
+        prearm_percent: 95,
+        start_percent: 98,
+        attempts: 5,
+        attempt_limit: 5,
+        reason_code: 'quota_limited',
+        overdraft_started_at: '2026-08-31T01:00:00Z',
+        recover_at: '2026-08-31T06:00:00Z'
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 2102, platform: 'openai', type: 'oauth' }) },
+      global: {
+        stubs: {
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const status = wrapper.get('[data-testid="codex-overdraft-status"]').text()
+    expect(status).toContain('额度已耗尽')
+    expect(status).not.toContain('quota_limited')
+    expect(wrapper.get('[data-testid="overdraft-stats"]').text()).toContain('A $12.34')
+  })
+
+  it('没有真实透支开始证据时隐藏已终止状态和透支用量', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 100,
+        resets_at: '2026-08-31T06:00:00Z',
+        remaining_seconds: 3600,
+        overdraft_stats: null
+      },
+      seven_day: null,
+      codex_quota_overdraft: {
+        status: 'terminated',
+        quota_window: '5h',
+        used_percent: 100,
+        prearm_percent: 95,
+        start_percent: 98,
+        attempts: 0,
+        attempt_limit: 5,
+        reason_code: 'quota_limited',
+        recover_at: '2026-08-31T06:00:00Z'
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 2103, platform: 'openai', type: 'oauth' }) },
+      global: {
+        stubs: {
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="codex-overdraft-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="overdraft-stats"]').exists()).toBe(false)
+  })
+
+  it('恢复账号事件会立即清除本地透支状态和统计', async () => {
+    const usage = {
+      five_hour: {
+        utilization: 100,
+        resets_at: '2026-08-31T06:00:00Z',
+        remaining_seconds: 3600,
+        overdraft_stats: { requests: 3, tokens: 300, cost: 1.25, user_cost: 1.25 }
+      },
+      seven_day: null,
+      codex_quota_overdraft: {
+        status: 'terminated' as const,
+        quota_window: '5h' as const,
+        used_percent: 100,
+        prearm_percent: 95,
+        start_percent: 98,
+        reason_code: 'quota_limited',
+        recover_at: '2026-08-31T06:00:00Z',
+        overdraft_started_at: '2026-08-31T01:00:00Z'
+      }
+    }
+    getUsage.mockResolvedValue(usage)
+    const recoveredAccount = makeAccount({ id: 2104, platform: 'openai', type: 'oauth' })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: recoveredAccount },
+      global: {
+        stubs: {
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: {
+            emits: ['account-updated'],
+            template: '<button data-test="quota-reset" @click="$emit(\'account-updated\', account)">reset</button>',
+            setup() { return { account: recoveredAccount } }
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.get('[data-testid="codex-overdraft-status"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="overdraft-stats"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="quota-reset"]').trigger('click')
+    expect(wrapper.find('[data-testid="codex-overdraft-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="overdraft-stats"]').exists()).toBe(false)
   })
 
   it('Key 账号会展示 today stats 徽章并带 A/U 提示', async () => {

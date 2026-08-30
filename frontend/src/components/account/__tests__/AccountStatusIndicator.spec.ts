@@ -124,6 +124,26 @@ describe('AccountStatusIndicator', () => {
 		expect(wrapper.text()).not.toContain('429')
 	})
 
+	it('Codex 透支终态与账号 429 同时存在时只显示限流中', () => {
+		const wrapper = mount(AccountStatusIndicator, {
+			props: {
+				account: makeAccount({
+					platform: 'openai',
+					rate_limit_reset_at: '2099-07-11T13:00:00Z',
+					temp_unschedulable_until: '2099-07-11T13:00:00Z',
+					temp_unschedulable_reason: '{"source":"codex_quota_overdraft","error_message":"business request received upstream quota 429"}'
+				})
+			},
+			global: {
+				stubs: { Icon: true }
+			}
+		})
+
+		expect(wrapper.text()).toContain('admin.accounts.status.rateLimited')
+		expect(wrapper.text()).toContain('admin.accounts.status.rateLimitedAutoResume')
+		expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
+	})
+
 	it('429 与独立临时不可调度原因同时存在时保留两个恢复边界', () => {
 		const wrapper = mount(AccountStatusIndicator, {
 			props: {

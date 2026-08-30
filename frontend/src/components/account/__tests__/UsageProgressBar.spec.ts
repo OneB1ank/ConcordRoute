@@ -167,6 +167,25 @@ describe('UsageProgressBar', () => {
     expect(wrapper.text()).toContain('1.2K')
   })
 
+  it('仅有透支费用时仍显示透支金额，避免额外用量被隐藏', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '7d',
+        utilization: 100,
+        color: 'emerald',
+        overdraftStats: {
+          requests: 0,
+          tokens: 0,
+          cost: 12.34,
+          user_cost: 12.34
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="overdraft-stats"]').text()).toContain('A $12.34')
+    expect(wrapper.get('[data-testid="overdraft-stats"]').text()).toContain('U $12.34')
+  })
+
   it('宽标签模式为 Credits 预留固定空间，避免与进度条重叠', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {

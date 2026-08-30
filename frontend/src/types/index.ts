@@ -1398,6 +1398,7 @@ export interface CodexQuotaOverdraftState {
   attempt_limit?: number
   reason_code?: string
   recover_at?: string | null
+  overdraft_started_at?: string | null
 }
 
 // Antigravity 单个模型的配额信息

@@ -273,7 +273,7 @@ func TestBuildCodexQuotaOverdraftUsageStateIncludesProbeProgress(t *testing.T) {
 	require.Equal(t, "7d", state.QuotaWindow)
 }
 
-func TestBuildCodexQuotaOverdraftUsageStateKeepsAccountRateLimitTerminated(t *testing.T) {
+func TestBuildCodexQuotaOverdraftUsageStateDoesNotTreatGenericRateLimitAsTerminated(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC)
 	account := newCodexOverdraftProbeTestAccount(now)
 	account.RateLimitResetAt = codexQuotaOverdraftTimePtr(now.Add(5 * time.Hour))
@@ -290,7 +290,7 @@ func TestBuildCodexQuotaOverdraftUsageStateKeepsAccountRateLimitTerminated(t *te
 
 	state := buildCodexQuotaOverdraftUsageState(account, usage, now)
 	require.NotNil(t, state)
-	require.Equal(t, CodexQuotaOverdraftStatusTerminated, state.Status)
+	require.Equal(t, CodexQuotaOverdraftStatusPreparing, state.Status)
 }
 
 func TestBuildCodexQuotaOverdraftUsageStateDoesNotTerminatePassedProbeOnTransientRateLimit(t *testing.T) {

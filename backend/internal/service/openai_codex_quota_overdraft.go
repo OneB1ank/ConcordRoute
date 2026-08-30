@@ -42,6 +42,8 @@ type CodexQuotaOverdraftState struct {
 	AttemptLimit  int        `json:"attempt_limit,omitempty"`
 	ReasonCode    string     `json:"reason_code,omitempty"`
 	RecoverAt     *time.Time `json:"recover_at,omitempty"`
+	// 仅在探测或真实业务请求确认透支窗口后设置；普通限流冷却不构成透支证据。
+	OverdraftStartedAt *time.Time `json:"overdraft_started_at,omitempty"`
 }
 
 func codexQuotaOverdraftPrearmReached(account *Account, now time.Time) bool {
@@ -77,17 +79,12 @@ func buildCodexQuotaOverdraftState(account *Account, usage *UsageInfo, now time.
 	if eligible["5h"] && eligible["7d"] {
 		window = "multiple"
 	}
-	rateLimited := account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now)
-	if maxUsed < codexQuotaOverdraftPrearmPercent && !rateLimited {
+	if maxUsed < codexQuotaOverdraftPrearmPercent {
 		return nil
 	}
 	state := &CodexQuotaOverdraftState{Status: CodexQuotaOverdraftStatusPreparing, QuotaWindow: window, UsedPercent: maxUsed, PrearmPercent: codexQuotaOverdraftPrearmPercent, StartPercent: codexQuotaOverdraftStartPercent}
 	if maxUsed >= codexQuotaOverdraftStartPercent {
 		state.Status = CodexQuotaOverdraftStatusActive
-	}
-	if rateLimited {
-		state.Status = CodexQuotaOverdraftStatusTerminated
-		state.RecoverAt = cloneTimePtr(account.RateLimitResetAt)
 	}
 	return state
 }
@@ -121,6 +118,10 @@ func buildCodexQuotaOverdraftUsageState(account *Account, usage *UsageInfo, now 
 	base.Attempts = probe.Attempts
 	base.AttemptLimit = probe.Limit
 	base.ReasonCode = strings.TrimSpace(probe.ReasonCode)
+	base.OverdraftStartedAt = cloneTimePtr(probe.OverdraftStartedAt)
+	if base.OverdraftStartedAt == nil {
+		base.OverdraftStartedAt = earlierCodexQuotaOverdraftStart(probe.FiveHourStartedAt, probe.SevenDayStartedAt)
+	}
 	if probe.RecoverAt != nil {
 		base.RecoverAt = cloneTimePtr(probe.RecoverAt)
 	}
@@ -129,17 +130,17 @@ func buildCodexQuotaOverdraftUsageState(account *Account, usage *UsageInfo, now 
 	// must not project the overdraft as terminated. A definite quota exhaustion
 	// is recorded by HandleQuota429 as a failed business state and is handled by
 	// the probe status below.
-	if probe.Status == codexQuotaOverdraftProbePassed && base.Status == CodexQuotaOverdraftStatusTerminated {
-		base.Status = CodexQuotaOverdraftStatusActive
-	}
-	// 账号已经进入明确限流终态时，探测中的旧快照不得把它降级为“准备”。
-	if base.Status == CodexQuotaOverdraftStatusTerminated {
-		return base
-	}
 	switch probe.Status {
 	case codexQuotaOverdraftProbeFailed:
+		// 合成探测耗尽对界面而言证据不足；只有已建立透支窗口的真实业务配额 429 才进入终止态。
+		if !codexQuotaOverdraftTerminalBusinessFailure(probe) || base.OverdraftStartedAt == nil {
+			return nil
+		}
 		base.Status = CodexQuotaOverdraftStatusTerminated
 	case codexQuotaOverdraftProbePassed:
+		if base.OverdraftStartedAt == nil {
+			return base
+		}
 		base.Status = CodexQuotaOverdraftStatusActive
 	case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbeInconclusive:
 		base.Status = CodexQuotaOverdraftStatusPreparing

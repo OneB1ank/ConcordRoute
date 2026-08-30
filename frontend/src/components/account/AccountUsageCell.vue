@@ -112,6 +112,15 @@
 
     <!-- OpenAI OAuth 账号统一使用 /usage API 数据源 -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
+      <!-- 失败时保留旧窗口数据，同时明确提示本次刷新未成功；无旧数据时也不能静默显示“-”。 -->
+      <div
+        v-if="error || usageInfo?.error"
+        data-testid="openai-usage-error"
+        class="truncate text-[10px] text-amber-600 dark:text-amber-400 max-w-[220px]"
+        :title="error || usageInfo?.error || ''"
+      >
+        {{ error || usageInfo?.error }}
+      </div>
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
         <div
           v-if="codexOverdraftStatus"
@@ -127,13 +136,14 @@
             {{ codexOverdraftStatus.detail }}
           </span>
         </div>
+        <!-- 5h/7d 均展示窗口统计；周总估算仍仅基于 7d。 -->
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
           :utilization="usageInfo.five_hour.utilization"
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
-          :overdraft-stats="usageInfo.five_hour.overdraft_stats"
+          :overdraft-stats="codexOverdraftStatsFor(usageInfo.five_hour)"
           :show-now-when-idle="true"
           color="indigo"
         />
@@ -143,10 +153,18 @@
           :utilization="usageInfo.seven_day.utilization"
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
-          :overdraft-stats="usageInfo.seven_day.overdraft_stats"
+          :overdraft-stats="codexOverdraftStatsFor(usageInfo.seven_day)"
           :show-now-when-idle="true"
           color="emerald"
         />
+        <div
+          v-if="openAIWeeklyEstimatedTotal"
+          data-testid="openai-weekly-estimate"
+          class="text-[9px] text-gray-500 dark:text-gray-400"
+          :title="t('admin.accounts.usageWindow.estimatedWeeklyTotalHint')"
+        >
+          {{ t('admin.accounts.usageWindow.estimatedWeeklyTotal', { amount: openAIWeeklyEstimatedTotal }) }}
+        </div>
         <OpenAIQuotaResetCell
           :account="account"
           @account-updated="handleQuotaResetAccountUpdated"
@@ -701,7 +719,7 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
-import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
+import type { Account, AccountUsageInfo, GeminiCredentials, UsageProgress, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
@@ -825,14 +843,69 @@ const hasOpenAIUsageFallback = computed(() => {
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day || !!usageInfo.value?.codex_quota_overdraft
 })
 
+const openAIWeeklyEstimatedTotal = computed(() => {
+  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return null
+
+  const weekly = usageInfo.value?.seven_day
+  const utilization = weekly?.utilization
+  const cost = weekly?.window_stats?.cost
+  if (
+    !weekly ||
+    typeof utilization !== 'number' ||
+    !Number.isFinite(utilization) ||
+    utilization <= 0 ||
+    utilization > 100 ||
+    typeof cost !== 'number' ||
+    !Number.isFinite(cost) ||
+    cost <= 0
+  ) {
+    return null
+  }
+
+  const estimate = cost / (utilization / 100)
+  return Number.isFinite(estimate) && estimate > 0
+    ? formatUsdAmount(estimate, { fractionDigits: 2 })
+    : null
+})
+
+const codexOverdraftEvidence = computed(() => {
+  const state = usageInfo.value?.codex_quota_overdraft
+  if (!state) return false
+  if (state.overdraft_started_at) return true
+  return Boolean(
+    usageInfo.value?.five_hour?.overdraft_started ||
+    usageInfo.value?.seven_day?.overdraft_started ||
+    usageInfo.value?.five_hour?.overdraft_recover ||
+    usageInfo.value?.seven_day?.overdraft_recover
+  )
+})
+
+const codexOverdraftStatsFor = (progress: UsageProgress | null | undefined): WindowStats | null => {
+  if (!progress || !codexOverdraftEvidence.value) return null
+  return progress.overdraft_stats ?? null
+}
+
 const codexOverdraftStatus = computed(() => {
   const state = usageInfo.value?.codex_quota_overdraft
   if (!state) return null
+  // 普通限流响应或过期探测快照不代表透支已经开始，因此同时隐藏徽标与统计。
+  if (state.status === 'terminated' && !codexOverdraftEvidence.value) return null
   const windowLabel = state.quota_window === 'multiple' ? '5h / 7d' : state.quota_window
   const progress = state.attempt_limit && state.attempt_limit > 0
     ? ` · ${state.attempts ?? 0}/${state.attempt_limit}`
     : ''
-  const reason = state.reason_code ? ` · ${state.reason_code}` : ''
+  const reasonLabel = (() => {
+    switch (state.reason_code) {
+      case 'quota_limited':
+      case 'business_quota_limited':
+        return t('admin.accounts.usageWindow.overdraftReasonQuotaLimited')
+      case 'transient_failure':
+        return t('admin.accounts.usageWindow.overdraftReasonTransientFailure')
+      default:
+        return state.reason_code ?? ''
+    }
+  })()
+  const reason = reasonLabel ? ` · ${reasonLabel}` : ''
   const detail = `${windowLabel} · ${state.used_percent.toFixed(1)}%${progress}${reason}`
   const recoverAt = state.recover_at ? new Date(state.recover_at).toLocaleString() : ''
   const title = recoverAt
@@ -1585,13 +1658,37 @@ const loadActiveUsage = async () => {
     usageInfo.value = result
     _usageCache.set(props.account.id, { data: result, ts: Date.now() })
   } catch (e: any) {
+    error.value = t('common.error')
     console.error('Failed to load active usage:', e)
   } finally {
     activeQueryLoading.value = false
   }
 }
 
+const clearOverdraftProgress = (progress: UsageProgress | null | undefined): UsageProgress | null | undefined => {
+  if (!progress) return progress
+  const cleaned: UsageProgress = { ...progress }
+  delete cleaned.overdraft_active
+  delete cleaned.overdraft_terminated
+  delete cleaned.overdraft_stats
+  delete cleaned.overdraft_started
+  delete cleaned.overdraft_recover
+  return cleaned
+}
+
+const clearLocalCodexOverdraftState = () => {
+  if (!usageInfo.value) return
+  usageInfo.value = {
+    ...usageInfo.value,
+    codex_quota_overdraft: null,
+    five_hour: clearOverdraftProgress(usageInfo.value.five_hour) ?? null,
+    seven_day: clearOverdraftProgress(usageInfo.value.seven_day) ?? null
+  }
+}
+
 const handleQuotaResetAccountUpdated = (account: Account) => {
+  _usageCache.delete(props.account.id)
+  clearLocalCodexOverdraftState()
   emit('account-updated', account)
 }
 
