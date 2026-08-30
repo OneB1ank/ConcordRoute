@@ -417,6 +417,55 @@ func TestCockpitContextWindowID_IsStablePerThreadGeneration(t *testing.T) {
 	assert.NotEqual(t, first.contextWindowID, third.contextWindowID)
 }
 
+func TestCockpitContextWindowID_IgnoresClientRotationWithinGeneration(t *testing.T) {
+	account := newTestOAuthAccount(110, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	sessionID := uuid.Must(uuid.NewV7()).String()
+	threadID := uuid.Must(uuid.NewV7()).String()
+	first := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"session_id":        sessionID,
+		"thread_id":         threadID,
+		"window_id":         "client-thread:2",
+		"context_window_id": uuid.Must(uuid.NewV7()).String(),
+	})
+	require.NotNil(t, first)
+
+	second := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"session_id":        sessionID,
+		"thread_id":         threadID,
+		"window_id":         "client-thread:2",
+		"context_window_id": uuid.Must(uuid.NewV7()).String(),
+	})
+	require.NotNil(t, second)
+	assert.Equal(t, first.threadID, second.threadID)
+	assert.Equal(t, first.windowID, second.windowID)
+	assert.Equal(t, first.contextWindowID, second.contextWindowID)
+}
+
+func TestCockpitContextWindowID_PersistsAcrossRestart(t *testing.T) {
+	account := newTestOAuthAccount(111, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	request := map[string]any{
+		"session_id": uuid.Must(uuid.NewV7()).String(),
+		"thread_id":  uuid.Must(uuid.NewV7()).String(),
+		"window_id":  "client-thread:3",
+	}
+	first := resolveCodexFingerprintIDsFromRequest(account, nil, request)
+	require.NotNil(t, first)
+
+	encoded, err := json.Marshal(account.Extra)
+	require.NoError(t, err)
+	var restoredExtra map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &restoredExtra))
+	fresh := &Account{ID: account.ID, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: restoredExtra}
+	codexIdentityHotCache = sync.Map{}
+	codexIdentityPersistedHashes = sync.Map{}
+
+	second := resolveCodexFingerprintIDsFromRequest(fresh, nil, request)
+	require.NotNil(t, second)
+	assert.Equal(t, first.threadID, second.threadID)
+	assert.Equal(t, first.windowID, second.windowID)
+	assert.Equal(t, first.contextWindowID, second.contextWindowID)
+}
+
 func TestCockpitContextWindowID_MissingIsGenerated(t *testing.T) {
 	account := newTestOAuthAccount(109, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{

@@ -671,26 +671,12 @@ func normalizeCodexWindowID(raw, threadID string) string {
 	return threadID + ":0"
 }
 
-const (
-	codexContextWindowIdleTTL = 24 * time.Hour
-	codexContextWindowMaxKeys = 1024
-)
-
-type codexContextWindowBinding struct {
-	UUID       string
-	LastUsedMS int64
-}
-
-var codexContextWindowState = struct {
-	sync.Mutex
-	items map[string]codexContextWindowBinding
-}{items: make(map[string]codexContextWindowBinding)}
-
-// resolveConvergedContextWindowID keeps one server-generated UUIDv7 for each
-// account/thread/window-generation/client-window-seed tuple. It is process-local
-// and bounded; the durable account identity table is intentionally not used for
-// window IDs. A missing client value is left missing by the caller.
-func resolveConvergedContextWindowID(account *Account, threadID, windowID, original string) string {
+// resolveConvergedContextWindowID mirrors Codex 0.151's context-window lifecycle:
+// one independently generated UUIDv7 belongs to each final thread/window
+// generation, remains stable while that window is active, and changes only when
+// the generation advances. The durable account binding keeps resume/restart
+// behavior stable without making the client-supplied context ID authoritative.
+func resolveConvergedContextWindowID(account *Account, threadID, windowID string) string {
 	if account == nil || strings.TrimSpace(threadID) == "" {
 		return ""
 	}
@@ -702,39 +688,8 @@ func resolveConvergedContextWindowID(account *Account, threadID, windowID, origi
 			}
 		}
 	}
-	key := fmt.Sprintf("%d:%s:%s:%s", account.ID, strings.TrimSpace(threadID), generation, codexIdentitySeedKey(original))
-	now := time.Now().UnixMilli()
-	codexContextWindowState.Lock()
-	defer codexContextWindowState.Unlock()
-	for existingKey, binding := range codexContextWindowState.items {
-		if binding.LastUsedMS > 0 && now-binding.LastUsedMS >= codexContextWindowIdleTTL.Milliseconds() {
-			delete(codexContextWindowState.items, existingKey)
-		}
-	}
-	if binding, ok := codexContextWindowState.items[key]; ok {
-		binding.LastUsedMS = now
-		codexContextWindowState.items[key] = binding
-		return binding.UUID
-	}
-	value := newCodexUUIDv7().String()
-	codexContextWindowState.items[key] = codexContextWindowBinding{UUID: value, LastUsedMS: now}
-	for len(codexContextWindowState.items) > codexContextWindowMaxKeys {
-		oldestKey := ""
-		var oldest int64
-		for candidate, binding := range codexContextWindowState.items {
-			if candidate == key {
-				continue
-			}
-			if oldestKey == "" || binding.LastUsedMS < oldest {
-				oldestKey, oldest = candidate, binding.LastUsedMS
-			}
-		}
-		if oldestKey == "" {
-			break
-		}
-		delete(codexContextWindowState.items, oldestKey)
-	}
-	return value
+	seed := fmt.Sprintf("codex-context-window:%s:%s", strings.TrimSpace(threadID), generation)
+	return deriveStableUUIDv7ForAccount(account, seed)
 }
 
 // EnsureCodexFingerprintSeed 为新建的 OpenAI OAuth 账号补齐随机种子。
@@ -1045,7 +1000,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		}
 		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
 		if ids.extendedTurnIdentity {
-			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID, ids.originalContextWindowID)
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
 		}
 		return ids
 
@@ -1075,7 +1030,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		}
 		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
 		if ids.extendedTurnIdentity {
-			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID, ids.originalContextWindowID)
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
 		}
 		ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, source.promptCacheKey)
 		// Preserve whether the client supplied the key in the body. Header-only
@@ -1097,7 +1052,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		}
 		ids.windowID = normalizeCodexWindowID(source.windowID, ids.threadID)
 		if ids.extendedTurnIdentity {
-			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID, ids.originalContextWindowID)
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
 		}
 		return ids
 	}
