@@ -89,7 +89,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			// compact 归一化会删除 client_metadata/prompt_cache_key，先从原始请求
 			// 派生账号级 ID，发送时仅收敛 Header，不向不支持的 body schema 注入字段。
 			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body),
+				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body, false),
 				account,
 			)
 			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
@@ -108,7 +108,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		// 避免为大请求体做整包反序列化。
 		if !compactRequest {
 			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body),
+				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body, true),
 				account,
 			)
 			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)

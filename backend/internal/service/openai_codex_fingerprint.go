@@ -216,9 +216,72 @@ var codexIdentityPersistedHashes sync.Map // account ID -> sha256 of bindings JS
 var codexIdentityHotCache sync.Map        // account+seed -> codexIdentityHotBinding
 var codexIdentityHotCacheOps atomic.Uint64
 
+// codexPromptCacheCarry 保存同一会话最近一次明确的客户端缓存键。
+// 仅用于普通 Responses 请求的一轮缺失容错，避免压缩边界造成命名空间跳变。
+var codexPromptCacheCarry = struct {
+	sync.Mutex
+	items map[string]codexPromptCacheCarryEntry
+}{items: make(map[string]codexPromptCacheCarryEntry)}
+
+type codexPromptCacheCarryEntry struct {
+	Key        string
+	WindowID   string
+	InBody     bool
+	LastUsedAt int64
+}
+
+const codexPromptCacheCarryMaxEntries = 1024
+
 type codexIdentityHotBinding struct {
 	UUID         string
 	LastUsedAtMS int64
+}
+
+func codexPromptCacheCarryKey(accountID int64, sessionID, threadID, windowID string) string {
+	return fmt.Sprintf("%d:%s:%s:%s", accountID, strings.TrimSpace(sessionID), strings.TrimSpace(threadID), strings.TrimSpace(windowID))
+}
+
+func rememberCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs, key string, inBody bool) {
+	if account == nil || ids == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	now := time.Now().UnixMilli()
+	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, ids.windowID)
+	codexPromptCacheCarry.Lock()
+	defer codexPromptCacheCarry.Unlock()
+	if _, exists := codexPromptCacheCarry.items[cacheKey]; !exists && len(codexPromptCacheCarry.items) >= codexPromptCacheCarryMaxEntries {
+		var oldestKey string
+		var oldest int64 = now
+		for candidate, entry := range codexPromptCacheCarry.items {
+			if entry.LastUsedAt <= oldest {
+				oldestKey, oldest = candidate, entry.LastUsedAt
+			}
+		}
+		if oldestKey != "" {
+			delete(codexPromptCacheCarry.items, oldestKey)
+		}
+	}
+	codexPromptCacheCarry.items[cacheKey] = codexPromptCacheCarryEntry{Key: strings.TrimSpace(key), WindowID: ids.windowID, InBody: inBody, LastUsedAt: now}
+}
+
+func loadCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs) (codexPromptCacheCarryEntry, bool) {
+	if account == nil || ids == nil {
+		return codexPromptCacheCarryEntry{}, false
+	}
+	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, ids.windowID)
+	now := time.Now().UnixMilli()
+	codexPromptCacheCarry.Lock()
+	defer codexPromptCacheCarry.Unlock()
+	entry, ok := codexPromptCacheCarry.items[cacheKey]
+	if !ok || now-entry.LastUsedAt > codexIdentityBindingIdleTTL.Milliseconds() || entry.WindowID != ids.windowID {
+		if ok {
+			delete(codexPromptCacheCarry.items, cacheKey)
+		}
+		return codexPromptCacheCarryEntry{}, false
+	}
+	entry.LastUsedAt = now
+	codexPromptCacheCarry.items[cacheKey] = entry
+	return entry, true
 }
 
 func codexIdentityBindingLock(accountID int64) *sync.Mutex {
@@ -888,6 +951,7 @@ type codexFingerprintSource struct {
 	contextWindowID       string
 	promptCacheKey        string
 	promptCacheKeyInBody  bool
+	allowPromptCacheCarry bool
 	rootTurnIDInBody      bool
 	contextWindowIDInBody bool
 }
@@ -1032,11 +1096,23 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		if ids.extendedTurnIdentity {
 			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
 		}
-		ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, source.promptCacheKey)
-		// Preserve whether the client supplied the key in the body. Header-only
-		// compatibility keys stay header-only; an explicit body key is copied
-		// byte-for-byte so upstream cache prefixes remain stable.
-		ids.promptCacheKeyInBody = source.promptCacheKeyInBody
+		if strings.TrimSpace(source.promptCacheKey) != "" {
+			ids.promptCacheKey = strings.TrimSpace(source.promptCacheKey)
+			rememberCodexPromptCacheKey(account, ids, ids.promptCacheKey, source.promptCacheKeyInBody)
+		} else if source.allowPromptCacheCarry {
+			if carried, ok := loadCodexPromptCacheKey(account, ids); ok {
+				ids.promptCacheKey = carried.Key
+				ids.promptCacheKeyInBody = carried.InBody
+			} else {
+				ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, "")
+			}
+		} else {
+			ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, "")
+		}
+		// 显式键保持原载体；短暂复用时沿用上一次键的载体形态。
+		if strings.TrimSpace(source.promptCacheKey) != "" || !source.allowPromptCacheCarry {
+			ids.promptCacheKeyInBody = source.promptCacheKeyInBody
+		}
 		return ids
 
 	case codexFingerprintFull:
@@ -1313,6 +1389,10 @@ func extractClientSessionID(h http.Header) string {
 // 结合账号配置一次性解析收敛 ID 集合。调用方应将返回的 ids 同时传给
 // applyCodexFingerprintHeaders 和 applyCodexFingerprintClientMetadata。
 func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.Header, reqBodies ...map[string]any) *codexFingerprintIDs {
+	return resolveCodexFingerprintIDsFromRequestWithCarry(account, clientHeaders, true, reqBodies...)
+}
+
+func resolveCodexFingerprintIDsFromRequestWithCarry(account *Account, clientHeaders http.Header, allowPromptCacheCarry bool, reqBodies ...map[string]any) *codexFingerprintIDs {
 	if account == nil {
 		return nil
 	}
@@ -1325,6 +1405,7 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 		reqBody = reqBodies[0]
 	}
 	source := extractCockpitFingerprintSource(clientHeaders, reqBody)
+	source.allowPromptCacheCarry = allowPromptCacheCarry
 	if mode != codexFingerprintCockpit {
 		// session 模式继续只使用标准请求头派生线程，避免改变既有拓扑。
 		source.clientSessionID = extractClientSessionID(clientHeaders)
@@ -1333,7 +1414,7 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 }
 
 // resolveCodexFingerprintIDsFromRawRequest 为透传路径从原始请求体提取 Cockpit 会话来源。
-func resolveCodexFingerprintIDsFromRawRequest(account *Account, clientHeaders http.Header, body []byte) *codexFingerprintIDs {
+func resolveCodexFingerprintIDsFromRawRequest(account *Account, clientHeaders http.Header, body []byte, allowPromptCacheCarry ...bool) *codexFingerprintIDs {
 	if account == nil {
 		return nil
 	}
@@ -1342,6 +1423,7 @@ func resolveCodexFingerprintIDsFromRawRequest(account *Account, clientHeaders ht
 		return nil
 	}
 	source := extractCockpitFingerprintSourceRaw(clientHeaders, body)
+	source.allowPromptCacheCarry = len(allowPromptCacheCarry) == 0 || allowPromptCacheCarry[0]
 	if mode != codexFingerprintCockpit {
 		source.clientSessionID = extractClientSessionID(clientHeaders)
 	}

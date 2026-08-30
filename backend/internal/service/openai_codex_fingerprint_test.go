@@ -1253,6 +1253,41 @@ func TestCockpitMode_ThreadSeedPrefersSessionAndThreadThenPromptCache(t *testing
 	assert.Equal(t, "cache-b", idsCacheB.promptCacheKey)
 }
 
+func TestCockpitMode_MissingPromptCacheKeyCarriesPreviousBodyKey(t *testing.T) {
+	account := newTestOAuthAccount(1201, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	sessionID := uuid.Must(uuid.NewV7()).String()
+	threadID := uuid.Must(uuid.NewV7()).String()
+	windowID := threadID + ":0"
+
+	first := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"session_id":       sessionID,
+		"thread_id":        threadID,
+		"window_id":        windowID,
+		"prompt_cache_key": "cache-A",
+	})
+	require.NotNil(t, first)
+	assert.Equal(t, "cache-A", first.promptCacheKey)
+	assert.True(t, first.promptCacheKeyInBody)
+
+	missing := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"session_id": sessionID,
+		"thread_id":  threadID,
+		"window_id":  windowID,
+	})
+	require.NotNil(t, missing)
+	assert.Equal(t, "cache-A", missing.promptCacheKey)
+	assert.True(t, missing.promptCacheKeyInBody)
+
+	rotated := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"session_id":       sessionID,
+		"thread_id":        threadID,
+		"window_id":        windowID,
+		"prompt_cache_key": "cache-B",
+	})
+	require.NotNil(t, rotated)
+	assert.Equal(t, "cache-B", rotated.promptCacheKey)
+}
+
 func TestCockpitMode_HeaderOnlyPromptCacheKeyDoesNotReinsertBodyField(t *testing.T) {
 	account := newTestOAuthAccount(7, map[string]any{
 		codexFingerprintModeExtraKey: "cockpit",

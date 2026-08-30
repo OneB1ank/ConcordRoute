@@ -427,7 +427,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			// 旧 /responses/compact 不接受 client_metadata，但其 Header 仍属于同一
 			// Codex 会话。必须在 compact 归一化删除请求级字段前派生 ID，随后只改写 Header。
 			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
+				resolveCodexFingerprintIDsFromRequestWithCarry(fingerprintAccount, clientHeaders, false, decoded),
 				account,
 			)
 			_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
