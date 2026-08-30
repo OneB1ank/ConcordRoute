@@ -293,6 +293,30 @@ func TestBuildCodexQuotaOverdraftUsageStateKeepsAccountRateLimitTerminated(t *te
 	require.Equal(t, CodexQuotaOverdraftStatusTerminated, state.Status)
 }
 
+func TestBuildCodexQuotaOverdraftUsageStateDoesNotTerminatePassedProbeOnTransientRateLimit(t *testing.T) {
+	now := time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC)
+	account := newCodexOverdraftProbeTestAccount(now)
+	account.RateLimitResetAt = codexQuotaOverdraftTimePtr(now.Add(5 * time.Second))
+	account.Extra[CodexQuotaOverdraftProbeExtraKey] = &CodexQuotaOverdraftProbeState{
+		Status:      codexQuotaOverdraftProbePassed,
+		QuotaWindow: "7d",
+		CycleKey:    "7d:test",
+		Attempts:    1,
+		Limit:       codexQuotaOverdraftProbeAttemptLimit,
+		ReasonCode:  "model_response_ok",
+		RecoverAt:   codexQuotaOverdraftTimePtr(now.Add(7 * 24 * time.Hour)),
+	}
+	usage := &UsageInfo{SevenDay: &UsageProgress{
+		Utilization: 100,
+		ResetsAt:    codexQuotaOverdraftTimePtr(now.Add(7 * 24 * time.Hour)),
+	}}
+
+	state := buildCodexQuotaOverdraftUsageState(account, usage, now)
+	require.NotNil(t, state)
+	require.Equal(t, CodexQuotaOverdraftStatusActive, state.Status,
+		"a generic transient cooldown must not end a probe that already passed")
+}
+
 func TestCodexQuotaOverdraftStateFromAccountNormalizesCompletedQuotaSnapshot(t *testing.T) {
 	now := time.Date(2026, time.August, 26, 10, 0, 0, 0, time.UTC)
 	account := newCodexOverdraftProbeTestAccount(now)
