@@ -39,6 +39,32 @@ The project does not increase upstream account quotas. Its quota-related work re
 4. Use Cockpit mode by default: account-level device/session stability with conversation-level thread and cache-key isolation.
 5. Diagnose behavior with errors, TTFT, cache hits, 429/529 responses, proxy health, and account usage together instead of interpreting one metric as a quota change.
 
+### Codex client versions and self-managed UA
+
+- **Codex 0.151.0 or newer is recommended.** Newer clients expose a more complete session, turn, and context-window lifecycle during compaction and reconnects. Older clients remain usable through the compatibility path with a smaller field set.
+- **Set the UA yourself.** Use the admin `openai_codex_user_agent` setting, TLS fingerprint-router `upstream_user_agent` rules, and the dedicated token/reset UA fields to provide a value that matches the client, operating system, architecture, and version you actually run.
+- **Keep client families separate.** Pair `codex-cli/`, `codex-tui/`, `codex_cli_rs/`, and `Codex Desktop/` with their corresponding UA and `originator`; do not collapse different client families into one string.
+- **Configure UA and TLS as one profile.** The system, architecture, and version declared by the UA should match the ClientHello, ALPN, and actual HTTP transport. Recheck both the UA and TLS profile when upgrading the client.
+
+Template examples (replace placeholders with real values):
+
+```text
+codex-cli/<version> (<os> <arch>)
+Codex Desktop/<version> (<os> <arch>)
+```
+
+When left empty, the router follows the account, inbound request, or system fallback. An explicit value is applied only on the matching OpenAI/Codex route.
+
+## Strengths for OpenAI reverse-proxy deployments
+
+- **Predictable cache continuity:** an explicit `prompt_cache_key` is preserved; a temporary omission within the same `session/thread/window` reuses the latest binding; a new explicit key switches the cache namespace immediately without becoming the seed for session/thread.
+- **Bounded fingerprint convergence:** installation/device stays account-scoped, conversations receive isolated thread identities, and turns change per request; HTTP, SSE, passthrough, and WebSocket paths use one fingerprint snapshot.
+- **Unified egress:** the account's TLS profile, UA, originator, ALPN, HTTP protocol, and proxy egress come from one decision snapshot, reducing drift between direct, HTTP-proxy, and HTTPS-proxy paths.
+- **Diagnosable failover:** switching accounts enters the target account scope, preserves client conversation semantics, isolates upstream identities, and records the final model, session, TTFT, cache hit, and transport type.
+- **OpenAI-specific boundaries:** Codex identity, Responses, compaction, quota snapshots, and WebSocket logic activate only for eligible OAuth/Codex requests; other platforms keep their own protocol paths.
+
+These choices reduce proxy-induced identity drift, cache cold starts, and duplicate requests. Actual account quotas, concurrency policy, and upstream dynamic decisions remain upstream-controlled.
+
 See the [fingerprint, identity, and egress consistency guide](docs/guides/fingerprint-consistency.md) for details.
 
 ## Upstreams and Acknowledgements

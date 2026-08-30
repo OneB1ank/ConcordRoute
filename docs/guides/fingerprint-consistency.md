@@ -22,7 +22,7 @@ ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理�
 | 多个账号共用同一套客户端身份 | installation、主 session、thread、window 和缓存键都加入账号作用域 |
 | 切换上游账号后继承旧账号会话 | 为新账号稳定派生另一套上游身份，同时保持客户端对话连续 |
 | 不同对话挤进同一个 thread | 每个客户端对话单独派生稳定 thread，turn 仍按请求更新 |
-| `prompt_cache_key` 随请求漂移 | Cockpit 模式按账号与对话稳定派生缓存键，并同步关联字段 |
+| `prompt_cache_key` 随请求漂移 | 显式 key 原样保留；同一 session/thread/window 暂时省略时复用最近绑定；新显式 key 到达后切换缓存命名空间，且不反向改写 session/thread |
 | 请求头能读取 `session-id`，日志却为空 | 指纹链路与 Usage Log 使用统一的 session ID 提取口径 |
 | UA、originator 和版本兜底不一致 | OAuth、Token、Responses 等路径统一使用管理员配置的客户端特征 |
 | HTTPS Proxy 静默退回标准 Go TLS | 普通 HTTPS 通过代理时继续使用目标站点的 uTLS ClientHello |
@@ -64,6 +64,40 @@ TLS 模板不是单独的“开关”，而是一组需要互相匹配的信号�
 推荐从实际客户端环境抓取 ClientHello，再将 UA 与抓包时间、客户端版本和操作系统一起记录。不要只复制一份公开 TLS 扩展列表后搭配完全不同的 UA，也不要在声明 `h2` 后强制所有请求继续使用 HTTP/1.1。
 
 模板保存前应检查 TLS 版本范围、扩展重复、必要扩展依赖、ALPN 和数值边界。HTTPS Proxy 路径也应继续使用目标站点的 uTLS 模板，避免代理连接存在时静默退回 Go 标准 TLS。
+
+## Codex 客户端版本与 UA 自助配置
+
+本分支推荐使用 **Codex 0.151.0 及更高版本**。这类客户端通常提供更完整的会话、回合和上下文窗口生命周期字段，压缩、重连和 WebSocket 续接的观测也更完整；旧客户端走兼容路径时，缺失字段按兼容规则处理。
+
+UA 由部署者在管理端明确填写：
+
+1. 全局 `openai_codex_user_agent`：作为 OpenAI Codex 的通用 UA；
+2. TLS 指纹路由的 `upstream_user_agent`：按客户端族或请求前缀匹配；
+3. token exchange/refresh 与 invite/reset 的专用 UA：仅作用于对应控制面请求。
+
+`codex-cli/`、`codex-tui/`、`codex_cli_rs/` 和 `Codex Desktop/` 应分别配置自己的 UA，并让首段与 `originator` 配对。UA 中声明的系统、架构、版本需要与 TLS profile、ALPN 和实际 HTTP 行为一致。留空时使用账号 UA、入站 UA 或系统兜底值。
+
+## OpenAI 反代分支的设计取舍
+
+```text
+客户端请求
+  ├─ UA / originator / TLS ClientHello
+  ├─ session / thread / window
+  └─ prompt_cache_key（显式时保留）
+          ↓
+统一 fingerprint snapshot
+          ↓
+账号作用域 + 对话作用域 + 稳定出站代理
+          ↓
+HTTP / SSE / passthrough / WebSocket
+```
+
+- 缓存侧优先保证同一对话的 key 连续：短暂缺省时复用绑定，新 key 才开启新的上游缓存命名空间。
+- 身份侧把 installation/device 固定在账号，把 thread/window 固定在对话，把 turn 留给每次请求；故障转移时重新进入目标账号作用域。
+- 出站侧让 UA、originator、TLS、ALPN、HTTP 版本和代理出口来自同一决策快照，减少不同传输路径间的分裂。
+- 观测侧同时记录最终模型、session、TTFT、缓存命中、错误分类和传输类型，便于区分冷缓存、压缩和真实上游限流。
+
+这些取舍优化的是反代层的连续性和可诊断性，不对上游额度或动态并发策略作额外承诺。
 
 ## 代理出口策略
 

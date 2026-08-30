@@ -38,6 +38,32 @@ ConcordRoute 主要修改自 [TokenRouter](https://github.com/TokenFlux/TokenRou
 4. **默认使用 Cockpit 模式**：它在账号级稳定设备和主会话，在对话级隔离 thread 与缓存键。已有特殊客户端集成可按实际情况选择 session、full 或 off。
 5. **根据观测调整**：结合请求错误、TTFT、缓存命中、429/529、代理健康和账号用量判断问题，不把单一指标直接解释为额度变化。
 
+### Codex 客户端版本与 UA
+
+- **推荐 Codex 0.151.0 及更高版本**。较新的客户端会携带更完整的会话、回合和上下文窗口字段，压缩与重连时的生命周期信息更完整；旧版本仍可走兼容入口，但字段覆盖范围较小。
+- **UA 由部署者自行设置**。在管理端的全局 `openai_codex_user_agent`、TLS 指纹路由规则 `upstream_user_agent`，以及 token/reset 专用 UA 字段中，填写与实际客户端、操作系统、架构和版本匹配的值。
+- **按客户端族分别设置**。`codex-cli/`、`codex-tui/`、`codex_cli_rs/` 和 `Codex Desktop/` 使用各自的 UA 与 `originator` 配对，不把多个客户端族压成同一字符串。
+- **UA 与 TLS 成组配置**。UA 声明的系统、架构、版本应与 ClientHello、ALPN 和实际 HTTP 传输一致；升级客户端时同步复核 UA 和 TLS profile。
+
+示例模板（将占位符替换为实际值）：
+
+```text
+codex-cli/<version> (<os> <arch>)
+Codex Desktop/<version> (<os> <arch>)
+```
+
+管理端留空时沿用账号、入站请求或系统兜底值；显式设置后，仅在匹配的 OpenAI/Codex 路由上使用。
+
+## OpenAI 反代分支的优势
+
+- **缓存命中链路清晰**：显式 `prompt_cache_key` 优先保留；同一 `session/thread/window` 暂时省略 key 时复用最近绑定；收到新的显式 key 后立即切换缓存命名空间，不让缓存键反向改变 session/thread。
+- **指纹收敛范围可控**：installation/device 维持账号级稳定，会话与 thread 按对话隔离，turn 按请求更新；HTTP、SSE、passthrough 和 WebSocket 使用同一 fingerprint snapshot。
+- **统一出站**：账号绑定的 TLS profile、UA、originator、ALPN、HTTP 协议和代理出口从同一决策快照产生，减少直连、HTTP Proxy、HTTPS Proxy 之间的漂移。
+- **故障转移可诊断**：切换账号时重新进入目标账号作用域，保留客户端对话语义并隔离上游身份；日志同时记录最终模型、session、TTFT、缓存命中和传输类型。
+- **OpenAI 专用边界**：Codex 身份、Responses、压缩、额度快照和 WebSocket 逻辑只在满足 OAuth/Codex 条件时启用，其他平台继续使用各自的协议路径。
+
+这些设计主要减少反代层产生的身份漂移、缓存冷启动和重复请求；账号真实额度、并发策略和上游动态策略仍由上游服务决定。
+
 更详细的差异和配置原则见 [指纹、身份与出口一致性说明](docs/guides/fingerprint-consistency.md)。
 
 ## 上游与致谢
