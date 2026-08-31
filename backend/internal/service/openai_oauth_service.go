@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/errors"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
 )
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
@@ -54,10 +56,14 @@ func (s *OpenAIOAuthService) SetHTTPUpstream(httpUpstream HTTPUpstream) {
 type OpenAIAuthURLResult struct {
 	AuthURL   string `json:"auth_url"`
 	SessionID string `json:"session_id"`
+	Warning   string `json:"warning,omitempty"`
 }
 
 // GenerateAuthURL generates an OpenAI OAuth authorization URL
-func (s *OpenAIOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64, redirectURI, platform string) (*OpenAIAuthURLResult, error) {
+func (s *OpenAIOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64, redirectURI, platform string, tlsFingerprintRouterID *int64) (*OpenAIAuthURLResult, error) {
+	routerID := valueFromInt64Ptr(tlsFingerprintRouterID)
+	_, fallbackWarning := s.resolveBoundChatGPTOAuthTokenRequestOptions(ctx, routerID, nil)
+
 	// Generate PKCE values
 	state, err := openai.GenerateState()
 	if err != nil {
@@ -102,12 +108,13 @@ func (s *OpenAIOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64
 
 	// Store session
 	session := &openai.OAuthSession{
-		State:        state,
-		CodeVerifier: codeVerifier,
-		ClientID:     clientID,
-		RedirectURI:  redirectURI,
-		ProxyURL:     proxyURL,
-		CreatedAt:    time.Now(),
+		State:                  state,
+		CodeVerifier:           codeVerifier,
+		ClientID:               clientID,
+		RedirectURI:            redirectURI,
+		ProxyURL:               proxyURL,
+		TLSFingerprintRouterID: routerID,
+		CreatedAt:              time.Now(),
 	}
 	s.sessionStore.Set(sessionID, session)
 
@@ -117,6 +124,7 @@ func (s *OpenAIOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64
 	return &OpenAIAuthURLResult{
 		AuthURL:   authURL,
 		SessionID: sessionID,
+		Warning:   fallbackWarning,
 	}, nil
 }
 
@@ -190,7 +198,11 @@ func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExch
 	}
 
 	// Exchange code for token
-	tokenOptions := s.resolveChatGPTOAuthTokenRequestOptions(ctx, valueFromInt64Ptr(input.TLSFingerprintRouterID), nil)
+	routerID := session.TLSFingerprintRouterID
+	if routerID <= 0 {
+		routerID = valueFromInt64Ptr(input.TLSFingerprintRouterID)
+	}
+	tokenOptions, _ := s.resolveBoundChatGPTOAuthTokenRequestOptions(ctx, routerID, nil)
 	tokenResp, err := s.oauthClient.ExchangeCode(ctx, input.Code, session.CodeVerifier, redirectURI, proxyURL, clientID, tokenOptions...)
 	if err != nil {
 		return nil, err
@@ -251,7 +263,7 @@ func (s *OpenAIOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 	if account != nil && routerID <= 0 {
 		routerID = account.GetTLSFingerprintRouterID()
 	}
-	tokenOptions := s.resolveChatGPTOAuthTokenRequestOptions(ctx, routerID, account)
+	tokenOptions, _ := s.resolveBoundChatGPTOAuthTokenRequestOptions(ctx, routerID, account)
 	tokenResp, err := s.oauthClient.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID, tokenOptions...)
 	if err != nil {
 		return nil, err
@@ -328,6 +340,63 @@ func (s *OpenAIOAuthService) resolveChatGPTOAuthTokenRequestOptions(ctx context.
 		return nil
 	}
 	return []OpenAIOAuthTokenRequestOptions{option}
+}
+
+// resolveBoundChatGPTOAuthTokenRequestOptions 解析绑定 Router 的 OAuth token 专用 TLS 配置。
+// 配置缺失或异常时继续使用标准 Go TLS，并通过服务端日志和授权链接响应暴露回退风险。
+func (s *OpenAIOAuthService) resolveBoundChatGPTOAuthTokenRequestOptions(ctx context.Context, routerID int64, account *Account) ([]OpenAIOAuthTokenRequestOptions, string) {
+	if routerID <= 0 {
+		return nil, ""
+	}
+	if s == nil || s.tlsFPRouterReader == nil {
+		return nil, openAIOAuthStandardTLSFallbackWarning(routerID, "TLS Router service is unavailable")
+	}
+	router := s.tlsFPRouterReader.GetRuntimeRouter(routerID)
+	if router == nil {
+		return nil, openAIOAuthStandardTLSFallbackWarning(routerID, "TLS Router was not found")
+	}
+	if !router.Enabled {
+		return nil, openAIOAuthStandardTLSFallbackWarning(routerID, "TLS Router is disabled")
+	}
+	if router.ChatGPTOAuthTokenTLSFingerprintProfileID == nil {
+		return nil, openAIOAuthStandardTLSFallbackWarning(routerID, "dedicated token TLS profile is not configured")
+	}
+	if s.tlsFPProfileResolver == nil {
+		return nil, openAIOAuthStandardTLSFallbackWarning(routerID, "token TLS profile service is unavailable")
+	}
+	profileID := *router.ChatGPTOAuthTokenTLSFingerprintProfileID
+	profile, ok := s.tlsFPProfileResolver.ResolveTokenTLSProfileByID(profileID)
+	if !ok || profile == nil {
+		return nil, openAIOAuthStandardTLSFallbackWarning(routerID, fmt.Sprintf("token TLS profile %d could not be resolved", profileID))
+	}
+	profile = tlsfingerprint.HTTP1OnlyProfile(profile)
+
+	tokenUA := strings.TrimSpace(router.ChatGPTOAuthTokenUserAgent)
+	if tokenUA == "" && s.settingService != nil {
+		tokenUA = strings.TrimSpace(s.settingService.GetOpenAICodexUserAgent(ctx))
+	}
+	if tokenUA != "" {
+		tokenUA, _ = CodexAuthIdentityForUserAgent(tokenUA)
+	}
+	option := OpenAIOAuthTokenRequestOptions{
+		UserAgent:  tokenUA,
+		TLSProfile: profile,
+	}
+	if account != nil {
+		option.AccountID = account.ID
+		option.AccountConcurrency = account.Concurrency
+	}
+	return []OpenAIOAuthTokenRequestOptions{option}, ""
+}
+
+func openAIOAuthStandardTLSFallbackWarning(routerID int64, reason string) string {
+	warning := fmt.Sprintf(
+		"OpenAI OAuth TLS Router %d is not fully configured (%s). The request will use the standard Go TLS fallback, which may expose a server/Linux transport signature.",
+		routerID,
+		reason,
+	)
+	slog.Warn("openai_oauth_standard_tls_fallback", "router_id", routerID, "reason", reason)
+	return warning
 }
 
 func valueFromInt64Ptr(value *int64) int64 {

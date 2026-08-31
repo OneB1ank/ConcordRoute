@@ -146,3 +146,51 @@ func TestOpenAIOAuthService_ExchangeCode_UsesRequestTLSRouterConfig(t *testing.T
 	require.Equal(t, expectedUA, client.lastOptions[0].UserAgent)
 	require.Same(t, profile, client.lastOptions[0].TLSProfile)
 }
+
+func TestOpenAIOAuthService_ExchangeCode_PrefersRouterBoundToAuthSession(t *testing.T) {
+	sessionProfile := &tlsfingerprint.Profile{Name: "session-profile"}
+	requestProfile := &tlsfingerprint.Profile{Name: "request-profile"}
+	sessionProfileID := int64(51)
+	requestProfileID := int64(52)
+	client := &openaiOAuthClientStateStub{}
+	svc := NewOpenAIOAuthService(nil, client)
+	defer svc.Stop()
+	svc.SetTokenTLSRouterDeps(nil, &openAIOAuthTLSRouterReaderStub{routers: map[int64]*model.TLSFingerprintRouter{
+		7: {
+			ID:                                       7,
+			Enabled:                                  true,
+			ChatGPTOAuthTokenUserAgent:               "session UA",
+			ChatGPTOAuthTokenTLSFingerprintProfileID: &sessionProfileID,
+		},
+		8: {
+			ID:                                       8,
+			Enabled:                                  true,
+			ChatGPTOAuthTokenUserAgent:               "request UA",
+			ChatGPTOAuthTokenTLSFingerprintProfileID: &requestProfileID,
+		},
+	}}, &openAIOAuthTokenProfileResolverStub{profiles: map[int64]*tlsfingerprint.Profile{
+		sessionProfileID: sessionProfile,
+		requestProfileID: requestProfile,
+	}})
+
+	svc.sessionStore.Set("sid", &openai.OAuthSession{
+		State:                  "expected-state",
+		CodeVerifier:           "verifier",
+		RedirectURI:            openai.DefaultRedirectURI,
+		TLSFingerprintRouterID: 7,
+		CreatedAt:              time.Now(),
+	})
+	requestRouterID := int64(8)
+	_, err := svc.ExchangeCode(context.Background(), &OpenAIExchangeCodeInput{
+		SessionID:              "sid",
+		Code:                   "auth-code",
+		State:                  "expected-state",
+		TLSFingerprintRouterID: &requestRouterID,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, client.lastOptions, 1)
+	expectedUA, _ := CodexAuthIdentityForUserAgent("session UA")
+	require.Equal(t, expectedUA, client.lastOptions[0].UserAgent)
+	require.Same(t, sessionProfile, client.lastOptions[0].TLSProfile)
+}

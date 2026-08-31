@@ -853,7 +853,8 @@ const openAIWeeklyEstimatedTotal = computed(() => {
     !weekly ||
     typeof utilization !== 'number' ||
     !Number.isFinite(utilization) ||
-    utilization <= 0 ||
+    // 周使用率达到 5% 后样本才相对稳定，避免低用量阶段放大估算偏差。
+    utilization < 5 ||
     utilization > 100 ||
     typeof cost !== 'number' ||
     !Number.isFinite(cost) ||

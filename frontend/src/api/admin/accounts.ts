@@ -653,9 +653,9 @@ export async function resetTempUnschedulable(id: number): Promise<{ message: str
  */
 export async function generateAuthUrl(
   endpoint: string,
-  config: { proxy_id?: number }
-): Promise<{ auth_url: string; session_id: string }> {
-  const { data } = await apiClient.post<{ auth_url: string; session_id: string }>(endpoint, config)
+  config: { proxy_id?: number; redirect_uri?: string; tls_fingerprint_router_id?: number }
+): Promise<{ auth_url: string; session_id: string; warning?: string }> {
+  const { data } = await apiClient.post<{ auth_url: string; session_id: string; warning?: string }>(endpoint, config)
   return data
 }
 

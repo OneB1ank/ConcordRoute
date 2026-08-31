@@ -518,7 +518,7 @@ export default {
         overdraftReasonQuotaLimited: '额度已耗尽',
         overdraftReasonTransientFailure: '瞬时限流',
         overdraftRecoverAt: '预计恢复',
-        estimatedWeeklyTotal: '周总 ≈ {amount}',
+        estimatedWeeklyTotal: '预估周总额度 ≈ {amount}',
         estimatedWeeklyTotalHint: '≈ 表示预估值；根据当前 7 天窗口的已用费用和使用率计算，会随窗口数据更新而变化。',
         statsTitle: '5小时窗口用量统计',
         statsTitleDaily: '每日用量统计',

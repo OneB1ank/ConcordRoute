@@ -91,8 +91,9 @@ func NewOpenAIOAuthHandler(
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
 type OpenAIGenerateAuthURLRequest struct {
-	ProxyID     *int64 `json:"proxy_id"`
-	RedirectURI string `json:"redirect_uri"`
+	ProxyID                *int64 `json:"proxy_id"`
+	RedirectURI            string `json:"redirect_uri"`
+	TLSFingerprintRouterID *int64 `json:"tls_fingerprint_router_id"`
 }
 
 // GenerateAuthURL generates OpenAI OAuth authorization URL
@@ -109,6 +110,7 @@ func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		req.ProxyID,
 		req.RedirectURI,
 		oauthPlatformFromPath(c),
+		req.TLSFingerprintRouterID,
 	)
 	if err != nil {
 		response.ErrorFrom(c, err)

@@ -10,6 +10,7 @@ const {
   updateAccountMock,
   clearErrorMock,
   applyOAuthCredentialsMock,
+  generateOpenAIAuthUrlMock,
   exchangeAuthCodeMock,
   buildCredentialsMock,
   buildExtraInfoMock
@@ -19,6 +20,7 @@ const {
   updateAccountMock: vi.fn(),
   clearErrorMock: vi.fn(),
   applyOAuthCredentialsMock: vi.fn(),
+  generateOpenAIAuthUrlMock: vi.fn(),
   exchangeAuthCodeMock: vi.fn(),
   buildCredentialsMock: vi.fn(),
   buildExtraInfoMock: vi.fn()
@@ -71,7 +73,7 @@ vi.mock('@/composables/useOpenAIOAuth', () => ({
     loading: { value: false },
     error: { value: '' },
     resetState: vi.fn(),
-    generateAuthUrl: vi.fn(),
+    generateAuthUrl: generateOpenAIAuthUrlMock,
     exchangeAuthCode: exchangeAuthCodeMock,
     buildCredentials: buildCredentialsMock,
     buildExtraInfo: buildExtraInfoMock
@@ -119,6 +121,7 @@ const BaseDialogStub = defineComponent({
 
 const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
+  emits: ['generate-url'],
   setup(_, { expose }) {
     expose({
       authCode: 'auth-code-1',
@@ -130,7 +133,7 @@ const OAuthAuthorizationFlowStub = defineComponent({
     })
     return {}
   },
-  template: '<div data-testid="oauth-flow" />'
+  template: '<button data-testid="oauth-generate" @click="$emit(\'generate-url\')">generate</button>'
 })
 
 function openAIAccount(): Account {
@@ -173,6 +176,7 @@ describe('admin/account/ReAuthAccountModal', () => {
     updateAccountMock.mockReset()
     clearErrorMock.mockReset()
     applyOAuthCredentialsMock.mockReset()
+    generateOpenAIAuthUrlMock.mockReset()
     exchangeAuthCodeMock.mockReset()
     buildCredentialsMock.mockReset()
     buildExtraInfoMock.mockReset()
@@ -194,6 +198,28 @@ describe('admin/account/ReAuthAccountModal', () => {
       status: 'active',
       error_message: null
     })
+  })
+
+  it('生成重新授权链接时绑定账号 TLS Router', async () => {
+    const wrapper = mount(ReAuthAccountModal, {
+      props: {
+        show: true,
+        account: openAIAccount()
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
+          Icon: true
+        }
+      }
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="oauth-generate"]').trigger('click')
+    await flushPromises()
+
+    expect(generateOpenAIAuthUrlMock).toHaveBeenCalledWith(12, undefined, 9)
   })
 
   it('OpenAI 重新授权使用增量合并接口保留 TLS Router 绑定', async () => {

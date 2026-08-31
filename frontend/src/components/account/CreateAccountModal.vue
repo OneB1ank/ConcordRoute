@@ -6359,7 +6359,8 @@ const startQoderPolling = (intervalSeconds = 2) => {
 
 const handleGenerateUrl = async () => {
   if (form.platform === 'openai') {
-    await openaiOAuth.appendAuthUrl(form.proxy_id)
+    await loadOpenAIOAuthImportDefaults()
+    await openaiOAuth.appendAuthUrl(form.proxy_id, undefined, selectedOpenAITokenTLSRouterId())
   } else if (form.platform === 'gemini') {
     await geminiOAuth.generateAuthUrl(
       form.proxy_id,

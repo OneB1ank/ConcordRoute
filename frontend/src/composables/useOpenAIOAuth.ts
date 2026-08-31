@@ -63,7 +63,8 @@ export function useOpenAIOAuth() {
 
   const requestAuthSession = async (
     proxyId?: number | null,
-    redirectUri?: string
+    redirectUri?: string,
+    tlsFingerprintRouterId?: number | null
   ): Promise<OpenAIOAuthSession | null> => {
     const payload: Record<string, unknown> = {}
     if (proxyId) {
@@ -72,11 +73,17 @@ export function useOpenAIOAuth() {
     if (redirectUri) {
       payload.redirect_uri = redirectUri
     }
+    if (tlsFingerprintRouterId) {
+      payload.tls_fingerprint_router_id = tlsFingerprintRouterId
+    }
 
     const response = await adminAPI.accounts.generateAuthUrl(
       `${endpointPrefix}/generate-auth-url`,
       payload
     )
+    if (response.warning) {
+      appStore.showWarning(response.warning, 8000)
+    }
     return {
       authUrl: response.auth_url,
       sessionId: response.session_id,
@@ -97,7 +104,8 @@ export function useOpenAIOAuth() {
   // Generate auth URL for OpenAI OAuth
   const generateAuthUrl = async (
     proxyId?: number | null,
-    redirectUri?: string
+    redirectUri?: string,
+    tlsFingerprintRouterId?: number | null
   ): Promise<boolean> => {
     loading.value = true
     authUrl.value = ''
@@ -107,7 +115,7 @@ export function useOpenAIOAuth() {
     error.value = ''
 
     try {
-      const session = await requestAuthSession(proxyId, redirectUri)
+      const session = await requestAuthSession(proxyId, redirectUri, tlsFingerprintRouterId)
       if (!session) return false
       authSessions.value = [session]
       setCurrentAuthSession(session)
@@ -124,13 +132,14 @@ export function useOpenAIOAuth() {
   // 追加生成一条授权链接，用于 OpenAI OAuth 批量导入时保持多组 session/state。
   const appendAuthUrl = async (
     proxyId?: number | null,
-    redirectUri?: string
+    redirectUri?: string,
+    tlsFingerprintRouterId?: number | null
   ): Promise<OpenAIOAuthSession | null> => {
     loading.value = true
     error.value = ''
 
     try {
-      const session = await requestAuthSession(proxyId, redirectUri)
+      const session = await requestAuthSession(proxyId, redirectUri, tlsFingerprintRouterId)
       if (!session) return null
       authSessions.value = [...authSessions.value, session]
       setCurrentAuthSession(session)

@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { showWarningMock } = vi.hoisted(() => ({
+  showWarningMock: vi.fn()
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn()
+    showError: vi.fn(),
+    showWarning: showWarningMock
   })
 }))
 
@@ -36,6 +41,27 @@ beforeEach(() => {
   vi.mocked(adminAPI.accounts.generateAuthUrl).mockReset()
   vi.mocked(adminAPI.accounts.exchangeCode).mockReset()
   vi.mocked(adminAPI.accounts.refreshOpenAIToken).mockReset()
+  showWarningMock.mockReset()
+})
+
+describe('useOpenAIOAuth.generateAuthUrl', () => {
+  it('shows the standard TLS fallback warning returned by the server', async () => {
+    vi.mocked(adminAPI.accounts.generateAuthUrl).mockResolvedValueOnce({
+      auth_url: 'https://auth.example/authorize?state=test-state',
+      session_id: 'session-id',
+      warning: 'standard Go TLS fallback risk'
+    })
+    const oauth = useOpenAIOAuth()
+
+    const ok = await oauth.generateAuthUrl(3, undefined, 9)
+
+    expect(ok).toBe(true)
+    expect(showWarningMock).toHaveBeenCalledWith('standard Go TLS fallback risk', 8000)
+    expect(adminAPI.accounts.generateAuthUrl).toHaveBeenCalledWith(
+      '/admin/openai/generate-auth-url',
+      { proxy_id: 3, tls_fingerprint_router_id: 9 }
+    )
+  })
 })
 
 describe('useOpenAIOAuth.buildCredentials', () => {

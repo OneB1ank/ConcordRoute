@@ -18,7 +18,7 @@ vi.mock('@/api/admin', () => ({
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   const testMessages: Record<string, string> = {
-    'admin.accounts.usageWindow.estimatedWeeklyTotal': '周总 ≈ {amount}',
+    'admin.accounts.usageWindow.estimatedWeeklyTotal': '预估周总额度 ≈ {amount}',
     'admin.accounts.usageWindow.estimatedWeeklyTotalHint': '≈ 表示预估值；根据当前 7 天窗口的已用费用和使用率计算，会随窗口数据更新而变化。',
     'admin.accounts.usageWindow.overdraftReasonQuotaLimited': '额度已耗尽',
     'admin.accounts.usageWindow.overdraftReasonTransientFailure': '瞬时限流'
@@ -1005,7 +1005,7 @@ describe('AccountUsageCell', () => {
   expect(wrapper.text()).toContain('7d|100|106540000')
   })
 
-  it('OpenAI OAuth 保留 5h/7d 用量，并按 7d 使用率估算周总额', async () => {
+  it('OpenAI OAuth 保留 5h/7d 用量，并在周使用率达到 5% 时估算周总额度', async () => {
     getUsage.mockResolvedValue({
       five_hour: {
         utilization: 100,
@@ -1014,10 +1014,10 @@ describe('AccountUsageCell', () => {
         window_stats: { requests: 20, tokens: 2000, cost: 50 }
       },
       seven_day: {
-        utilization: 22,
+        utilization: 5,
         resets_at: '2026-09-06T06:00:00Z',
         remaining_seconds: 518400,
-        window_stats: { requests: 1000, tokens: 140400000, cost: 119.65 }
+        window_stats: { requests: 180, tokens: 26500000, cost: 29.221 }
       }
     })
 
@@ -1039,12 +1039,13 @@ describe('AccountUsageCell', () => {
 
     expect(wrapper.text()).toContain('5h|100')
     expect(wrapper.text()).toContain('5h|100|2000')
-    expect(wrapper.text()).toContain('7d|22')
-    expect(wrapper.get('[data-testid="openai-weekly-estimate"]').text()).toBe('周总 ≈ $543.86')
+    expect(wrapper.text()).toContain('7d|5')
+    expect(wrapper.get('[data-testid="openai-weekly-estimate"]').text()).toBe('预估周总额度 ≈ $584.42')
   })
 
   it.each([
     { utilization: 0, cost: 119.65 },
+    { utilization: 4, cost: 23.38 },
     { utilization: 101, cost: 119.65 },
     { utilization: 22, cost: 0 },
     { utilization: 22, cost: undefined }
