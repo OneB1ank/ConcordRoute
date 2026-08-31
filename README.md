@@ -88,6 +88,7 @@ Codex Desktop/<version> (<os> <arch>)
 ## 部署与文档
 
 - [部署指南](docs/guides/deployment/index.md)
+- [从 Sub2API 迁移到 ConcordRoute](docs/guides/migration-from-sub2api.md)
 - [Docker 镜像说明](deploy/DOCKER.md)
 - [使用与运维指南](docs/guides/index.md)
 - [接口文档](docs/interfaces/index.md)
