@@ -201,9 +201,57 @@ export function formatDateTimeLocalInput(timestampSeconds: number | null): strin
  */
 export function parseDateTimeLocalInput(value: string): number | null {
   if (!value) return null
-  const date = new Date(value)
-  if (isNaN(date.getTime())) return null
-  return Math.floor(date.getTime() / 1000)
+
+  // datetime-local 不含时区；显式解析本地日期组件，拒绝时区后缀和 Date.parse 的溢出归一化。
+  const match = /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/.exec(value)
+  if (!match) return null
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const hours = Number(match[4])
+  const minutes = Number(match[5])
+  const seconds = match[6] ? Number(match[6]) : 0
+  const milliseconds = match[7] ? Number(match[7].slice(0, 3).padEnd(3, '0')) : 0
+
+  if (
+    !Number.isSafeInteger(year) ||
+    year < 1 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hours > 23 ||
+    minutes > 59 ||
+    seconds > 59
+  ) {
+    return null
+  }
+
+  const date = new Date(0)
+  date.setFullYear(year, month - 1, day)
+  date.setHours(hours, minutes, seconds, milliseconds)
+
+  // Date setter 会把 2 月 30 日等非法日期归一化，必须回查原始组件。
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null
+  }
+
+  const timestamp = date.getTime()
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null
+}
+
+/** 获取浏览器当前使用的 IANA 时区。 */
+export function getBrowserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
 }
 
 /**

@@ -109,7 +109,7 @@ type AccountRepository interface {
 	BulkUpdate(ctx context.Context, ids []int64, updates AccountBulkUpdate) (int64, error)
 	// IncrementQuotaUsed 原子递增 API Key 账号的配额用量（总/日/周）
 	IncrementQuotaUsed(ctx context.Context, id int64, amount float64) error
-	// ResetQuotaUsed 重置 API Key 账号所有维度的配额用量为 0
+	// ResetQuotaUsed 原子重置 API Key 账号所有维度的配额用量，并清除账号级限流冷却。
 	ResetQuotaUsed(ctx context.Context, id int64) error
 	// RevertProxyFallback 将账号的 proxy_id 切回 proxy_fallback_origin_id，并清空 origin 字段。
 	// 仅当 proxy_fallback_origin_id IS NOT NULL 时更新，否则视为账号不存在（返回 ErrAccountNotFound）。

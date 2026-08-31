@@ -534,6 +534,9 @@
               type="datetime-local"
               class="input"
             />
+            <p v-if="batchUpdateForm.expires_mode === 'custom'" class="input-hint">
+              {{ t('admin.redeem.localTimeZoneHint', { timezone: browserTimeZone }) }}
+            </p>
           </template>
         </div>
 
@@ -672,7 +675,12 @@ import { useBalanceDisplay } from '@/composables/useBalanceDisplay'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
-import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
+import {
+  formatDateTime,
+  formatDateTimeLocalInput,
+  getBrowserTimeZone,
+  parseDateTimeLocalInput
+} from '@/utils/format'
 import type { BatchUpdateRedeemCodeFields, RedeemCode, RedeemCodeType } from '@/types'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { Column } from '@/components/common/types'
@@ -687,6 +695,7 @@ import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const browserTimeZone = getBrowserTimeZone()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 const { formatBalanceAmount } = useBalanceDisplay()
 
@@ -1059,8 +1068,8 @@ const buildBatchUpdateFields = (): BatchUpdateRedeemCodeFields | null => {
       fields.expires_at = null
     } else {
       const expiresAt = parseDateTimeLocalInput(batchUpdateForm.expires_at_str)
-      if (!expiresAt) {
-        appStore.showError(t('admin.redeem.expiryDaysRequired'))
+      if (expiresAt === null) {
+        appStore.showError(t('admin.redeem.expiryDateRequired'))
         return null
       }
       fields.expires_at = new Date(expiresAt * 1000).toISOString()

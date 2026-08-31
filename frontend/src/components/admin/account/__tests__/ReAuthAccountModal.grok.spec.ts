@@ -17,7 +17,8 @@ describe('ReAuthAccountModal Grok re-auth paths', () => {
 
   it('wires SSO and RT reauth without batch account create', () => {
     expect(source).toContain('@import-sso="handleGrokImportSSO"')
-    expect(source).toContain('@validate-refresh-token="handleGrokValidateRefreshToken"')
+    expect(source).toContain('@validate-refresh-token="handleValidateRefreshToken"')
+    expect(source).toContain('await handleGrokValidateRefreshToken(refreshTokenInput)')
     expect(source).toContain('grokOAuth.validateSSOToken')
     expect(source).toContain('grokOAuth.buildCredentials')
     // 重新认证更新现有账号，不得调用 createFromSSO 批量创建。

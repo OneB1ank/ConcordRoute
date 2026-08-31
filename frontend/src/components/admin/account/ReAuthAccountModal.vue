@@ -140,7 +140,7 @@
         :initial-input-method="grokInitialInputMethod"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
-        @validate-refresh-token="handleGrokValidateRefreshToken"
+        @validate-refresh-token="handleValidateRefreshToken"
         @import-sso="handleGrokImportSSO"
       />
 
@@ -637,6 +637,87 @@ const applyGrokReauthTokenInfo = async (tokenInfo: {
   appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
   emit('reauthorized', updatedAccount)
   handleClose()
+}
+
+/** 使用单个刷新令牌更新当前账号，不创建重复账号。 */
+const handleValidateRefreshToken = async (refreshTokenInput: string) => {
+  if (!props.account) return
+  if (isGrok.value) {
+    await handleGrokValidateRefreshToken(refreshTokenInput)
+    return
+  }
+
+  const refreshToken = refreshTokenInput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)[0]
+  if (!refreshToken) return
+
+  if (isOpenAILike.value) {
+    openaiOAuth.loading.value = true
+    openaiOAuth.error.value = ''
+    try {
+      const accountCredentials = (props.account.credentials || {}) as Record<string, unknown>
+      const clientId =
+        typeof accountCredentials.client_id === 'string' && accountCredentials.client_id.trim()
+          ? accountCredentials.client_id.trim()
+          : undefined
+      const tokenInfo = await openaiOAuth.validateRefreshToken(
+        refreshToken,
+        props.account.proxy_id,
+        clientId,
+        props.account.tls_fingerprint_router_id
+      )
+      if (!tokenInfo) return
+
+      const updatedAccount = await adminAPI.accounts.applyOAuthCredentials(props.account.id, {
+        type: 'oauth',
+        credentials: openaiOAuth.buildCredentials(tokenInfo),
+        extra: openaiOAuth.buildExtraInfo(tokenInfo)
+      })
+      appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+      emit('reauthorized', updatedAccount)
+      handleClose()
+    } catch (error: any) {
+      openaiOAuth.error.value =
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        error.message ||
+        t('admin.accounts.oauth.authFailed')
+      appStore.showError(openaiOAuth.error.value)
+    } finally {
+      openaiOAuth.loading.value = false
+    }
+    return
+  }
+
+  if (!isAntigravity.value) return
+  antigravityOAuth.loading.value = true
+  antigravityOAuth.error.value = ''
+  try {
+    const tokenInfo = await antigravityOAuth.validateRefreshToken(
+      refreshToken,
+      props.account.proxy_id
+    )
+    if (!tokenInfo) return
+
+    const updatedAccount = await adminAPI.accounts.applyOAuthCredentials(props.account.id, {
+      type: 'oauth',
+      credentials: antigravityOAuth.buildCredentials(tokenInfo, refreshToken)
+    })
+    appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+    emit('reauthorized', updatedAccount)
+    handleClose()
+  } catch (error: any) {
+    antigravityOAuth.error.value =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      t('admin.accounts.oauth.authFailed')
+    appStore.showError(antigravityOAuth.error.value)
+  } finally {
+    antigravityOAuth.loading.value = false
+  }
 }
 
 /** 使用单个 SSO Cookie 重新认证并转换为 Build OAuth，不执行批量创建。 */

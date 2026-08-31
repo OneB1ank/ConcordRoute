@@ -11,6 +11,7 @@ const {
   clearErrorMock,
   applyOAuthCredentialsMock,
   generateOpenAIAuthUrlMock,
+  validateOpenAIRefreshTokenMock,
   exchangeAuthCodeMock,
   buildCredentialsMock,
   buildExtraInfoMock
@@ -21,6 +22,7 @@ const {
   clearErrorMock: vi.fn(),
   applyOAuthCredentialsMock: vi.fn(),
   generateOpenAIAuthUrlMock: vi.fn(),
+  validateOpenAIRefreshTokenMock: vi.fn(),
   exchangeAuthCodeMock: vi.fn(),
   buildCredentialsMock: vi.fn(),
   buildExtraInfoMock: vi.fn()
@@ -74,6 +76,7 @@ vi.mock('@/composables/useOpenAIOAuth', () => ({
     error: { value: '' },
     resetState: vi.fn(),
     generateAuthUrl: generateOpenAIAuthUrlMock,
+    validateRefreshToken: validateOpenAIRefreshTokenMock,
     exchangeAuthCode: exchangeAuthCodeMock,
     buildCredentials: buildCredentialsMock,
     buildExtraInfo: buildExtraInfoMock
@@ -121,7 +124,7 @@ const BaseDialogStub = defineComponent({
 
 const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
-  emits: ['generate-url'],
+  emits: ['generate-url', 'validate-refresh-token'],
   setup(_, { expose }) {
     expose({
       authCode: 'auth-code-1',
@@ -142,7 +145,9 @@ function openAIAccount(): Account {
     name: 'OpenAI OAuth',
     platform: 'openai',
     type: 'oauth',
-    credentials: {},
+    credentials: {
+      client_id: 'existing-client-id'
+    },
     extra: {
       tls_fingerprint_router_id: 9
     },
@@ -177,6 +182,7 @@ describe('admin/account/ReAuthAccountModal', () => {
     clearErrorMock.mockReset()
     applyOAuthCredentialsMock.mockReset()
     generateOpenAIAuthUrlMock.mockReset()
+    validateOpenAIRefreshTokenMock.mockReset()
     exchangeAuthCodeMock.mockReset()
     buildCredentialsMock.mockReset()
     buildExtraInfoMock.mockReset()
@@ -184,6 +190,11 @@ describe('admin/account/ReAuthAccountModal', () => {
     exchangeAuthCodeMock.mockResolvedValue({
       access_token: 'new-access-token',
       refresh_token: 'new-refresh-token',
+      email: 'user@example.test'
+    })
+    validateOpenAIRefreshTokenMock.mockResolvedValue({
+      access_token: 'refreshed-access-token',
+      refresh_token: 'rotated-refresh-token',
       email: 'user@example.test'
     })
     buildCredentialsMock.mockReturnValue({
@@ -265,5 +276,50 @@ describe('admin/account/ReAuthAccountModal', () => {
       status: 'active',
       error_message: null
     })
+  })
+
+  it('OpenAI 刷新令牌重新授权更新原账号并保留路由参数', async () => {
+    const wrapper = mount(ReAuthAccountModal, {
+      props: {
+        show: true,
+        account: openAIAccount()
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
+          Icon: true
+        }
+      }
+    })
+    await flushPromises()
+
+    buildCredentialsMock.mockReturnValue({
+      access_token: 'refreshed-access-token',
+      refresh_token: 'rotated-refresh-token'
+    })
+    wrapper
+      .findComponent(OAuthAuthorizationFlowStub)
+      .vm.$emit('validate-refresh-token', '  old-refresh-token  ')
+    await flushPromises()
+
+    expect(validateOpenAIRefreshTokenMock).toHaveBeenCalledWith(
+      'old-refresh-token',
+      12,
+      'existing-client-id',
+      9
+    )
+    expect(applyOAuthCredentialsMock).toHaveBeenCalledWith(101, {
+      type: 'oauth',
+      credentials: {
+        access_token: 'refreshed-access-token',
+        refresh_token: 'rotated-refresh-token'
+      },
+      extra: {
+        email: 'user@example.test'
+      }
+    })
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    expect(clearErrorMock).not.toHaveBeenCalled()
   })
 })

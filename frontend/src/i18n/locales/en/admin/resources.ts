@@ -281,6 +281,8 @@ export default {
       },
       batchNotesPlaceholder: 'Leave empty to clear notes',
       customExpiry: 'Custom Time',
+      expiryDateRequired: 'Please enter a valid expiry date and time',
+      localTimeZoneHint: 'Custom time is interpreted in your browser time zone ({timezone}).',
       deleteAllUnused: 'Delete All Unused Codes',
       deleteCode: 'Delete Redeem Code',
       deleteCodeConfirm:

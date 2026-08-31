@@ -289,6 +289,8 @@ export default {
       },
       batchNotesPlaceholder: '留空可清空备注',
       customExpiry: '自定义时间',
+      expiryDateRequired: '请输入有效的过期日期和时间',
+      localTimeZoneHint: '自定义时间按浏览器本地时区（{timezone}）解释。',
       deleteAllUnused: '删除全部未使用',
       deleteCodeConfirm: '确定要删除此兑换码吗？此操作无法撤销。',
       deleteAllUnusedConfirm: '确定要删除全部从未兑换的兑换码吗？此操作无法撤销。',
