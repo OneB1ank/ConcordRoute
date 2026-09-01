@@ -1677,7 +1677,7 @@ export default {
         overdraftReasonQuotaLimited: 'Quota exhausted',
         overdraftReasonTransientFailure: 'Transient rate limit',
         overdraftRecoverAt: 'Expected recovery',
-        estimatedWeeklyTotal: 'Weekly total ≈ {amount}',
+        estimatedWeeklyTotal: 'Estimated weekly quota ≈ {amount}',
         estimatedWeeklyTotalHint: '≈ indicates an estimate; it is calculated from the current 7-day cost and utilization and changes as the window updates.',
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',

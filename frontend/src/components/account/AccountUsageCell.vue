@@ -157,18 +157,21 @@
           :show-now-when-idle="true"
           color="emerald"
         />
-        <div
-          v-if="openAIWeeklyEstimatedTotal"
-          data-testid="openai-weekly-estimate"
-          class="text-[9px] text-gray-500 dark:text-gray-400"
-          :title="t('admin.accounts.usageWindow.estimatedWeeklyTotalHint')"
-        >
-          {{ t('admin.accounts.usageWindow.estimatedWeeklyTotal', { amount: openAIWeeklyEstimatedTotal }) }}
-        </div>
         <OpenAIQuotaResetCell
           :account="account"
+          :show-metadata="Boolean(openAIWeeklyEstimatedTotal)"
           @account-updated="handleQuotaResetAccountUpdated"
         >
+          <template #metadata>
+            <span
+              v-if="openAIWeeklyEstimatedTotal"
+              data-testid="openai-weekly-estimate"
+              class="inline-flex max-w-full items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] leading-4 text-gray-600 tabular-nums dark:bg-dark-800 dark:text-gray-300"
+              :title="t('admin.accounts.usageWindow.estimatedWeeklyTotalHint')"
+            >
+              {{ t('admin.accounts.usageWindow.estimatedWeeklyTotal', { amount: openAIWeeklyEstimatedTotal }) }}
+            </span>
+          </template>
           <template #pre-actions>
             <button
               type="button"

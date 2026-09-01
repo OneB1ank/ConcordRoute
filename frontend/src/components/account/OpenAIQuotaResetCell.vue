@@ -1,5 +1,54 @@
 <template>
   <div v-if="visible" class="space-y-1">
+    <!-- 到期信息和父组件补充的额度信息使用同一种标签样式，固定展示在操作行上方。 -->
+    <div
+      v-if="primaryResetCreditExpiry || showMetadata"
+      data-testid="quota-metadata-row"
+      class="space-y-1"
+    >
+      <div class="flex flex-wrap items-center gap-1">
+        <span
+          v-if="primaryResetCreditExpiry"
+          data-testid="reset-credit-primary-expiry"
+          class="inline-flex max-w-full items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] leading-4 text-gray-600 tabular-nums dark:bg-dark-800 dark:text-gray-300"
+          :title="t('admin.accounts.openaiQuotaReset.expiresAtFull', { time: formatResetCreditExpiry(primaryResetCreditExpiry, 'full') })"
+        >
+          {{ t('admin.accounts.openaiQuotaReset.expiresAt', { time: formatResetCreditExpiry(primaryResetCreditExpiry, 'short') }) }}
+        </span>
+        <button
+          v-if="hiddenResetCreditCount > 0"
+          type="button"
+          data-testid="reset-credit-expiry-toggle"
+          class="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium leading-4 text-gray-600 transition-colors hover:bg-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700"
+          :aria-expanded="showResetCreditDetails"
+          :aria-label="resetCreditDetailsToggleLabel"
+          :title="resetCreditDetailsTitle"
+          @click="toggleResetCreditDetails"
+        >
+          +{{ hiddenResetCreditCount }}
+        </button>
+        <!-- 顺序固定：到期标签在前，预估周额度等补充信息在后。 -->
+        <slot name="metadata" />
+      </div>
+
+      <div
+        v-if="showResetCreditDetails && resetCreditExpirations.length > 1"
+        data-testid="reset-credit-expiry-details"
+        class="inline-grid max-w-full gap-0.5 rounded border border-gray-200 bg-white px-1.5 py-1 text-[10px] leading-4 text-gray-600 shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300"
+      >
+        <span class="sr-only">{{ t('admin.accounts.openaiQuotaReset.expirationDetails') }}</span>
+        <span
+          v-for="(expiresAt, index) in resetCreditExpirations"
+          :key="`${expiresAt}-${index}`"
+          class="flex min-w-0 items-center gap-1 tabular-nums"
+          :title="t('admin.accounts.openaiQuotaReset.expiresAtFull', { time: formatResetCreditExpiry(expiresAt, 'full') })"
+        >
+          <span class="h-1 w-1 shrink-0 rounded-full bg-gray-400 dark:bg-dark-500" />
+          <span class="truncate">{{ formatResetCreditExpiry(expiresAt, 'short') }}</span>
+        </span>
+      </div>
+    </div>
+
     <!--
       Unified action row. Parents that already render their own "local query"
       affordance (e.g. AccountUsageCell's active-sampling refresh) pass it in
@@ -65,46 +114,6 @@
       <slot />
     </div>
 
-    <div v-if="primaryResetCreditExpiry" class="space-y-1">
-      <div class="flex flex-wrap items-center gap-1">
-        <span
-          class="inline-flex max-w-full items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] leading-4 text-gray-600 tabular-nums dark:bg-dark-800 dark:text-gray-300"
-          :title="t('admin.accounts.openaiQuotaReset.expiresAtFull', { time: formatResetCreditExpiry(primaryResetCreditExpiry, 'full') })"
-        >
-          {{ t('admin.accounts.openaiQuotaReset.expiresAt', { time: formatResetCreditExpiry(primaryResetCreditExpiry, 'short') }) }}
-        </span>
-        <button
-          v-if="hiddenResetCreditCount > 0"
-          type="button"
-          data-testid="reset-credit-expiry-toggle"
-          class="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium leading-4 text-gray-600 transition-colors hover:bg-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:hover:bg-dark-700"
-          :aria-expanded="showResetCreditDetails"
-          :aria-label="resetCreditDetailsToggleLabel"
-          :title="resetCreditDetailsTitle"
-          @click="toggleResetCreditDetails"
-        >
-          +{{ hiddenResetCreditCount }}
-        </button>
-      </div>
-
-      <div
-        v-if="showResetCreditDetails && resetCreditExpirations.length > 1"
-        data-testid="reset-credit-expiry-details"
-        class="inline-grid max-w-full gap-0.5 rounded border border-gray-200 bg-white px-1.5 py-1 text-[10px] leading-4 text-gray-600 shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300"
-      >
-        <span class="sr-only">{{ t('admin.accounts.openaiQuotaReset.expirationDetails') }}</span>
-        <span
-          v-for="(expiresAt, index) in resetCreditExpirations"
-          :key="`${expiresAt}-${index}`"
-          class="flex min-w-0 items-center gap-1 tabular-nums"
-          :title="t('admin.accounts.openaiQuotaReset.expiresAtFull', { time: formatResetCreditExpiry(expiresAt, 'full') })"
-        >
-          <span class="h-1 w-1 shrink-0 rounded-full bg-gray-400 dark:bg-dark-500" />
-          <span class="truncate">{{ formatResetCreditExpiry(expiresAt, 'short') }}</span>
-        </span>
-      </div>
-    </div>
-
     <!-- Error / success feedback -->
     <div
       v-if="error"
@@ -153,6 +162,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const props = defineProps<{
   account: Account
+  showMetadata?: boolean
 }>()
 
 const emit = defineEmits<{

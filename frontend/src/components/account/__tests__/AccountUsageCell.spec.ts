@@ -18,7 +18,7 @@ vi.mock('@/api/admin', () => ({
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   const testMessages: Record<string, string> = {
-    'admin.accounts.usageWindow.estimatedWeeklyTotal': '预估周总额度 ≈ {amount}',
+    'admin.accounts.usageWindow.estimatedWeeklyTotal': '预估周额度 ≈ {amount}',
     'admin.accounts.usageWindow.estimatedWeeklyTotalHint': '≈ 表示预估值；根据当前 7 天窗口的已用费用和使用率计算，会随窗口数据更新而变化。',
     'admin.accounts.usageWindow.overdraftReasonQuotaLimited': '额度已耗尽',
     'admin.accounts.usageWindow.overdraftReasonTransientFailure': '瞬时限流'
@@ -1022,15 +1022,26 @@ describe('AccountUsageCell', () => {
     })
 
     const wrapper = mount(AccountUsageCell, {
-      props: { account: makeAccount({ id: 2200, platform: 'openai', type: 'oauth' }) },
+      props: {
+        account: makeAccount({
+          id: 2200,
+          platform: 'openai',
+          type: 'oauth',
+          extra: {
+            codex_reset_credit_snapshot: {
+              available_count: 1,
+              credits: [{ expires_at: '2099-09-22T03:16:00Z' }]
+            }
+          }
+        })
+      },
       global: {
         stubs: {
           UsageProgressBar: {
             props: ['label', 'utilization', 'resetsAt', 'windowStats', 'color'],
             template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ windowStats?.tokens }}</div>'
           },
-          AccountQuotaInfo: true,
-          OpenAIQuotaResetCell: true
+          AccountQuotaInfo: true
         }
       }
     })
@@ -1040,7 +1051,13 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('5h|100')
     expect(wrapper.text()).toContain('5h|100|2000')
     expect(wrapper.text()).toContain('7d|5')
-    expect(wrapper.get('[data-testid="openai-weekly-estimate"]').text()).toBe('预估周总额度 ≈ $584.42')
+    const metadataRow = wrapper.get('[data-testid="quota-metadata-row"]')
+    expect(wrapper.get('[data-testid="openai-weekly-estimate"]').text()).toBe('预估周额度 ≈ $584.42')
+    expect(metadataRow.find('[data-testid="reset-credit-primary-expiry"]').exists()).toBe(true)
+    expect(metadataRow.element.compareDocumentPosition(wrapper.get('[data-testid="openai-weekly-estimate"]').element))
+      .toBe(Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(metadataRow.element.compareDocumentPosition(wrapper.findAll('button')[0].element))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it.each([
