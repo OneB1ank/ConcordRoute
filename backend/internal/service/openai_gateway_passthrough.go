@@ -318,18 +318,19 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	forwardResult := &OpenAIForwardResult{
-		RequestID:       resp.Header.Get("x-request-id"),
-		ResponseID:      responseID,
-		Usage:           *usage,
-		Model:           reqModel,
-		UpstreamModel:   upstreamPassthroughModel,
-		ServiceTier:     serviceTier,
-		ReasoningEffort: reasoningEffort,
-		Stream:          reqStream,
-		OpenAIWSMode:    false,
-		ResponseBody:    cloneDataSharingRequestBody(responseBody),
-		Duration:        time.Since(startTime),
-		FirstTokenMs:    firstTokenMs,
+		RequestID:                   resp.Header.Get("x-request-id"),
+		ResponseID:                  responseID,
+		Usage:                       *usage,
+		Model:                       reqModel,
+		UpstreamModel:               upstreamPassthroughModel,
+		ServiceTier:                 serviceTier,
+		UpstreamResponseServiceTier: observedOpenAIServiceTierFromPayload(responseBody),
+		ReasoningEffort:             reasoningEffort,
+		Stream:                      reqStream,
+		OpenAIWSMode:                false,
+		ResponseBody:                cloneDataSharingRequestBody(responseBody),
+		Duration:                    time.Since(startTime),
+		FirstTokenMs:                firstTokenMs,
 	}
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount

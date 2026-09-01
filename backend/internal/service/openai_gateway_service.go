@@ -240,9 +240,12 @@ type OpenAIForwardResult struct {
 	// UpstreamEndpoint 是该请求实际使用的上游 API 路径，避免同一下游协议可选择
 	// 多个上游端点时只能依赖推断。
 	UpstreamEndpoint string
-	// ServiceTier records the OpenAI Responses API service tier, e.g. "priority" / "flex".
-	// Nil means the request did not specify a recognized tier.
+	// ServiceTier 记录策略改写后最终发往上游的 tier，例如 "priority" / "flex"。
+	// nil 表示最终出站请求没有可识别 tier。
 	ServiceTier *string
+	// UpstreamResponseServiceTier 记录上游响应声明的实际 tier；计费阶段再结合
+	// 当前凭据类型决定是否采信，避免 Codex OAuth 的 default 回显覆盖 Fast 出站值。
+	UpstreamResponseServiceTier string
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix.
 	// Stored for usage records display; nil means not provided / not applicable.
 	ReasoningEffort *string

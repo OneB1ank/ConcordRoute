@@ -339,23 +339,25 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	sawDone := false
 	wroteDownstream := false
 	clientDisconnected := false
+	upstreamResponseServiceTier := ""
 	resultWithUsage := func() *OpenAIForwardResult {
 		imageCount := imageCounter.Count()
 		result := &OpenAIForwardResult{
-			RequestID:             responseID,
-			ResponseID:            responseID,
-			Usage:                 usage,
-			Model:                 originalModel,
-			BillingModel:          billingModel,
-			UpstreamModel:         mappedModel,
-			ServiceTier:           extractOpenAIServiceTierFromBody(body),
-			ReasoningEffort:       ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(body, mappedModel, originalModel), body, mappedModel),
-			Stream:                reqStream,
-			OpenAIWSMode:          true,
-			UpstreamTerminalEvent: upstreamTerminalEvent,
-			ResponseHeaders:       cloneHeader(resp.Header),
-			Duration:              time.Since(turnStart),
-			FirstTokenMs:          firstTokenMs,
+			RequestID:                   responseID,
+			ResponseID:                  responseID,
+			Usage:                       usage,
+			Model:                       originalModel,
+			BillingModel:                billingModel,
+			UpstreamModel:               mappedModel,
+			ServiceTier:                 extractOpenAIServiceTierFromBody(body),
+			UpstreamResponseServiceTier: upstreamResponseServiceTier,
+			ReasoningEffort:             ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(body, mappedModel, originalModel), body, mappedModel),
+			Stream:                      reqStream,
+			OpenAIWSMode:                true,
+			UpstreamTerminalEvent:       upstreamTerminalEvent,
+			ResponseHeaders:             cloneHeader(resp.Header),
+			Duration:                    time.Since(turnStart),
+			FirstTokenMs:                firstTokenMs,
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
@@ -546,6 +548,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			return resultWithUsage(), upstreamEventErr
 		}
 		if isOpenAIWSTerminalEvent(eventType) {
+			upstreamResponseServiceTier = observedOpenAIServiceTierFromPayload(upstreamMessage)
 			upstreamTerminalEvent = terminalPolicy.TerminalEvent
 			terminalEventCount++
 			firstTokenMsValue := -1

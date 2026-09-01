@@ -240,6 +240,8 @@ type ccStreamScanState struct {
 	Usage OpenAIUsage
 	// FirstTokenMs 为首个实际输出 chunk（排除 usage-only chunk）的到达时延。
 	FirstTokenMs *int
+	// UpstreamResponseServiceTier 保存 Chat Completions chunk 回显的处理层级。
+	UpstreamResponseServiceTier string
 	// SawDone 表示上游发出了 [DONE] 哨兵。
 	SawDone bool
 	// Err 为 scanner 读错误（客户端 context 取消不属于此类，会原样带出）。
@@ -288,6 +290,9 @@ func (s *OpenAIGatewayService) scanCCStream(
 				zap.String("request_id", requestID),
 			)
 			continue
+		}
+		if tier := normalizeObservedOpenAIServiceTier(chunk.ServiceTier); tier != "" {
+			st.UpstreamResponseServiceTier = tier
 		}
 		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
 			ms := int(time.Since(startTime).Milliseconds())

@@ -489,14 +489,15 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	c.JSON(http.StatusOK, chatResp)
 
 	return &OpenAIForwardResult{
-		RequestID:     requestID,
-		Usage:         usage,
-		Model:         originalModel,
-		BillingModel:  billingModel,
-		UpstreamModel: upstreamModel,
-		ResponseBody:  cloneDataSharingRequestBody(chatRespBody),
-		Stream:        false,
-		Duration:      time.Since(startTime),
+		RequestID:                   requestID,
+		Usage:                       usage,
+		Model:                       originalModel,
+		BillingModel:                billingModel,
+		UpstreamModel:               upstreamModel,
+		UpstreamResponseServiceTier: normalizeObservedOpenAIServiceTier(finalResponse.ServiceTier),
+		ResponseBody:                cloneDataSharingRequestBody(chatRespBody),
+		Stream:                      false,
+		Duration:                    time.Since(startTime),
 	}, nil
 }
 
@@ -524,6 +525,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	var usage OpenAIUsage
 	var firstTokenMs *int
 	var finalResponseBody []byte
+	var upstreamResponseServiceTier string
 	streamAccumulator := newOpenAIChatCompletionsStreamAccumulator(originalModel)
 	firstChunk := true
 	clientDisconnected := false
@@ -560,15 +562,16 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			responseBody = streamAccumulator.ResponseBody(&usage)
 		}
 		out := &OpenAIForwardResult{
-			RequestID:     requestID,
-			Usage:         usage,
-			Model:         originalModel,
-			BillingModel:  billingModel,
-			UpstreamModel: upstreamModel,
-			Stream:        true,
-			Duration:      time.Since(startTime),
-			FirstTokenMs:  firstTokenMs,
-			ResponseBody:  responseBody,
+			RequestID:                   requestID,
+			Usage:                       usage,
+			Model:                       originalModel,
+			BillingModel:                billingModel,
+			UpstreamModel:               upstreamModel,
+			UpstreamResponseServiceTier: upstreamResponseServiceTier,
+			Stream:                      true,
+			Duration:                    time.Since(startTime),
+			FirstTokenMs:                firstTokenMs,
+			ResponseBody:                responseBody,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -598,6 +601,11 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
 		if isTerminalEvent {
+			if event.Response != nil {
+				if tier := normalizeObservedOpenAIServiceTier(event.Response.ServiceTier); tier != "" {
+					upstreamResponseServiceTier = tier
+				}
+			}
 			if event.Usage != nil {
 				usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
 			}

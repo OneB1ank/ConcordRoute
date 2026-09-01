@@ -552,7 +552,7 @@ func TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt(t *test
 		"",
 		`data: {"type":"response.reasoning_summary_text.delta","delta":"thinking only"}`,
 		"",
-		`data: {"type":"response.completed","response":{"id":"resp_reasoning","model":"gpt-5.5","status":"completed"}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_reasoning","model":"gpt-5.5","status":"completed","service_tier":"default"}}`,
 		"",
 	}, "\n")
 	resp := &http.Response{
@@ -574,6 +574,7 @@ func TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt(t *test
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, "default", result.UpstreamResponseServiceTier)
 	require.NotEmpty(t, result.ResponseBody)
 	require.Equal(t, "resp_reasoning", gjson.GetBytes(result.ResponseBody, "id").String())
 	require.Contains(t, rec.Body.String(), `"reasoning_content":"thinking only"`)
@@ -706,7 +707,7 @@ func TestForwardAsRawChatCompletions_UsesFilteredServiceTierForBilling(t *testin
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_raw_filter_tier"}},
-		Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_1","object":"chat.completion","model":"gpt-5.4","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_1","object":"chat.completion","model":"gpt-5.4","service_tier":"default","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)),
 	}}
 	svc := &OpenAIGatewayService{
 		cfg:            rawChatCompletionsTestConfig(),
@@ -725,6 +726,7 @@ func TestForwardAsRawChatCompletions_UsesFilteredServiceTierForBilling(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Nil(t, result.ServiceTier)
+	require.Equal(t, "default", result.UpstreamResponseServiceTier)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "service_tier").Exists())
 	require.Equal(t, 3, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)

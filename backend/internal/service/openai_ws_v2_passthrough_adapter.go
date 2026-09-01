@@ -884,11 +884,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 
 	// 在 policy filter 之后再提取 service_tier / reasoning_effort 用于
-	// usage 上报：filter
-	// 命中时 service_tier 已经从 firstClientMessage 中删除，billing 应当
-	// 反映上游实际处理的 tier（nil = default），而不是用户最初请求的
-	// "priority"。HTTP 入口（line ~2728 extractOpenAIServiceTier(reqBody)）
-	// 与 WS ingress（openai_ws_forwarder.go:2991 取自 payload）的语义一致。
+	// usage 上报：filter 命中时 service_tier 已经从 firstClientMessage
+	// 中删除，因此 ServiceTier 保存过滤后的最终出站值（nil = 未显式请求），
+	// 回包 tier 则单独写入 UpstreamResponseServiceTier，由记账阶段结合凭据
+	// 类型统一决策。HTTP 与 WS ingress 保持相同语义。
 	//
 	// 多轮 passthrough：OpenAI Realtime / Responses WS 协议允许客户端在
 	// 同一连接的不同 response.create 帧上发送不同 service_tier（参考
@@ -1333,17 +1332,18 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						CacheReadInputTokens:     turn.Usage.CacheReadInputTokens,
 						ImageOutputTokens:        turn.Usage.ImageOutputTokens,
 					},
-					Model:                 turnOriginalModel,
-					UpstreamModel:         turnPayload.UpstreamModel,
-					ServiceTier:           turnPayload.ServiceTier,
-					ReasoningEffort:       turnPayload.ReasoningEffort,
-					Stream:                true,
-					OpenAIWSMode:          true,
-					UpstreamTerminalEvent: normalizeOpenAIWSTerminalEvent(turn.TerminalEventType),
-					ResponseHeaders:       cloneHeader(handshakeHeaders),
-					ResponseBody:          cloneDataSharingRequestBody(turn.TerminalResponseBody),
-					Duration:              turn.Duration,
-					FirstTokenMs:          turn.FirstTokenMs,
+					Model:                       turnOriginalModel,
+					UpstreamModel:               turnPayload.UpstreamModel,
+					ServiceTier:                 turnPayload.ServiceTier,
+					UpstreamResponseServiceTier: observedOpenAIServiceTierFromPayload(turn.TerminalResponseBody),
+					ReasoningEffort:             turnPayload.ReasoningEffort,
+					Stream:                      true,
+					OpenAIWSMode:                true,
+					UpstreamTerminalEvent:       normalizeOpenAIWSTerminalEvent(turn.TerminalEventType),
+					ResponseHeaders:             cloneHeader(handshakeHeaders),
+					ResponseBody:                cloneDataSharingRequestBody(turn.TerminalResponseBody),
+					Duration:                    turn.Duration,
+					FirstTokenMs:                turn.FirstTokenMs,
 				}
 				if normalizeOpenAIWSTerminalEvent(turn.TerminalEventType) == "response.completed" {
 					s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, turnPayload.UpstreamModel, handshakeHeaders)
@@ -1528,16 +1528,17 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			CacheReadInputTokens:     relayResult.Usage.CacheReadInputTokens,
 			ImageOutputTokens:        relayResult.Usage.ImageOutputTokens,
 		},
-		Model:                 relayResult.RequestModel,
-		ServiceTier:           usageMeta.serviceTier.Load(),
-		ReasoningEffort:       usageMeta.reasoningEffort.Load(),
-		Stream:                true,
-		OpenAIWSMode:          true,
-		UpstreamTerminalEvent: normalizeOpenAIWSTerminalEvent(relayResult.TerminalEventType),
-		ResponseHeaders:       cloneHeader(handshakeHeaders),
-		ResponseBody:          cloneDataSharingRequestBody(relayResult.TerminalResponseBody),
-		Duration:              relayResult.Duration,
-		FirstTokenMs:          relayResult.FirstTokenMs,
+		Model:                       relayResult.RequestModel,
+		ServiceTier:                 usageMeta.serviceTier.Load(),
+		UpstreamResponseServiceTier: observedOpenAIServiceTierFromPayload(relayResult.TerminalResponseBody),
+		ReasoningEffort:             usageMeta.reasoningEffort.Load(),
+		Stream:                      true,
+		OpenAIWSMode:                true,
+		UpstreamTerminalEvent:       normalizeOpenAIWSTerminalEvent(relayResult.TerminalEventType),
+		ResponseHeaders:             cloneHeader(handshakeHeaders),
+		ResponseBody:                cloneDataSharingRequestBody(relayResult.TerminalResponseBody),
+		Duration:                    relayResult.Duration,
+		FirstTokenMs:                relayResult.FirstTokenMs,
 	}
 
 	turnCount := int(completedTurns.Load())

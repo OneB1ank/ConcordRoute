@@ -2016,7 +2016,7 @@ func TestHandleAnthropicBufferedStreamingResponse_OverridesUpstreamContentType(t
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: io.NopCloser(strings.NewReader(
-			`data: {"type":"response.completed","response":{"id":"resp_buffered_json","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":15,"output_tokens":6,"total_tokens":21,"input_tokens_details":{"cached_tokens":5}}}}` + "\n\n",
+			`data: {"type":"response.completed","response":{"id":"resp_buffered_json","object":"response","model":"gpt-5.4","status":"completed","service_tier":"default","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":15,"output_tokens":6,"total_tokens":21,"input_tokens_details":{"cached_tokens":5}}}}` + "\n\n",
 		)),
 	}
 	cfg := &config.Config{}
@@ -2030,6 +2030,7 @@ func TestHandleAnthropicBufferedStreamingResponse_OverridesUpstreamContentType(t
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, "default", result.UpstreamResponseServiceTier)
 	require.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
 	require.NotContains(t, rec.Header().Get("Content-Type"), "text/event-stream")
 

@@ -1266,7 +1266,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 		readDelays: []time.Duration{0, 200 * time.Millisecond, 200 * time.Millisecond},
 		events: [][]byte{
 			[]byte(`{"type":"response.created","response":{"id":"resp_passthrough_turn_1","model":"upstream-turn-1"}}`),
-			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"upstream-turn-1","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_1","model":"upstream-turn-1","service_tier":"default","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_passthrough_turn_2","model":"upstream-turn-2","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
@@ -1441,11 +1441,12 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughModeR
 		require.Equal(t, "upstream-turn-1", result.UpstreamModel)
 		require.True(t, result.OpenAIWSMode)
 		// 内部 turn 快照保留上游原文；客户端出站帧已在上方断言归一为 completed。
-		require.JSONEq(t, `{"id":"resp_passthrough_turn_1","model":"upstream-turn-1","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}`, string(result.ResponseBody))
+		require.JSONEq(t, `{"id":"resp_passthrough_turn_1","model":"upstream-turn-1","service_tier":"default","output":[{"id":"ig_passthrough_1","type":"image_generation_call","status":"generating","result":"final-image"}],"usage":{"input_tokens":2,"output_tokens":3}}`, string(result.ResponseBody))
 		require.Equal(t, 2, result.Usage.InputTokens)
 		require.Equal(t, 3, result.Usage.OutputTokens)
 		require.NotNil(t, result.ServiceTier)
 		require.Equal(t, "priority", *result.ServiceTier)
+		require.Equal(t, "default", result.UpstreamResponseServiceTier)
 		require.NotNil(t, result.ReasoningEffort)
 		require.Equal(t, "high", *result.ReasoningEffort)
 	case <-time.After(2 * time.Second):

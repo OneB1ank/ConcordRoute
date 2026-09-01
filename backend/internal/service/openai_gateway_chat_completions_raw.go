@@ -364,17 +364,18 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	}
 
 	return &OpenAIForwardResult{
-		RequestID:       requestID,
-		Usage:           usage,
-		Model:           originalModel,
-		BillingModel:    billingModel,
-		UpstreamModel:   upstreamModel,
-		ReasoningEffort: reasoningEffort,
-		ServiceTier:     serviceTier,
-		Stream:          true,
-		Duration:        time.Since(startTime),
-		FirstTokenMs:    firstTokenMs,
-		ResponseBody:    streamAccumulator.ResponseBody(&usage),
+		RequestID:                   requestID,
+		Usage:                       usage,
+		Model:                       originalModel,
+		BillingModel:                billingModel,
+		UpstreamModel:               upstreamModel,
+		ReasoningEffort:             reasoningEffort,
+		ServiceTier:                 serviceTier,
+		UpstreamResponseServiceTier: normalizeObservedOpenAIServiceTier(streamAccumulator.serviceTier),
+		Stream:                      true,
+		Duration:                    time.Since(startTime),
+		FirstTokenMs:                firstTokenMs,
+		ResponseBody:                streamAccumulator.ResponseBody(&usage),
 	}, nil
 }
 
@@ -645,16 +646,17 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	_, _ = c.Writer.Write(respBody)
 
 	return &OpenAIForwardResult{
-		RequestID:       requestID,
-		Usage:           usage,
-		Model:           originalModel,
-		BillingModel:    billingModel,
-		UpstreamModel:   upstreamModel,
-		ReasoningEffort: reasoningEffort,
-		ServiceTier:     serviceTier,
-		Stream:          false,
-		Duration:        time.Since(startTime),
-		ResponseBody:    cloneDataSharingRequestBody(respBody),
+		RequestID:                   requestID,
+		Usage:                       usage,
+		Model:                       originalModel,
+		BillingModel:                billingModel,
+		UpstreamModel:               upstreamModel,
+		ReasoningEffort:             reasoningEffort,
+		ServiceTier:                 serviceTier,
+		UpstreamResponseServiceTier: observedOpenAIServiceTierFromPayload(respBody),
+		Stream:                      false,
+		Duration:                    time.Since(startTime),
+		ResponseBody:                cloneDataSharingRequestBody(respBody),
 	}, nil
 }
 

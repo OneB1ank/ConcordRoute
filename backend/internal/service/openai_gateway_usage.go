@@ -1,7 +1,6 @@
 package service
 
-// 本文件由 openai_gateway_service.go 纯移动拆分而来：用量记录、计费成本计算与
-// Codex 用量快照。仅做代码搬迁，无任何行为变更。
+// 本文件承载 OpenAI 用量记录、计费层级决策、成本计算与 Codex 用量快照。
 
 import (
 	"context"
@@ -160,9 +159,20 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey == nil || user == nil || account == nil {
 		return errors.New("openai usage input requires api key, user, and account")
 	}
+	// 仅在存在 tier 决策时解析影子账号的真实凭据。普通未分层用量不应因为
+	// 历史影子数据的母账号校验而改变原有记账行为。
+	billingAccount := account
+	var err error
+	if optionalStringValue(result.ServiceTier) != "" || strings.TrimSpace(result.UpstreamResponseServiceTier) != "" {
+		billingAccount, err = resolveCredentialAccount(ctx, s.accountRepo, account)
+		if err != nil {
+			return err
+		}
+	}
 	if !isGrokVideoUsageResult(result, nil) {
 		ApplyOpenAIImageBillingResolution(result)
 	}
+	logServiceTierBillingDowngrade(account, result.RequestID, ApplyOpenAIServiceTierBillingResolution(billingAccount, result))
 
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
@@ -218,7 +228,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
 
 	var cost *CostBreakdown
-	var err error
 	billingModel := openAIUsageBillingModel(result, input.ChannelUsageFields)
 	billingModels := usageBillingModelCandidates(
 		billingModel,

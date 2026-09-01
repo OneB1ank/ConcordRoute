@@ -682,15 +682,16 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 	c.JSON(http.StatusOK, anthropicResp)
 
 	return &OpenAIForwardResult{
-		RequestID:     requestID,
-		ResponseID:    finalResponse.ID,
-		Usage:         usage,
-		Model:         originalModel,
-		BillingModel:  billingModel,
-		UpstreamModel: upstreamModel,
-		ResponseBody:  cloneDataSharingRequestBody(responseBody),
-		Stream:        false,
-		Duration:      time.Since(startTime),
+		RequestID:                   requestID,
+		ResponseID:                  finalResponse.ID,
+		Usage:                       usage,
+		Model:                       originalModel,
+		BillingModel:                billingModel,
+		UpstreamModel:               upstreamModel,
+		UpstreamResponseServiceTier: normalizeObservedOpenAIServiceTier(finalResponse.ServiceTier),
+		ResponseBody:                cloneDataSharingRequestBody(responseBody),
+		Stream:                      false,
+		Duration:                    time.Since(startTime),
 	}, nil
 }
 
@@ -905,6 +906,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	state.Model = originalModel
 	var usage OpenAIUsage
 	responseID := ""
+	upstreamResponseServiceTier := ""
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
@@ -937,17 +939,18 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	// resultWithUsage builds the final result snapshot.
 	resultWithUsage := func() *OpenAIForwardResult {
 		out := &OpenAIForwardResult{
-			RequestID:        requestID,
-			ResponseID:       responseID,
-			Usage:            usage,
-			Model:            originalModel,
-			BillingModel:     billingModel,
-			UpstreamModel:    upstreamModel,
-			ResponseBody:     cloneDataSharingRequestBody(finalResponseBody),
-			Stream:           true,
-			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
-			ClientDisconnect: clientDisconnected,
+			RequestID:                   requestID,
+			ResponseID:                  responseID,
+			Usage:                       usage,
+			Model:                       originalModel,
+			BillingModel:                billingModel,
+			UpstreamModel:               upstreamModel,
+			UpstreamResponseServiceTier: upstreamResponseServiceTier,
+			ResponseBody:                cloneDataSharingRequestBody(finalResponseBody),
+			Stream:                      true,
+			Duration:                    time.Since(startTime),
+			FirstTokenMs:                firstTokenMs,
+			ClientDisconnect:            clientDisconnected,
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -980,6 +983,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(eventType) || isBareErrorEvent
 		if isTerminalEvent {
 			if event.Response != nil {
+				if tier := normalizeObservedOpenAIServiceTier(event.Response.ServiceTier); tier != "" {
+					upstreamResponseServiceTier = tier
+				}
 				if id := strings.TrimSpace(event.Response.ID); id != "" {
 					responseID = id
 				}
