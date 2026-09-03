@@ -347,6 +347,7 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 				return
 			}
 			cls := classifyOpenAICompatibleResolvedRoutingNoAccountErrorFromGin(c, h.gatewayService, apiKey, accountLayerModel, reqModel)
+			cls = classifySelectionFailureError(selectErr, cls)
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, selectErr)
 			}

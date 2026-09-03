@@ -199,3 +199,22 @@ func TestClassifyNoAccountError_FromGin_NilContextStillSafe(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, cls.Status, "even with a nil gin context the classifier must still run and yield a coherent response")
 	require.True(t, cls.ModelNotFound)
 }
+
+func TestClassifySelectionFailureErrorPreservesModelNotFound(t *testing.T) {
+	fallback := noAccountErrorClassification{
+		Status: http.StatusNotFound, ErrType: "model_not_found", ModelNotFound: true,
+	}
+	got := classifySelectionFailureError(
+		fmt.Errorf("filtered: model_not_supported=8 model_rate_limited=1"), fallback,
+	)
+	require.Equal(t, fallback, got)
+}
+
+func TestClassifySelectionFailureErrorUpgradesRateLimitedPool(t *testing.T) {
+	fallback := noAccountErrorClassification{
+		Status: http.StatusServiceUnavailable, ErrType: "api_error",
+	}
+	got := classifySelectionFailureError(fmt.Errorf("model_rate_limited=3"), fallback)
+	require.Equal(t, http.StatusTooManyRequests, got.Status)
+	require.Equal(t, "rate_limit_error", got.ErrType)
+}

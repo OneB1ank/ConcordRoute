@@ -260,6 +260,26 @@ func TestRelay_UpstreamDisconnect(t *testing.T) {
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
 
+func TestRelay_UpstreamCloseBeforeTerminalIsFailure(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"resp_open"}}`)},
+	}, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, relayExit := Relay(ctx, clientConn, upstreamConn,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":[]}`), RelayOptions{})
+
+	require.NotNil(t, relayExit)
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.False(t, relayExit.Graceful)
+	require.Contains(t, relayExit.Err.Error(), "before terminal event")
+	require.Empty(t, result.RequestID, "未收到终止事件时不应伪造成功 response id")
+}
+
 func TestRelay_ClientDisconnect(t *testing.T) {
 	t.Parallel()
 

@@ -998,6 +998,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_ws_force_http",
 		"openai_responses_mode",
 		"openai_responses_supported",
+		// 透传标志必须进入调度投影，否则候选过滤会退回旧 model_mapping 白名单。
+		"openai_passthrough",
+		"openai_oauth_passthrough",
 		// Codex 指纹身份属于调度请求的必要字段，缓存快照必须与数据库直读一致。
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
