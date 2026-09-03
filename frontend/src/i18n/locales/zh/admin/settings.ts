@@ -558,7 +558,7 @@ dataSharing: {
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: '留空时使用 ANTIGRAVITY_USER_AGENT_VERSION 或内置默认值 1.23.2；填写后后台设置优先。',
         openaiCodexUserAgent: 'OpenAI Codex UA',
-        openaiCodexUserAgentPlaceholder: 'Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)',
+        openaiCodexUserAgentPlaceholder: 'Codex Desktop/0.151.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)',
         openaiCodexUserAgentHint: '用于规避 OpenAI 上游 Cloudflare 对浏览器 UA 的访问质询。仅在检测到客户端 User-Agent 为浏览器（Mozilla/...）时生效，其他客户端原样透传。留空使用内置 Windows Codex Desktop 默认值。',
         openaiAllowClaudeCodeCodexPlugin: '允许在 Claude Code 中使用 Codex 插件',
         openaiAllowClaudeCodeCodexPluginDesc:

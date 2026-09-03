@@ -20,7 +20,7 @@ func TestCodexDefaultIdentityUsesWindowsDesktop(t *testing.T) {
 	identity := resolveCodexOutboundIdentity("")
 	require.Equal(t, DefaultOpenAICodexUserAgent, identity.userAgent)
 	require.Equal(t, "Codex Desktop", identity.originator)
-	require.Equal(t, "0.145.0", identity.version)
+	require.Equal(t, "0.151.0", identity.version)
 	require.Contains(t, identity.userAgent, "(Codex Desktop; 26.818.41509)")
 }
 
@@ -34,7 +34,7 @@ func TestCodexTLSProfileOnlyRouteKeepsCanonicalDesktopIdentity(t *testing.T) {
 
 	require.Equal(t, DefaultOpenAICodexUserAgent, h.Get("user-agent"))
 	require.Equal(t, "Codex Desktop", h.Get("originator"))
-	require.Equal(t, "0.145.0", h.Get("version"))
+	require.Equal(t, "0.151.0", h.Get("version"))
 }
 
 func TestEnsureCodexIdentityHeadersUsesCanonicalIdentity(t *testing.T) {
