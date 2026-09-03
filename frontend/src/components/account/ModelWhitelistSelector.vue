@@ -151,6 +151,7 @@ import { useAppStore } from '@/stores/app'
 import { accountsAPI } from '@/api/admin/accounts'
 import type { SyncUpstreamPreviewParams } from '@/api/admin/accounts'
 import { useClipboard } from '@/composables/useClipboard'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
@@ -163,6 +164,7 @@ const props = defineProps<{
   platforms?: string[]
   models?: string[]
   accountId?: number
+  accountType?: string
   syncCredentials?: {
     platform: string
     type: string
@@ -201,13 +203,29 @@ const normalizedPlatforms = computed(() => {
 })
 
 const upstreamSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok'])
+// 已保存账号必须同时满足平台和凭据类型能力；未提供类型时保留设置页等通用选择器行为。
+const upstreamSyncAccountTypes: Record<string, Set<string>> = {
+  anthropic: new Set(['oauth', 'setup-token', 'apikey']),
+  openai: new Set(['apikey']),
+  gemini: new Set(['oauth', 'apikey']),
+  antigravity: new Set(['oauth', 'apikey']),
+  grok: new Set(['oauth', 'apikey'])
+}
+const supportsUpstreamSync = (platform: string, accountType?: string) => {
+  const normalizedPlatform = platform.trim().toLowerCase()
+  if (!upstreamSyncPlatforms.has(normalizedPlatform)) return false
+
+  const normalizedAccountType = accountType?.trim().toLowerCase()
+  if (!normalizedAccountType) return true
+  return upstreamSyncAccountTypes[normalizedPlatform]?.has(normalizedAccountType) ?? false
+}
 const canSyncUpstream = computed(() => {
   if (props.accountId) {
     if (normalizedPlatforms.value.length === 0) return true
-    return normalizedPlatforms.value.some(platform => upstreamSyncPlatforms.has(platform.toLowerCase()))
+    return normalizedPlatforms.value.some(platform => supportsUpstreamSync(platform, props.accountType))
   }
   if (props.syncCredentials) {
-    return upstreamSyncPlatforms.has(props.syncCredentials.platform.toLowerCase())
+    return supportsUpstreamSync(props.syncCredentials.platform, props.syncCredentials.type)
   }
   return false
 })
@@ -331,8 +349,9 @@ const syncUpstreamModels = async () => {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
-    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
+    const fallback = t('admin.accounts.syncUpstreamModelsFailed')
+    const message = extractApiErrorMessage(error, fallback)
+    appStore.showError(message === fallback ? fallback : t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingUpstream.value = false
   }

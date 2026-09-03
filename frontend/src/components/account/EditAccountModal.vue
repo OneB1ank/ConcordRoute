@@ -211,7 +211,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector :model-value="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @update:model-value="setAllowedModels" />
+              <ModelWhitelistSelector :model-value="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" @update:model-value="setAllowedModels" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
@@ -647,6 +647,7 @@
               :model-value="allowedModels"
               :platform="account?.platform || 'anthropic'"
               :account-id="account?.id"
+              :account-type="account?.type"
               :models="isQoderCosyAccount ? qoderAvailableModels : undefined"
               @update:modelValue="setAllowedModels"
             />
@@ -848,7 +849,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector :model-value="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @update:model-value="setAllowedModels" />
+            <ModelWhitelistSelector :model-value="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" @update:model-value="setAllowedModels" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{
@@ -2740,6 +2741,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
@@ -4038,8 +4040,9 @@ const syncAntigravityUpstreamModels = async () => {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
-    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
+    const fallback = t('admin.accounts.syncUpstreamModelsFailed')
+    const message = extractApiErrorMessage(error, fallback)
+    appStore.showError(message === fallback ? fallback : t('admin.accounts.syncUpstreamModelsError', { message }))
   } finally {
     isSyncingAntigravityUpstream.value = false
   }

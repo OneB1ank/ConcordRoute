@@ -147,4 +147,66 @@ describe('ModelWhitelistSelector', () => {
     expect(syncUpstreamModelsPreview).not.toHaveBeenCalled()
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual(['claude-sonnet-4-5'])
   })
+
+  it('OpenAI OAuth 账号不显示不受支持的实时同步按钮', () => {
+    const wrapper = mountSelector({
+      platform: 'openai',
+      accountId: 2,
+      accountType: 'oauth'
+    })
+
+    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.accounts.syncUpstreamModels'))
+    expect(button).toBeUndefined()
+  })
+
+  it('OpenAI API Key 账号继续显示实时同步按钮', () => {
+    const wrapper = mountSelector({
+      platform: 'openai',
+      accountId: 3,
+      accountType: 'apikey'
+    })
+
+    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.accounts.syncUpstreamModels'))
+    expect(button).toBeTruthy()
+  })
+
+  it.each([
+    ['anthropic', 'service_account'],
+    ['gemini', 'service_account'],
+    ['antigravity', 'upstream']
+  ])('%s 的 %s 账号不显示不受支持的实时同步按钮', (platform, accountType) => {
+    const wrapper = mountSelector({ platform, accountId: 4, accountType })
+
+    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.accounts.syncUpstreamModels'))
+    expect(button).toBeUndefined()
+  })
+
+  it('同步失败时展示 API 普通对象中的具体原因', async () => {
+    syncUpstreamModels.mockRejectedValue({
+      status: 400,
+      message: 'Unsupported OpenAI account type for upstream model sync: oauth'
+    })
+    const wrapper = mountSelector({ accountId: 2 })
+
+    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.accounts.syncUpstreamModels'))
+    expect(button).toBeTruthy()
+    await button!.trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(
+      'admin.accounts.syncUpstreamModelsError:{"message":"Unsupported OpenAI account type for upstream model sync: oauth"}'
+    )
+  })
+
+  it('同步失败且 API 未返回原因时不重复 fallback 文本', async () => {
+    syncUpstreamModels.mockRejectedValue({ status: 400 })
+    const wrapper = mountSelector({ accountId: 2 })
+
+    const button = wrapper.findAll('button').find((item) => item.text().includes('admin.accounts.syncUpstreamModels'))
+    expect(button).toBeTruthy()
+    await button!.trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.syncUpstreamModelsFailed')
+  })
 })

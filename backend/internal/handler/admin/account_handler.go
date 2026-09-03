@@ -29,6 +29,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/xai"
 	"github.com/TokenFlux/TokenRouter/internal/service"
+	"github.com/TokenFlux/TokenRouter/internal/util/logredact"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -2811,17 +2812,17 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	if err != nil {
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
+			slog.Warn("sync_upstream_models_failed", "account_id", accountID, "kind", syncErr.Kind, "error", logredact.RedactText(err.Error()))
 			switch syncErr.Kind {
 			case service.UpstreamModelSyncErrorConfiguration, service.UpstreamModelSyncErrorUnsupported:
 				response.BadRequest(c, syncErr.SafeMessage())
 			default:
-				slog.Warn("sync_upstream_models_failed", "account_id", accountID, "kind", syncErr.Kind)
 				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
 			}
 			return
 		}
 
-		slog.Warn("sync_upstream_models_failed", "account_id", accountID)
+		slog.Warn("sync_upstream_models_failed", "account_id", accountID, "error", logredact.RedactText(err.Error()))
 		response.Error(c, http.StatusBadGateway, "Failed to sync upstream models from upstream")
 		return
 	}
@@ -2861,17 +2862,17 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	if err != nil {
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
+			slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind, "error", logredact.RedactText(err.Error()))
 			switch syncErr.Kind {
 			case service.UpstreamModelSyncErrorConfiguration, service.UpstreamModelSyncErrorUnsupported:
 				response.BadRequest(c, syncErr.SafeMessage())
 			default:
-				slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind)
 				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
 			}
 			return
 		}
 
-		slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform)
+		slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "error", logredact.RedactText(err.Error()))
 		response.Error(c, http.StatusBadGateway, "Failed to sync upstream models from upstream")
 		return
 	}
