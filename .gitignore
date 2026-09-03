@@ -139,5 +139,8 @@ frontend/coverage/
 aicodex
 output/
 
+# 本地验证与运行产物（可能包含日志、凭据、抓包和数据库快照）
+/outputs/
+
 # 仓库根目录的 Vitest 与 Vite 缓存
 .vite/
