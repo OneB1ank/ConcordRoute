@@ -957,6 +957,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return fmt.Errorf("build ws headers: %w", buildHdrErr)
 	}
 	applyCodexFingerprintHeaders(headers, firstFingerprintIDs)
+	if account.Type == AccountTypeOAuth {
+		firstClientMessage = rewriteCodexVersionClientMetadataRaw(firstClientMessage, codexVersionFromOutboundHeaders(headers))
+	}
 	proxyURL := resolveAccountProxyURL(account)
 
 	dialer := s.getOpenAIWSPassthroughDialer()
@@ -1196,6 +1199,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					if err := hooks.BeforeTurn(turnNo); err != nil {
 						return payload, nil, err
 					}
+				}
+				if account.Type == AccountTypeOAuth {
+					out = rewriteCodexVersionClientMetadataRaw(out, codexVersionFromOutboundHeaders(headers))
 				}
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				turnPayloads.Push(openAIWSTurnPayload{

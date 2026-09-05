@@ -1204,6 +1204,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// regular Responses loop reapplies this defensively; Messages reaches this
 	// builder directly, so the builder must also close the identity tuple.
 	applyStagedCodexFingerprintHeaders(c, account, req.Header)
+	s.applyCodexVersionRequestBody(req, account, body, routerMatch...)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 
 	return req, nil

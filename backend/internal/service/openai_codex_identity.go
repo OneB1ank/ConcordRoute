@@ -161,11 +161,10 @@ func ensureCodexIdentityHeaders(h http.Header) {
 	if strings.TrimSpace(h.Get("originator")) == "" {
 		h.Set("originator", identity.originator)
 	}
-	// Both wire version fields are derived from the final UA. Client-provided
-	// values are not used as the normal source; the final enforcement point
-	// repairs them again after all header overrides have been applied.
+	// version 是 HTTP 身份头；codex_version 只处理已有回合元数据，
+	// 不将其新增为独立 HTTP 请求头。最终身份仍由下方收口函数对齐。
 	h.Set("version", identity.version)
-	h.Set("codex_version", identity.version)
+	h.Del("codex_version")
 	h.Set("OpenAI-Beta", "responses=experimental")
 }
 
@@ -176,8 +175,8 @@ func enforceCodexIdentityHeaders(h http.Header) {
 // enforceCodexIdentityHeadersWithUA 是推理面的最终收口点。
 // 入站客户端自报身份不作为默认来源；管理员配置的账号/TLS Router UA
 // 作为显式候选，从而让 HTTP、旁路探针、OAuth 与 WS 使用相同优先级规则。
-// version/codex_version 是成对的引擎版本字段，正常情况下均由最终伪装 UA 派生；
-// 只有 UA 解析异常时才保留经过校验的客户端值作为兼容兜底。
+// version 头与已有回合元数据中的 codex_version 使用同一个引擎版本；
+// 不新增元数据字段，解析异常的元数据保持原文。
 func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	if h == nil || strings.TrimSpace(h.Get("originator")) == "" {
 		return
@@ -185,20 +184,10 @@ func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	identity := resolveCodexOutboundIdentity(overrideUA)
 	h.Set("user-agent", identity.userAgent)
 	h.Set("originator", identity.originator)
-	// version and codex_version are paired engine-version fields. Derive both
-	// from the final UA so a client/tool version cannot desynchronise the
-	// outbound identity. If UA resolution ever fails, retain a validated
-	// client value as a last-resort compatibility fallback.
-	derivedVersion := NormalizeCodexClientVersion(identity.version)
-	if derivedVersion != "" {
-		h.Set("version", derivedVersion)
-		h.Set("codex_version", derivedVersion)
-		return
+	// 最终 UA 是版本唯一来源，桌面构建号不参与引擎版本解析。
+	if version := NormalizeCodexClientVersion(identity.version); version != "" {
+		h.Set("version", version)
 	}
-	if fallback := NormalizeCodexClientVersion(h.Get("version")); fallback != "" {
-		h.Set("version", fallback)
-	}
-	if fallback := NormalizeCodexClientVersion(h.Get("codex_version")); fallback != "" {
-		h.Set("codex_version", fallback)
-	}
+	h.Del("codex_version")
+	applyCodexVersionTurnMetadataHeader(h)
 }

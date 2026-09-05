@@ -1133,13 +1133,14 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"access_token": "oauth-token-1",
+			"user_agent":   "Codex Desktop/0.153.3 (Mac OS 26.5.2; arm64) unknown (Codex Desktop; 26.901.41123)",
 		},
 		Extra: map[string]any{
 			"responses_websockets_v2_enabled": true,
 		},
 	}
 
-	body := []byte(`{"model":"gpt-5.1","stream":false,"store":true,"input":[{"type":"input_text","text":"hello","namespace":"native-wsv2"}]}`)
+	body := []byte(`{"model":"gpt-5.1","stream":false,"store":true,"client_metadata":{"codex_version":"0.145.0"},"input":[{"type":"input_text","text":"hello","namespace":"native-wsv2"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1147,6 +1148,10 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 
 	require.NotNil(t, captureConn.lastWrite)
 	requestJSON := requestToJSONString(captureConn.lastWrite)
+	// 普通 HTTP 入站转 WS 时，元数据版本也应与最终握手 UA 一致。
+	require.Equal(t, "0.153.3", captureDialer.lastHeaders.Get("Version"))
+	require.Empty(t, captureDialer.lastHeaders.Get("codex_version"))
+	require.Equal(t, "0.153.3", gjson.Get(requestJSON, "client_metadata.codex_version").String())
 	require.True(t, gjson.Get(requestJSON, "store").Exists(), "OAuth WSv2 应显式写入 store 字段")
 	require.False(t, gjson.Get(requestJSON, "store").Bool(), "默认策略应将 OAuth store 置为 false")
 	require.True(t, gjson.Get(requestJSON, "stream").Exists(), "WSv2 payload 应保留 stream 字段")

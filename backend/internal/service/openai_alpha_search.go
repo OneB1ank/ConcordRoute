@@ -249,10 +249,8 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 	}
 	canonical := resolveCodexOutboundIdentity("")
-	// Version fields are derived from the final UA; do not copy the inbound
-	// client declaration into the upstream request.
+	// Version 头由最终 UA 派生，不使用入站客户端版本。
 	req.Header.Set("Version", canonical.version)
-	req.Header.Set("codex_version", canonical.version)
 	req.Header.Set("Originator", canonical.originator)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
@@ -268,6 +266,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 		match = tlsRouterMatch[0]
 	}
 	s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
+	s.applyCodexVersionRequestBody(req, account, body, tlsRouterMatch...)
 	return req, nil
 }
 
@@ -392,9 +391,8 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 		}
 		canonical := resolveCodexOutboundIdentity("")
-		// Keep Version and codex_version paired with the selected Codex UA.
+		// Version 头与所选 Codex UA 使用同一引擎版本。
 		req.Header.Set("Version", canonical.version)
-		req.Header.Set("codex_version", canonical.version)
 		req.Header.Set("Originator", canonical.originator)
 		s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, true, tlsRouterMatch...)
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))
@@ -409,6 +407,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(
 		}
 		s.rememberOpenAIOutboundIdentity(account, req.Header.Get("User-Agent"), match)
 	}
+	s.applyCodexVersionRequestBody(req, account, body, tlsRouterMatch...)
 	return req, nil
 }
 

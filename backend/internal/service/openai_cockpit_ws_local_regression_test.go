@@ -69,7 +69,7 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 		Status:      StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
-		Credentials: map[string]any{"access_token": "oauth-token"},
+		Credentials: map[string]any{"access_token": "oauth-token", "user_agent": "Codex Desktop/0.153.3 (Mac OS 26.5.2; arm64) unknown (Codex Desktop; 26.901.41123)"},
 		Extra: map[string]any{
 			"openai_oauth_responses_websockets_v2_mode": ingressMode,
 			codexFingerprintModeExtraKey:                "cockpit",
@@ -83,11 +83,12 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 		"stream":false,
 		"prompt_cache_key":"client-cache-a",
 		"client_metadata":{
+			"codex_version":"0.145.0",
 			"session_id":"client-session-a",
 			"thread_id":"client-thread-a",
 			"turn_id":"client-turn-a",
 			"x-codex-window-id":"client-thread-a:0",
-			"x-codex-turn-metadata":"{\"installation_id\":\"client-install\",\"session_id\":\"client-session-a\",\"thread_id\":\"client-thread-a\",\"turn_id\":\"client-turn-a\",\"window_id\":\"client-thread-a:0\",\"prompt_cache_key\":\"client-cache-a\"}"
+			"x-codex-turn-metadata":"{\"codex_version\":\"0.145.0\",\"installation_id\":\"client-install\",\"session_id\":\"client-session-a\",\"thread_id\":\"client-thread-a\",\"turn_id\":\"client-turn-a\",\"window_id\":\"client-thread-a:0\",\"prompt_cache_key\":\"client-cache-a\"}"
 		},
 		"input":[{"type":"message","role":"user","content":"hello"}]
 	}`)
@@ -97,11 +98,12 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 		"stream":false,
 		"prompt_cache_key":"client-cache-a",
 		"client_metadata":{
+			"codex_version":"0.145.0",
 			"session_id":"client-session-a",
 			"thread_id":"client-thread-a",
 			"turn_id":"client-turn-b",
 			"x-codex-window-id":"client-thread-a:0",
-			"x-codex-turn-metadata":"{\"installation_id\":\"client-install\",\"session_id\":\"client-session-a\",\"thread_id\":\"client-thread-a\",\"turn_id\":\"client-turn-b\",\"window_id\":\"client-thread-a:0\",\"prompt_cache_key\":\"client-cache-a\"}"
+			"x-codex-turn-metadata":"{\"codex_version\":\"0.145.0\",\"installation_id\":\"client-install\",\"session_id\":\"client-session-a\",\"thread_id\":\"client-thread-a\",\"turn_id\":\"client-turn-b\",\"window_id\":\"client-thread-a:0\",\"prompt_cache_key\":\"client-cache-a\"}"
 		},
 		"input":[{"type":"message","role":"user","content":"world"}]
 	}`)
@@ -112,7 +114,7 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 	clientHeaders.Set("conversation_id", "client-cache-a")
 	clientHeaders.Set("x-codex-installation-id", "client-install")
 	clientHeaders.Set("x-codex-window-id", "client-thread-a:0")
-	clientHeaders.Set("x-codex-turn-metadata", `{"installation_id":"client-install","session_id":"client-session-a","thread_id":"client-thread-a","turn_id":"client-turn-a","window_id":"client-thread-a:0","prompt_cache_key":"client-cache-a"}`)
+	clientHeaders.Set("x-codex-turn-metadata", `{"codex_version":"0.145.0","installation_id":"client-install","session_id":"client-session-a","thread_id":"client-thread-a","turn_id":"client-turn-a","window_id":"client-thread-a:0","prompt_cache_key":"client-cache-a"}`)
 	expectedIDs := bindCodexFingerprintIDsToAccount(
 		resolveCodexFingerprintIDsFromRawRequest(account, clientHeaders, firstMessage),
 		account,
@@ -192,11 +194,16 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 	require.Equal(t, expectedIDs.sessionID, captureDialer.lastHeaders.Get("session_id"))
 	require.Equal(t, expectedIDs.threadID, captureDialer.lastHeaders.Get("thread-id"))
 	require.Equal(t, expectedIDs.promptCacheKey, captureDialer.lastHeaders.Get("conversation_id"))
+	// 首帧及后续帧均按握手 UA 的引擎版本对齐，原有会话/缓存断言继续生效。
+	require.Equal(t, "0.153.3", captureDialer.lastHeaders.Get("Version"))
+	require.Empty(t, captureDialer.lastHeaders.Get("codex_version"))
 	headerMetadata := captureDialer.lastHeaders.Get("x-codex-turn-metadata")
+	require.Equal(t, "0.153.3", gjson.Get(headerMetadata, "codex_version").String())
 	upstreamTurnID := gjson.Get(headerMetadata, "turn_id").String()
 	require.NotEmpty(t, upstreamTurnID)
 	require.Len(t, upstreamConn.writes, 2)
 	forwarded := requestToJSONString(upstreamConn.writes[0])
+	require.Equal(t, "0.153.3", gjson.Get(forwarded, "client_metadata.codex_version").String())
 	require.Equal(t, expectedIDs.promptCacheKey, gjson.Get(forwarded, "prompt_cache_key").String())
 	require.Equal(t, expectedIDs.installationID, gjson.Get(forwarded, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, expectedIDs.sessionID, gjson.Get(forwarded, "client_metadata.session_id").String())
@@ -204,9 +211,11 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 	require.Equal(t, upstreamTurnID, gjson.Get(forwarded, "client_metadata.turn_id").String())
 	require.Equal(t, expectedIDs.windowID, gjson.Get(forwarded, "client_metadata.x-codex-window-id").String())
 	metadata := gjson.Get(forwarded, "client_metadata.x-codex-turn-metadata").String()
+	require.Equal(t, "0.153.3", gjson.Get(metadata, "codex_version").String())
 	require.Equal(t, upstreamTurnID, gjson.Get(metadata, "turn_id").String())
 
 	forwardedSecond := requestToJSONString(upstreamConn.writes[1])
+	require.Equal(t, "0.153.3", gjson.Get(forwardedSecond, "client_metadata.codex_version").String())
 	require.Equal(t, expectedIDs.promptCacheKey, gjson.Get(forwardedSecond, "prompt_cache_key").String())
 	require.Equal(t, expectedIDs.installationID, gjson.Get(forwardedSecond, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, expectedIDs.sessionID, gjson.Get(forwardedSecond, "client_metadata.session_id").String())
@@ -215,5 +224,6 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 	require.NotEmpty(t, secondTurnID)
 	require.Equal(t, upstreamTurnID, secondTurnID, "同一 WS 连接必须复用首帧身份快照")
 	secondMetadata := gjson.Get(forwardedSecond, "client_metadata.x-codex-turn-metadata").String()
+	require.Equal(t, "0.153.3", gjson.Get(secondMetadata, "codex_version").String())
 	require.Equal(t, secondTurnID, gjson.Get(secondMetadata, "turn_id").String())
 }
