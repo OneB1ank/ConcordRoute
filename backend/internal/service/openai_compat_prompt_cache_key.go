@@ -13,6 +13,12 @@ const compatPromptCacheKeyPrefix = "compat_cc_"
 
 func shouldAutoInjectPromptCacheKeyForCompat(model string) bool {
 	trimmed := strings.TrimSpace(strings.ToLower(model))
+	canonical := canonicalizeOpenAIModelAliasSpelling(trimmed)
+	// GPT-6 Astra 的 Messages 兼容路径也需要稳定的缓存身份；
+	// 仅匹配已确认的 GPT-6 / Astra 别名，避免将未来 GPT-6 变体误纳入。
+	if canonical == "gpt-6" || canonical == "gpt-6-astra" {
+		return true
+	}
 	// 仅对 Codex OAuth 路径支持的 GPT-5 族开启自动注入，避免 normalizeCodexModel
 	// 的默认兜底把任意模型（如 gpt-4o、claude-*）误判为 gpt-5.4。
 	if !strings.Contains(trimmed, "gpt-5") && !strings.Contains(trimmed, "codex") {
