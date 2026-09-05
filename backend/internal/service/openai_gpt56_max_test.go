@@ -46,14 +46,14 @@ func TestNormalizeOpenAICodexCompactReasoningEffortDowngradesMax(t *testing.T) {
 	require.Equal(t, "auto", gjson.GetBytes(normalized, "reasoning.summary").String())
 }
 
-func TestNormalizeOpenAICodexCompactReasoningEffortDowngradesGPT6AstraMax(t *testing.T) {
+func TestNormalizeOpenAICodexCompactReasoningEffortPreservesGPT6AstraMax(t *testing.T) {
 	body := []byte(`{"model":"gpt-6-astra","input":"compact me","reasoning":{"effort":"max"}}`)
 
 	normalized, changed, err := normalizeOpenAICodexCompactReasoningEffort(body, "gpt-6-astra")
 
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, "xhigh", gjson.GetBytes(normalized, "reasoning.effort").String())
+	require.False(t, changed)
+	require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
 }
 
 func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility(t *testing.T) {
@@ -64,6 +64,7 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility
 		name    string
 		path    string
 		account *Account
+		model   string
 		changed bool
 		want    string
 	}{
@@ -73,6 +74,14 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 			changed: true,
 			want:    "xhigh",
+		},
+		{
+			name:    "OpenAI OAuth Astra compact 保留 max",
+			path:    "/openai/v1/responses/compact",
+			model:   "gpt-6-astra",
+			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+			changed: false,
+			want:    "max",
 		},
 		{
 			name:    "OpenAI OAuth 普通请求保留",
@@ -100,7 +109,11 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, tt.path, nil)
 
-			normalized, changed, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, tt.account, body)
+			caseBody := body
+			if tt.model != "" {
+				caseBody = []byte(strings.Replace(string(body), "gpt-5.6-sol", tt.model, 1))
+			}
+			normalized, changed, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, tt.account, caseBody)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.changed, changed)

@@ -249,7 +249,11 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 	}
 	canonical := resolveCodexOutboundIdentity("")
-	req.Header.Set("Version", canonical.version)
+	version := strings.TrimSpace(c.GetHeader("Version"))
+	if version == "" {
+		version = canonical.version
+	}
+	req.Header.Set("Version", version)
 	req.Header.Set("Originator", canonical.originator)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
@@ -389,7 +393,11 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 		}
 		canonical := resolveCodexOutboundIdentity("")
-		req.Header.Set("Version", canonical.version)
+		version := strings.TrimSpace(c.GetHeader("Version"))
+		if version == "" {
+			version = canonical.version
+		}
+		req.Header.Set("Version", version)
 		req.Header.Set("Originator", canonical.originator)
 		s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, true, tlsRouterMatch...)
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))

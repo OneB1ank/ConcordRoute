@@ -20,8 +20,8 @@ func TestCodexDefaultIdentityUsesWindowsDesktop(t *testing.T) {
 	identity := resolveCodexOutboundIdentity("")
 	require.Equal(t, DefaultOpenAICodexUserAgent, identity.userAgent)
 	require.Equal(t, "Codex Desktop", identity.originator)
-	require.Equal(t, "0.151.0", identity.version)
-	require.Contains(t, identity.userAgent, "(Codex Desktop; 26.818.41509)")
+	require.Equal(t, "0.153.0", identity.version)
+	require.Contains(t, identity.userAgent, "(Codex Desktop; 26.901.20858)")
 }
 
 func TestCodexTLSProfileOnlyRouteKeepsCanonicalDesktopIdentity(t *testing.T) {
@@ -34,7 +34,7 @@ func TestCodexTLSProfileOnlyRouteKeepsCanonicalDesktopIdentity(t *testing.T) {
 
 	require.Equal(t, DefaultOpenAICodexUserAgent, h.Get("user-agent"))
 	require.Equal(t, "Codex Desktop", h.Get("originator"))
-	require.Equal(t, "0.151.0", h.Get("version"))
+	require.Equal(t, "0.153.0", h.Get("version"))
 }
 
 func TestEnsureCodexIdentityHeadersUsesCanonicalIdentity(t *testing.T) {
@@ -108,11 +108,11 @@ func TestEnforceCodexIdentityHeadersWithUA(t *testing.T) {
 	h := make(http.Header)
 	h.Set("originator", "wrong")
 	h.Set("user-agent", "client-controlled/1.0")
-	h.Set("version", "0.1.0")
+	h.Set("version", "9.9.9")
 	enforceCodexIdentityHeadersWithUA(h, accountUA)
 
 	require.Equal(t, "codex_vscode", h.Get("originator"))
-	require.Equal(t, "0.180.0", h.Get("version"))
+	require.Equal(t, "9.9.9", h.Get("version"))
 	require.Equal(t,
 		"codex_vscode/0.180.0 (Mac OS X 14.7; arm64) vscode (codex_vscode; 0.180.0)",
 		h.Get("user-agent"),

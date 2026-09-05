@@ -134,6 +134,8 @@ gemini_generate_content
 
 网关错误必须保持调用协议形状：OpenAI 入口使用 `error` 对象，Anthropic 使用 `type: error` 与嵌套错误，Google 使用 HTTP code/message/status。认证、未分组、复合 Key 和本地能力拒绝都选择当前协议 writer；不能为了复用面板 helper 把一个 Google/Anthropic 客户端错误改成面板 envelope。
 
+本地准入产生的 `429` 使用机器可读 `error.code` 与上游限流区分：等待队列已满为 `gateway_queue_full`，并发槽达到上限为 `gateway_concurrency_limit`。该 code 同时进入同步 JSON、协议允许的流式错误和 Responses `response.failed`；真实上游 `429` 继续保持平台原有 code 或通用 `rate_limit_exceeded` 映射，不能被标成网关本地拒绝。
+
 客户端协议被分组禁用时返回 `403`，并在账号选择、计费、重试和 fallback 前记录 `LocalPolicyDenied`。Anthropic 入口使用 `permission_error`，OpenAI 入口使用 `protocol_not_allowed`，Gemini 入口使用 Google `PERMISSION_DENIED`。模型列表 GET 不经过生成协议开关。
 
 错误响应不得包含上游凭据、代理 URL、原始 service account、数据库错误或未经脱敏的请求正文。流式响应开始后不能再写普通 JSON 错误；只能按当前 SSE/流协议结束或发送允许的错误事件。

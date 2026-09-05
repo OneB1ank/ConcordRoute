@@ -566,7 +566,7 @@ dataSharing: {
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: 'Leave empty to use ANTIGRAVITY_USER_AGENT_VERSION or the built-in default 1.23.2; when set, the admin setting takes precedence.',
         openaiCodexUserAgent: 'OpenAI Codex UA',
-        openaiCodexUserAgentPlaceholder: 'Codex Desktop/0.151.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)',
+        openaiCodexUserAgentPlaceholder: 'Codex Desktop/0.153.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.901.20858)',
         openaiCodexUserAgentHint: 'Used to bypass Cloudflare browser-UA challenges on the OpenAI upstream. Only applies when the client User-Agent is detected as a browser (Mozilla/...). Leave empty to use the built-in Windows Codex Desktop default.',
         openaiAllowClaudeCodeCodexPlugin: "Allow using the Codex plugin in Claude Code",
         openaiAllowClaudeCodeCodexPluginDesc:

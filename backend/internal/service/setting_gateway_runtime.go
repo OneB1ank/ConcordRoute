@@ -95,7 +95,7 @@ const antigravityUserAgentVersionDBTimeout = 5 * time.Second
 
 // DefaultOpenAICodexUserAgent 是 OpenAI Codex 默认 User-Agent，用于规避浏览器 UA 的质询。
 // 默认采用当前 Windows Codex Desktop 身份，并保留 Desktop runtime 版本后缀。
-const DefaultOpenAICodexUserAgent = "Codex Desktop/0.151.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)"
+const DefaultOpenAICodexUserAgent = "Codex Desktop/0.153.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.901.20858)"
 
 // cachedOpenAICodexUserAgent 缓存 OpenAI Codex UA（进程内缓存，60s TTL）
 type cachedOpenAICodexUserAgent struct {

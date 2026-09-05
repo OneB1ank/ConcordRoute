@@ -10,7 +10,7 @@ import (
 )
 
 // codexUpstreamMinVersion 是 /backend-api/codex 当前接受的最低 version 头。
-const codexUpstreamMinVersion = "0.144.0"
+const codexUpstreamMinVersion = "0.151.0"
 
 const codexClientVersionMaxLen = 64
 
@@ -90,7 +90,16 @@ func resolveCodexOutboundIdentity(candidateUA string) codexOutboundIdentity {
 			version:    version,
 		}
 	}
-	version = codexClientVersionFromUA(pairedUA)
+	// 显式的账号/TLS Router UA 是管理员或客户端选择的身份，版本按其自身值透传；
+	// 只有解析失败时才回退到全局规范身份，避免最低版本门槛静默改写显式候选。
+	version = NormalizeCodexClientVersion(openai.CodexUserAgentVersion(pairedUA))
+	if version == "" {
+		return codexOutboundIdentity{
+			userAgent:  canonicalPairedUA,
+			originator: canonicalOriginator,
+			version:    codexClientVersionFromUA(canonicalPairedUA),
+		}
+	}
 	if rebuilt := openai.SetCodexUserAgentVersion(pairedUA, version); rebuilt != "" {
 		pairedUA = rebuilt
 	}
@@ -164,6 +173,8 @@ func enforceCodexIdentityHeaders(h http.Header) {
 // enforceCodexIdentityHeadersWithUA 是推理面的最终收口点。
 // 入站客户端自报身份不作为默认来源；管理员配置的账号/TLS Router UA
 // 作为显式候选，从而让 HTTP、旁路探针、OAuth 与 WS 使用相同优先级规则。
+// version/codex_version 属于客户端声明的引擎版本：已有值保持透传，只有缺失时
+// 才使用与最终伪装 UA 同源的版本补齐，避免服务器把客户端版本静默改写。
 func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	if h == nil || strings.TrimSpace(h.Get("originator")) == "" {
 		return
@@ -171,5 +182,11 @@ func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	identity := resolveCodexOutboundIdentity(overrideUA)
 	h.Set("user-agent", identity.userAgent)
 	h.Set("originator", identity.originator)
-	h.Set("version", identity.version)
+	existingVersion := strings.TrimSpace(h.Get("version"))
+	// ensureCodexIdentityHeaders 可能先以全局 UA 补入默认版本；当存在显式
+	// 账号/TLS Router UA 时，将这一个服务器补齐值替换成候选 UA 的版本。
+	// 其他非空值视为客户端显式 version/codex_version，保持透传。
+	if existingVersion == "" || (strings.TrimSpace(overrideUA) != "" && existingVersion == CodexCanonicalClientVersion()) {
+		h.Set("version", identity.version)
+	}
 }

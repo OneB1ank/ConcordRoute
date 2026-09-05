@@ -3852,7 +3852,7 @@ func TestOpenAIBuildUpstreamRequestPassthroughTLSProfileOnlyRouteKeepsTUIIdentit
 		c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", routerMatch,
 	)
 	require.NoError(t, err)
-	require.Equal(t, tuiUA, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex-tui; 0.145.0)", req.Header.Get("User-Agent"))
 	require.Equal(t, "codex-tui", req.Header.Get("originator"))
 	require.Equal(t, "0.145.0", req.Header.Get("version"))
 }
@@ -3885,7 +3885,7 @@ func TestOpenAIBuildUpstreamRequestRouterEmptyUAUsesAccountFallback(t *testing.T
 
 func TestOpenAIExplicitUserAgentOverridesForceCodexCLIGlobalFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	withCodexCanonicalUA(t, "Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)")
+	withCodexCanonicalUA(t, "Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.825.41651)")
 
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}}}
 	account := &Account{

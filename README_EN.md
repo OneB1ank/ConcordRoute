@@ -41,7 +41,7 @@ The project does not increase upstream account quotas. Its quota-related work re
 
 ### Codex client versions and self-managed UA
 
-- **Codex 0.151.0 or newer is recommended.** Newer clients expose a more complete session, turn, and context-window lifecycle during compaction and reconnects. Older clients remain usable through the compatibility path with a smaller field set.
+- **Codex 0.153.0 or newer is recommended.** Newer clients expose a more complete session, turn, and context-window lifecycle during compaction and reconnects. Older clients remain usable through the compatibility path with a smaller field set.
 - **Set the UA yourself.** Use the admin `openai_codex_user_agent` setting, TLS fingerprint-router `upstream_user_agent` rules, and the dedicated token/reset UA fields to provide a value that matches the client, operating system, architecture, and version you actually run.
 - **Keep client families separate.** Pair `codex-cli/`, `codex-tui/`, `codex_cli_rs/`, and `Codex Desktop/` with their corresponding UA and `originator`; do not collapse different client families into one string.
 - **Configure UA and TLS as one profile.** The system, architecture, and version declared by the UA should match the ClientHello, ALPN, and actual HTTP transport. Recheck both the UA and TLS profile when upgrading the client.

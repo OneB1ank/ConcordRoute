@@ -227,6 +227,35 @@ func TestQoderGatewayStreamingAwareError_ResponsesStreamingEmitsResponseFailed(t
 	assert.Equal(t, "Upstream request failed", errObj["message"])
 }
 
+func TestQoderGatewayAdmissionError_ResponsesIncludesGatewayCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpsRequestContext(c, "qwen3.7-plus", true)
+
+	h := &QoderGatewayHandler{}
+	h.streamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error",
+		gatewayQueueFullCode, "Too many pending requests, please retry later", true, qoderEndpointResponses)
+
+	_, errObj := parseResponsesFailedSSE(t, w.Body.String())
+	assert.Equal(t, gatewayQueueFullCode, errObj["code"])
+}
+
+func TestQoderGatewayUpstreamRateLimitKeepsGenericCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpsRequestContext(c, "qwen3.7-plus", true)
+
+	h := &QoderGatewayHandler{}
+	h.streamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "upstream limited", true, qoderEndpointResponses)
+
+	_, errObj := parseResponsesFailedSSE(t, w.Body.String())
+	assert.Equal(t, "rate_limit_exceeded", errObj["code"])
+}
+
 func TestQoderGatewayStreamingAwareError_MessagesKeepsGenericSSEError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

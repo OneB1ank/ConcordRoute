@@ -161,7 +161,7 @@ func (h *QoderGatewayHandler) handle(c *gin.Context, endpoint qoderEndpoint) {
 		if err != nil {
 			reqLog.Warn("qoder.user_wait_counter_increment_failed", zap.Error(err))
 		} else if !canWait {
-			h.errorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", endpoint)
+			h.errorResponseWithCode(c, http.StatusTooManyRequests, "rate_limit_error", gatewayQueueFullCode, "Too many pending requests, please retry later", endpoint)
 			return
 		} else {
 			waitCounted = true
@@ -596,8 +596,8 @@ func (h *QoderGatewayHandler) acquireQoderRetryAccountSlot(c *gin.Context, accou
 }
 
 func (h *QoderGatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool, endpoint qoderEndpoint) {
-	status, errType, message := concurrencyErrorResponse(err, slotType)
-	h.streamingAwareError(c, status, errType, message, streamStarted, endpoint)
+	status, errType, code, message := concurrencyErrorResponse(err, slotType)
+	h.streamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, endpoint)
 }
 
 func qoderGatewayErrorDetails(err error) (int, string, string, bool) {
@@ -708,32 +708,45 @@ func upstreamStatusFromError(err error) int {
 }
 
 func (h *QoderGatewayHandler) streamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool, endpoint qoderEndpoint) {
+	h.streamingAwareErrorWithCode(c, status, errType, "", message, streamStarted, endpoint)
+}
+
+// streamingAwareErrorWithCode 保留 Qoder 各入口的流格式，并附加可选本地网关错误码。
+func (h *QoderGatewayHandler) streamingAwareErrorWithCode(c *gin.Context, status int, errType, code, message string, streamStarted bool, endpoint qoderEndpoint) {
 	if streamStarted || c.Writer.Written() {
 		if !requestIsStream(c) {
-			h.errorResponse(c, status, errType, message, endpoint)
+			h.errorResponseWithCode(c, status, errType, code, message, endpoint)
 			return
 		}
 		if endpoint == qoderEndpointResponses {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if writeResponsesFailedSSE(c, errType, code, message) {
 				return
 			}
 		}
 		if endpoint == qoderEndpointChatCompletions {
-			writeQoderChatCompletionsErrorSSE(c, errType, message)
+			writeQoderChatCompletionsErrorSSE(c, errType, code, message)
 			return
 		}
-		errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+		errorCode := ""
+		if code != "" {
+			errorCode = `,"code":` + strconv.Quote(code)
+		}
+		errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + errorCode + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
 		_, _ = c.Writer.WriteString(errorEvent)
 		if flusher, ok := c.Writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
 		return
 	}
-	h.errorResponse(c, status, errType, message, endpoint)
+	h.errorResponseWithCode(c, status, errType, code, message, endpoint)
 }
 
-func writeQoderChatCompletionsErrorSSE(c *gin.Context, errType, message string) {
-	errorEvent := `data: {"error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n" + "data: [DONE]\n\n"
+func writeQoderChatCompletionsErrorSSE(c *gin.Context, errType, code, message string) {
+	errorCode := ""
+	if code != "" {
+		errorCode = `,"code":` + strconv.Quote(code)
+	}
+	errorEvent := `data: {"error":{"type":` + strconv.Quote(errType) + errorCode + `,"message":` + strconv.Quote(message) + `}}` + "\n\n" + "data: [DONE]\n\n"
 	_, _ = c.Writer.WriteString(errorEvent)
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
@@ -741,21 +754,24 @@ func writeQoderChatCompletionsErrorSSE(c *gin.Context, errType, message string) 
 }
 
 func (h *QoderGatewayHandler) errorResponse(c *gin.Context, status int, errType, message string, endpoint qoderEndpoint) {
+	h.errorResponseWithCode(c, status, errType, "", message, endpoint)
+}
+
+// errorResponseWithCode 为 Qoder 兼容入口返回协议对应的错误对象。
+func (h *QoderGatewayHandler) errorResponseWithCode(c *gin.Context, status int, errType, code, message string, endpoint qoderEndpoint) {
+	errorObject := gin.H{"type": errType, "message": message}
+	if code != "" {
+		errorObject["code"] = code
+	}
 	if endpoint == qoderEndpointMessages {
 		c.JSON(status, gin.H{
-			"type": "error",
-			"error": gin.H{
-				"type":    errType,
-				"message": message,
-			},
+			"type":  "error",
+			"error": errorObject,
 		})
 		return
 	}
 	c.JSON(status, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": message,
-		},
+		"error": errorObject,
 	})
 }
 

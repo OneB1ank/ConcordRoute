@@ -337,7 +337,7 @@ func TestRegisterAgentIdentityTaskRouterRuleDoesNotAffectAuthEndpoint(t *testing
 }
 
 func TestRegisterAgentIdentityTaskWithoutTLSConfigurationUsesStandardTLS(t *testing.T) {
-	const canonicalUA = "Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.818.41509)"
+	const canonicalUA = "Codex Desktop/0.145.0 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.825.41651)"
 	const accountUA = "codex_cli_rs/0.145.0 (Windows 10.0.26200; x86_64) dumb (codex_cli_rs; 0.145.0)"
 	withCodexCanonicalUA(t, canonicalUA)
 	key, privateKey := newTestAgentIdentityKey(t)

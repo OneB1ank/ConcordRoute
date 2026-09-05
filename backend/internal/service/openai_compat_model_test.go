@@ -1097,14 +1097,14 @@ func TestForwardAsAnthropic_OAuthRestoresCodexIdentityHeaders(t *testing.T) {
 			name:           "官方入站UA收敛为后台macOS身份",
 			userAgent:      tuiUA,
 			originator:     "opencode",
-			wantUserAgent:  canonicalMacUA,
+			wantUserAgent:  "codex-tui/0.153.0 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.153.0)",
 			wantOriginator: "codex-tui",
 		},
 		{
 			name:           "第三方UA回退为默认Codex身份",
 			userAgent:      "third-party-client/1.0.0",
 			originator:     "opencode",
-			wantUserAgent:  canonicalMacUA,
+			wantUserAgent:  "codex-tui/0.153.0 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.153.0)",
 			wantOriginator: "codex-tui",
 		},
 		{
