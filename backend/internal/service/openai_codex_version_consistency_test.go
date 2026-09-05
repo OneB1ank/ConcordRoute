@@ -16,6 +16,6 @@ func TestCodexVersionConstants_Consistency(t *testing.T) {
 
 	require.Equal(t, DefaultOpenAICodexUserAgent, codexCLIUserAgent)
 	require.Contains(t, DefaultOpenAICodexUserAgent, "(Windows 10.0.26200; x86_64)")
-	require.Contains(t, DefaultOpenAICodexUserAgent, "(Codex Desktop; 26.901.20858)")
+	require.Contains(t, DefaultOpenAICodexUserAgent, "(Codex Desktop; 26.901.41600)")
 	require.Equal(t, codexCLIVersion, CodexCanonicalClientVersion())
 }

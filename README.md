@@ -40,7 +40,7 @@ ConcordRoute 主要修改自 [TokenRouter](https://github.com/TokenFlux/TokenRou
 
 ### Codex 客户端版本与 UA
 
-- **推荐 Codex 0.153.0 及更高版本**。较新的客户端会携带更完整的会话、回合和上下文窗口字段，压缩与重连时的生命周期信息更完整；旧版本仍可走兼容入口，但字段覆盖范围较小。
+- **推荐 Codex 0.153.4 及更高版本**；`0.151.0` 是扩展回合字段的最低兼容版本。较新的客户端会携带更完整的会话、回合和上下文窗口字段，压缩与重连时的生命周期信息更完整；旧版本仍可走兼容入口，但字段覆盖范围较小。
 - **UA 由部署者自行设置**。在管理端的全局 `openai_codex_user_agent`、TLS 指纹路由规则 `upstream_user_agent`，以及 token/reset 专用 UA 字段中，填写与实际客户端、操作系统、架构和版本匹配的值。
 - **按客户端族分别设置**。`codex-cli/`、`codex-tui/`、`codex_cli_rs/` 和 `Codex Desktop/` 使用各自的 UA 与 `originator` 配对，不把多个客户端族压成同一字符串。
 - **UA 与 TLS 成组配置**。UA 声明的系统、架构、版本应与 ClientHello、ALPN 和实际 HTTP 传输一致；升级客户端时同步复核 UA 和 TLS profile。

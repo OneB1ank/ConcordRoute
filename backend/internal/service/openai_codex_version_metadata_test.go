@@ -209,11 +209,11 @@ func TestCodexVersionRequestUsesFinalUAPriority(t *testing.T) {
 		match     TLSFingerprintRouterMatchResult
 		want      string
 	}{
-		{name: "global", want: "0.153.0"},
+		{name: "global", want: "0.153.4"},
 		{name: "account", accountUA: "codex-tui/0.153.3", want: "0.153.3"},
 		{name: "router", accountUA: "codex-tui/0.153.3", match: TLSFingerprintRouterMatchResult{Matched: true, UpstreamUserAgent: "codex-tui/0.200.1"}, want: "0.200.1"},
 		{name: "profile_only", match: TLSFingerprintRouterMatchResult{Matched: true}, want: "0.180.0"},
-		{name: "invalid_account", accountUA: "invalid", want: "0.153.0"},
+		{name: "invalid_account", accountUA: "invalid", want: "0.153.4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

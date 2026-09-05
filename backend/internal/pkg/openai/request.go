@@ -297,7 +297,7 @@ func rewriteCodexUATrailerVersion(ua, version string) string {
 	if name == "" || !IsCodexOfficialClientOriginator(name) {
 		return ua
 	}
-	// `Codex Desktop/0.153.0 ... (Codex Desktop; 26.901.20858)` 中前者是
+	// `Codex Desktop/0.153.4 ... (Codex Desktop; 26.901.41600)` 中前者是
 	// codex-rs 引擎版本，后者是 Desktop runtime 版本，二者不可互相覆盖。
 	if strings.HasPrefix(strings.ToLower(name), codexOfficialClientFamilyPrefix) {
 		return ua
