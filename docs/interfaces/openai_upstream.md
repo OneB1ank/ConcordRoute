@@ -21,6 +21,10 @@ OAuth 账号可受 Codex CLI-only、允许客户端、agent identity、privacy s
 
 OpenAI OAuth 账号的 `extra.codex_fingerprint_mode` 控制 Codex Responses 的设备指纹收敛。OAuth 导入模板的内置默认值为 `cockpit`，因此新导入账号会显式保存“会话+缓存键”模式；已有账号未配置、保存空值或包含无效值时，运行态统一按 `off` 处理，避免静默改变存量行为。`off` 保留既有转发行为，`device` 只统一 installation ID，`session` 进一步统一 session ID 并按客户端原始 session 稳定派生 thread ID，`cockpit` 保持相同设备/会话/thread 拓扑，同时从请求头或请求体的 session、thread、window 和 `prompt_cache_key` 补充识别对话。显式 `prompt_cache_key` 原样保留；同一 session/thread/window 暂时省略时复用最近绑定；新的显式 key 到达后切换缓存命名空间，且不反向改变 session/thread。`full` 再把所有客户端收敛到同一 thread。session/cockpit/full 的 turn ID 每个请求重新生成，但同一次请求的 HTTP 头、`client_metadata` 和内嵌 turn metadata 必须共用同一组 ID；HTTP 内部重试也不得重新派生。普通转换与 OAuth passthrough 都遵守该配置，透传大 body 仅局部读取和改写身份字段，不做整包解码；旧版 `/responses/compact` 保持既有协议且不应用额外收敛。账号首次持久化时生成随机 `extra.codex_fingerprint_seed`，升级迁移为已有账号补齐该值，installation、session、thread 和缓存键均由该持久化随机种子派生，不再使用仅在单个数据库内唯一的自增账号 ID；管理员配置的真实 OpenAI device ID 仍具有最高优先级。普通编辑、批量编辑和运行态 Extra 更新不得覆盖种子，复制账号生成新种子，Spark 影子账号在普通 HTTP、OAuth passthrough 和原生 V2 探测中都动态使用父账号的模式、device ID 和稳定种子，不允许分裂同一 OAuth 凭据的上游设备身份。
 
+现代 Codex（扩展回合身份门槛为 `0.151.0`）的顶层回合遵循官方根回合规则：当 `parent_turn_id` 与 `root_turn_id` 均缺失时，网关把新生成的 `turn_id` 同时作为 `root_turn_id`；已有顶层 root 也改写为同一出站 `turn_id`。带 `parent_turn_id` 的子回合若携带 root，则沿用该根；若同时缺失 root，网关保持缺失，不猜测父树根。补全后的 root 会在 Header、顶层请求体、`client_metadata` 与内嵌 turn metadata 的载体之间保持一致；旧版客户端仍按版本门控移除扩展字段。
+
+官方压缩历史还维护独立的 `first_window_id`、`previous_window_id` 与 `window_number`：首个窗口的 `first_window_id` 在整棵压缩链中保持不变，每次压缩把旧窗口的 UUID 放入新的 `previous_window_id`，再递增 `window_number` 并生成新的当前窗口。当前网关按 `thread_id:generation` 解析窗口代数，并以账号隔离的稳定 UUIDv7 派生首窗口/前一窗口锚点；三者会同步写入 turn metadata、client metadata，以及客户端原本携带这些顶层字段时的请求体。`window_number` 按 JSON 数字处理，现代客户端（`>=0.151.0`）启用，旧版请求会剥离这些扩展字段。
+
 <a id="openai_protocol_dispatch"></a>
 ## 协议与传输
 

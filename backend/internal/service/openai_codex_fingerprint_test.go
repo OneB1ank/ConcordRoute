@@ -369,17 +369,50 @@ func TestCockpitRootTurnID_ChildInheritsClientRoot(t *testing.T) {
 	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 }
 
-func TestCockpitRootTurnID_MissingRemainsAbsent(t *testing.T) {
+func TestCockpitRootTurnID_MissingTopLevelIsSynthesizedForModernClient(t *testing.T) {
 	account := newTestOAuthAccount(106, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{"prompt_cache_key": "cache-only"})
 	require.NotNil(t, ids)
 	assert.Empty(t, ids.originalRootTurnID)
-	assert.Empty(t, ids.rootTurnID)
-	body := map[string]any{}
+	require.NotEmpty(t, ids.rootTurnID)
+	assert.Equal(t, ids.turnID, ids.rootTurnID)
+	body := map[string]any{"prompt_cache_key": "cache-only"}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.Equal(t, ids.rootTurnID, body["root_turn_id"])
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
+}
+
+func TestCockpitRootTurnID_MissingChildRootRemainsUnset(t *testing.T) {
+	account := newTestOAuthAccount(113, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	parent := uuid.Must(uuid.NewV7()).String()
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"parent_turn_id":   parent,
+		"prompt_cache_key": "cache-child",
+	})
+	require.NotNil(t, ids)
+	assert.Equal(t, parent, ids.parentTurnID)
+	assert.Empty(t, ids.rootTurnID)
+	body := map[string]any{"parent_turn_id": parent}
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.NotContains(t, body, "root_turn_id")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.NotContains(t, metadata, "root_turn_id")
+}
+
+func TestCockpitRootTurnID_MissingIsNotSynthesizedForPre151Client(t *testing.T) {
+	account := newTestOAuthAccount(114, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	headers := make(http.Header)
+	headers.Set("User-Agent", "Codex Desktop/0.145.0 (Windows 10; x86_64)")
+	body := map[string]any{"prompt_cache_key": "cache-pre151"}
+	ids := resolveCodexFingerprintIDsFromRequest(account, headers, body)
+	require.NotNil(t, ids)
+	assert.False(t, ids.extendedTurnIdentity)
+	assert.Empty(t, ids.rootTurnID)
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.NotContains(t, body, "root_turn_id")
 }
 
 func TestCockpitContextWindowID_IsStablePerThreadGeneration(t *testing.T) {
@@ -483,6 +516,133 @@ func TestCockpitContextWindowID_MissingIsGenerated(t *testing.T) {
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, ids.contextWindowID, metadata["context_window_id"])
+}
+
+func TestCockpitWindowLineage_TracksCompactionChain(t *testing.T) {
+	account := newTestOAuthAccount(115, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	thread := uuid.Must(uuid.NewV7()).String()
+	makeIDs := func(generation uint64) *codexFingerprintIDs {
+		ids := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+			clientVersion: "0.153.4",
+			threadID:      thread,
+			windowID:      fmt.Sprintf("%s:%d", thread, generation),
+		}, codexFingerprintCockpit)
+		require.NotNil(t, ids)
+		return ids
+	}
+	initial := makeIDs(0)
+	assert.Equal(t, uint64(0), initial.windowNumber)
+	assert.Equal(t, initial.contextWindowID, initial.firstWindowID)
+	assert.Empty(t, initial.previousWindowID)
+
+	compacted := makeIDs(1)
+	assert.Equal(t, uint64(1), compacted.windowNumber)
+	assert.Equal(t, initial.firstWindowID, compacted.firstWindowID)
+	assert.Equal(t, initial.contextWindowID, compacted.previousWindowID)
+	assert.NotEqual(t, initial.contextWindowID, compacted.contextWindowID)
+
+	second := makeIDs(2)
+	assert.Equal(t, uint64(2), second.windowNumber)
+	assert.Equal(t, initial.firstWindowID, second.firstWindowID)
+	assert.Equal(t, compacted.contextWindowID, second.previousWindowID)
+}
+
+func TestCockpitWindowLineage_UUIDsAreRFC4122V7(t *testing.T) {
+	account := newTestOAuthAccount(119, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	thread := uuid.Must(uuid.NewV7()).String()
+	ids := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientVersion: "0.153.4",
+		threadID:      thread,
+		windowID:      thread + ":2",
+	}, codexFingerprintCockpit)
+	require.NotNil(t, ids)
+	for name, value := range map[string]string{
+		"first_window_id":    ids.firstWindowID,
+		"previous_window_id": ids.previousWindowID,
+		"context_window_id":  ids.contextWindowID,
+	} {
+		parsed, err := uuid.Parse(value)
+		require.NoErrorf(t, err, "%s 必须是合法 UUID: %q", name, value)
+		assert.Equalf(t, uuid.Version(7), parsed.Version(), "%s 必须是 UUIDv7", name)
+		assert.Equalf(t, uuid.RFC4122, parsed.Variant(), "%s 必须使用 RFC4122 variant", name)
+	}
+}
+
+func TestCockpitWindowLineage_WindowNumberAdvancesStaleWindowID(t *testing.T) {
+	account := newTestOAuthAccount(118, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	thread := uuid.Must(uuid.NewV7()).String()
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
+		"thread_id":     thread,
+		"window_id":     thread + ":0",
+		"window_number": float64(1),
+	})
+	require.NotNil(t, ids)
+	assert.Equal(t, ids.threadID+":1", ids.windowID, "压缩后的 window_number 应推动出站 window_id 进入下一代")
+	assert.Equal(t, uint64(1), ids.windowNumber)
+	assert.NotEmpty(t, ids.previousWindowID)
+}
+
+func TestCockpitWindowLineage_WritesMetadataAndPreservesBodyShape(t *testing.T) {
+	account := newTestOAuthAccount(116, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	thread := uuid.Must(uuid.NewV7()).String()
+	body := map[string]any{
+		"window_id":          thread + ":2",
+		"window_number":      float64(2),
+		"first_window_id":    "client-first",
+		"previous_window_id": "client-previous",
+		"client_metadata": map[string]any{
+			"x-codex-turn-metadata": `{"window_number":2,"first_window_id":"client-first","previous_window_id":"client-previous"}`,
+		},
+	}
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
+	require.NotNil(t, ids)
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.Equal(t, float64(ids.windowNumber), body["window_number"])
+	assert.Equal(t, ids.firstWindowID, body["first_window_id"])
+	assert.Equal(t, ids.previousWindowID, body["previous_window_id"])
+	metadata := body["client_metadata"].(map[string]any)
+	assert.Equal(t, float64(ids.windowNumber), metadata["window_number"])
+	assert.Equal(t, ids.firstWindowID, metadata["first_window_id"])
+	assert.Equal(t, ids.previousWindowID, metadata["previous_window_id"])
+	var embedded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(metadata["x-codex-turn-metadata"].(string)), &embedded))
+	assert.Equal(t, float64(ids.windowNumber), embedded["window_number"])
+	assert.Equal(t, ids.firstWindowID, embedded["first_window_id"])
+	assert.Equal(t, ids.previousWindowID, embedded["previous_window_id"])
+}
+
+func TestCockpitWindowLineage_Pre151IsStripped(t *testing.T) {
+	account := newTestOAuthAccount(117, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	headers := make(http.Header)
+	headers.Set("User-Agent", "Codex Desktop/0.150.9 (Windows 10; x86_64)")
+	body := map[string]any{
+		"window_number":      float64(1),
+		"first_window_id":    "first",
+		"previous_window_id": "previous",
+		"client_metadata": map[string]any{
+			"x-codex-turn-metadata": `{"window_number":1,"first_window_id":"first","previous_window_id":"previous"}`,
+		},
+	}
+	ids := resolveCodexFingerprintIDsFromRequest(account, headers, body)
+	require.NotNil(t, ids)
+	assert.False(t, ids.extendedTurnIdentity)
+	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
+	assert.NotContains(t, body, "window_number")
+	assert.NotContains(t, body, "first_window_id")
+	assert.NotContains(t, body, "previous_window_id")
+	metadata := body["client_metadata"].(map[string]any)
+	assert.NotContains(t, metadata, "window_number")
+	assert.NotContains(t, metadata, "first_window_id")
+	assert.NotContains(t, metadata, "previous_window_id")
+}
+
+func TestCockpitWindowNumberRejectsImpreciseFloat(t *testing.T) {
+	if value, ok := extractCodexWindowNumberField(map[string]any{"window_number": float64(1 << 53)}, "window_number"); ok {
+		t.Fatalf("窗口编号超过 JSON float64 精确范围却被接受: %d", value)
+	}
+	if value, ok := extractCodexWindowNumberField(map[string]any{"window_number": float64(1<<53 - 1)}, "window_number"); !ok || value != 1<<53-1 {
+		t.Fatalf("最大可精确窗口编号解析错误: value=%d ok=%v", value, ok)
+	}
 }
 
 func TestCodexExtendedTurnIdentityVersionGate(t *testing.T) {
