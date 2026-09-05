@@ -146,6 +146,7 @@ func ApplyCodexCanonicalAuthIdentity(h http.Header) {
 	h.Set("user-agent", userAgent)
 	h.Set("originator", originator)
 	h.Del("version")
+	h.Del("codex_version")
 }
 
 // ensureCodexIdentityHeaders 补齐推理面所需的身份头。
@@ -160,9 +161,11 @@ func ensureCodexIdentityHeaders(h http.Header) {
 	if strings.TrimSpace(h.Get("originator")) == "" {
 		h.Set("originator", identity.originator)
 	}
-	if strings.TrimSpace(h.Get("version")) == "" {
-		h.Set("version", identity.version)
-	}
+	// Both wire version fields are derived from the final UA. Client-provided
+	// values are not used as the normal source; the final enforcement point
+	// repairs them again after all header overrides have been applied.
+	h.Set("version", identity.version)
+	h.Set("codex_version", identity.version)
 	h.Set("OpenAI-Beta", "responses=experimental")
 }
 
@@ -173,8 +176,8 @@ func enforceCodexIdentityHeaders(h http.Header) {
 // enforceCodexIdentityHeadersWithUA 是推理面的最终收口点。
 // 入站客户端自报身份不作为默认来源；管理员配置的账号/TLS Router UA
 // 作为显式候选，从而让 HTTP、旁路探针、OAuth 与 WS 使用相同优先级规则。
-// version/codex_version 属于客户端声明的引擎版本：已有值保持透传，只有缺失时
-// 才使用与最终伪装 UA 同源的版本补齐，避免服务器把客户端版本静默改写。
+// version/codex_version 是成对的引擎版本字段，正常情况下均由最终伪装 UA 派生；
+// 只有 UA 解析异常时才保留经过校验的客户端值作为兼容兜底。
 func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	if h == nil || strings.TrimSpace(h.Get("originator")) == "" {
 		return
@@ -182,11 +185,20 @@ func enforceCodexIdentityHeadersWithUA(h http.Header, overrideUA string) {
 	identity := resolveCodexOutboundIdentity(overrideUA)
 	h.Set("user-agent", identity.userAgent)
 	h.Set("originator", identity.originator)
-	existingVersion := strings.TrimSpace(h.Get("version"))
-	// ensureCodexIdentityHeaders 可能先以全局 UA 补入默认版本；当存在显式
-	// 账号/TLS Router UA 时，将这一个服务器补齐值替换成候选 UA 的版本。
-	// 其他非空值视为客户端显式 version/codex_version，保持透传。
-	if existingVersion == "" || (strings.TrimSpace(overrideUA) != "" && existingVersion == CodexCanonicalClientVersion()) {
-		h.Set("version", identity.version)
+	// version and codex_version are paired engine-version fields. Derive both
+	// from the final UA so a client/tool version cannot desynchronise the
+	// outbound identity. If UA resolution ever fails, retain a validated
+	// client value as a last-resort compatibility fallback.
+	derivedVersion := NormalizeCodexClientVersion(identity.version)
+	if derivedVersion != "" {
+		h.Set("version", derivedVersion)
+		h.Set("codex_version", derivedVersion)
+		return
+	}
+	if fallback := NormalizeCodexClientVersion(h.Get("version")); fallback != "" {
+		h.Set("version", fallback)
+	}
+	if fallback := NormalizeCodexClientVersion(h.Get("codex_version")); fallback != "" {
+		h.Set("codex_version", fallback)
 	}
 }

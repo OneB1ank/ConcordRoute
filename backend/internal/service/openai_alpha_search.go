@@ -249,11 +249,10 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 	}
 	canonical := resolveCodexOutboundIdentity("")
-	version := strings.TrimSpace(c.GetHeader("Version"))
-	if version == "" {
-		version = canonical.version
-	}
-	req.Header.Set("Version", version)
+	// Version fields are derived from the final UA; do not copy the inbound
+	// client declaration into the upstream request.
+	req.Header.Set("Version", canonical.version)
+	req.Header.Set("codex_version", canonical.version)
 	req.Header.Set("Originator", canonical.originator)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
@@ -393,11 +392,9 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 		}
 		canonical := resolveCodexOutboundIdentity("")
-		version := strings.TrimSpace(c.GetHeader("Version"))
-		if version == "" {
-			version = canonical.version
-		}
-		req.Header.Set("Version", version)
+		// Keep Version and codex_version paired with the selected Codex UA.
+		req.Header.Set("Version", canonical.version)
+		req.Header.Set("codex_version", canonical.version)
 		req.Header.Set("Originator", canonical.originator)
 		s.applyOpenAIUpstreamUserAgent(ctx, c, account, req, true, tlsRouterMatch...)
 		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account, tlsRouterMatch...))

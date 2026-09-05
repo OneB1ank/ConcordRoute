@@ -48,6 +48,7 @@ func TestEnsureCodexIdentityHeadersUsesCanonicalIdentity(t *testing.T) {
 	require.Equal(t, "codex-tui", h.Get("originator"))
 	require.Equal(t, macUA, h.Get("user-agent"))
 	require.Equal(t, "0.200.1", h.Get("version"))
+	require.Equal(t, "0.200.1", h.Get("codex_version"))
 	require.Equal(t, "responses=experimental", h.Get("OpenAI-Beta"))
 }
 
@@ -112,11 +113,28 @@ func TestEnforceCodexIdentityHeadersWithUA(t *testing.T) {
 	enforceCodexIdentityHeadersWithUA(h, accountUA)
 
 	require.Equal(t, "codex_vscode", h.Get("originator"))
-	require.Equal(t, "9.9.9", h.Get("version"))
+	require.Equal(t, "0.180.0", h.Get("version"))
+	require.Equal(t, "0.180.0", h.Get("codex_version"))
 	require.Equal(t,
 		"codex_vscode/0.180.0 (Mac OS X 14.7; arm64) vscode (codex_vscode; 0.180.0)",
 		h.Get("user-agent"),
 	)
+}
+
+func TestEnforceCodexIdentityHeadersDerivesBothVersionFieldsFromUA(t *testing.T) {
+	const canonical = "codex-tui/0.200.1 (Mac OS X 15.6; arm64) Terminal.app (codex-tui; 0.200.1)"
+	withCodexCanonicalUA(t, canonical)
+
+	h := make(http.Header)
+	h.Set("originator", "client")
+	h.Set("user-agent", "client/0.1")
+	h.Set("version", "9.9.9")
+	h.Set("codex_version", "8.8.8")
+	enforceCodexIdentityHeaders(h)
+
+	require.Equal(t, canonical, h.Get("user-agent"))
+	require.Equal(t, "0.200.1", h.Get("version"))
+	require.Equal(t, "0.200.1", h.Get("codex_version"))
 }
 
 func TestEnforceCodexIdentityHeadersNoOriginatorIsNoop(t *testing.T) {
