@@ -68,7 +68,7 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 	// reasoning_effort → reasoning.effort + reasoning.summary="auto"
 	if req.ReasoningEffort != "" {
 		out.Reasoning = &ResponsesReasoning{
-			Effort:  req.ReasoningEffort,
+			Effort:  mapAnthropicEffortToResponsesForModel(req.Model, req.ReasoningEffort),
 			Summary: "auto",
 		}
 	}

@@ -104,6 +104,23 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	openAIGPT6AstraFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   10e-6,
+		InputCostPerTokenPriority:           20e-6,
+		OutputCostPerToken:                  50e-6,
+		OutputCostPerTokenPriority:          100e-6,
+		CacheCreationInputTokenCost:         12.5e-6,
+		CacheCreationInputTokenCostPriority: 25e-6,
+		CacheReadInputTokenCost:             1e-6,
+		CacheReadInputTokenCostPriority:     2e-6,
+		LongContextInputTokenThreshold:      272000,
+		LongContextInputCostMultiplier:      2.0,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
 	openAIGPT55ProFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:               3e-05,   // $30 per MTok
 		InputCostPerTokenPriority:       7.5e-05, // $75 per MTok
@@ -1014,6 +1031,13 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 				Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s", model, "gpt-5.2-codex"))
 			return pricing
 		}
+	}
+
+	// GPT-6 Astra 使用官方公开价格静态兜底，避免动态价格缺失时错误降级。
+	if strings.HasPrefix(model, "gpt-6-astra") {
+		logger.With(zap.String("component", "service.pricing")).
+			Info(fmt.Sprintf("[Pricing] OpenAI fallback matched %s -> %s(static)", model, "gpt-6-astra"))
+		return openAIGPT6AstraFallbackPricing
 	}
 
 	// GPT-5.6 使用官方公开价格静态兜底，避免动态价格缺失时错误降级。

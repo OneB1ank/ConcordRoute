@@ -1473,6 +1473,54 @@ func TestCalculateCostWithServiceTier_PriorityFallsBackToTierMultiplierWhenExpli
 	require.InDelta(t, baseCost.TotalCost*2, priorityCost.TotalCost, 1e-10)
 }
 
+func TestGetModelPricing_GPT6AstraFallbackUsesOfficialRates(t *testing.T) {
+	svc := newTestBillingService()
+
+	pricing, err := svc.GetModelPricing("gpt-6-astra")
+	require.NoError(t, err)
+	require.NotNil(t, pricing)
+	require.InDelta(t, 10e-6, pricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 20e-6, pricing.InputPricePerTokenPriority, 1e-12)
+	require.InDelta(t, 50e-6, pricing.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 100e-6, pricing.OutputPricePerTokenPriority, 1e-12)
+	require.InDelta(t, 12.5e-6, pricing.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 25e-6, pricing.CacheCreationPricePerTokenPriority, 1e-12)
+	require.InDelta(t, 1e-6, pricing.CacheReadPricePerToken, 1e-12)
+	require.InDelta(t, 2e-6, pricing.CacheReadPricePerTokenPriority, 1e-12)
+	require.Equal(t, 272000, pricing.LongContextInputThreshold)
+	require.InDelta(t, 2.0, pricing.LongContextInputMultiplier, 1e-12)
+	require.InDelta(t, 1.5, pricing.LongContextOutputMultiplier, 1e-12)
+}
+
+func TestCalculateCost_GPT6AstraServiceTiersAndLongContext(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{
+		InputTokens:         1000,
+		OutputTokens:        200,
+		CacheCreationTokens: 100,
+		CacheReadTokens:     300,
+	}
+
+	standard, err := svc.CalculateCostWithServiceTier("gpt-6-astra", tokens, 1, "")
+	require.NoError(t, err)
+	require.InDelta(t, 0.02155, standard.TotalCost, 1e-12)
+
+	priority, err := svc.CalculateCostWithServiceTier("gpt-6-astra", tokens, 1, "priority")
+	require.NoError(t, err)
+	require.InDelta(t, 0.0431, priority.TotalCost, 1e-12)
+
+	flex, err := svc.CalculateCostWithServiceTier("gpt-6-astra", tokens, 1, "flex")
+	require.NoError(t, err)
+	require.InDelta(t, 0.010775, flex.TotalCost, 1e-12)
+
+	longContext, err := svc.CalculateCostWithServiceTier("gpt-6-astra", UsageTokens{
+		InputTokens:  272001,
+		OutputTokens: 100,
+	}, 1, "")
+	require.NoError(t, err)
+	require.InDelta(t, 5.44752, longContext.TotalCost, 1e-12)
+	require.True(t, longContext.LongContextBillingApplied)
+}
 func TestGetModelPricing_OpenAIGpt52FallbacksExposePriorityPrices(t *testing.T) {
 	svc := newTestBillingService()
 

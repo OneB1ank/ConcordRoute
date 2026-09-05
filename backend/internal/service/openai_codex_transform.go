@@ -12,6 +12,7 @@ import (
 )
 
 var codexModelMap = map[string]string{
+	"gpt-6-astra":                "gpt-6-astra",
 	"gpt-5.6-sol":                "gpt-5.6-sol",
 	"gpt-5.6-terra":              "gpt-5.6-terra",
 	"gpt-5.6-luna":               "gpt-5.6-luna",
@@ -64,6 +65,7 @@ var codexVersionModelPrefixes = []struct {
 	prefix string
 	target string
 }{
+	{prefix: "gpt-6-astra", target: "gpt-6-astra"},
 	{prefix: "gpt-5.6-sol", target: "gpt-5.6-sol"},
 	{prefix: "gpt-5.6-terra", target: "gpt-5.6-terra"},
 	{prefix: "gpt-5.6-luna", target: "gpt-5.6-luna"},
@@ -145,6 +147,29 @@ var openAICodexOAuthUnsupportedFields = append([]string{
 	"presence_penalty",
 }, openAIChatGPTInternalUnsupportedFields...)
 
+func normalizeOpenAIGPT6AstraReasoningEffort(reqBody map[string]any, model string) bool {
+	if reqBody == nil || !isOpenAIGPT6AstraModel(model) {
+		return false
+	}
+	modified := false
+	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
+		if effort, ok := reasoning["effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
+			reasoning["effort"] = "low"
+			modified = true
+		}
+	}
+	if effort, ok := reqBody["reasoning_effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
+		reqBody["reasoning_effort"] = "low"
+		modified = true
+	}
+	return modified
+}
+
+func isOpenAIGPT6AstraModel(model string) bool {
+	normalized := canonicalizeOpenAIModelAliasSpelling(model)
+	return normalized == "gpt-6-astra" || strings.HasPrefix(normalized, "gpt-6-astra-")
+}
+
 func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact bool) codexTransformResult {
 	return applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 		IsCodexCLI: isCodexCLI,
@@ -198,6 +223,12 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			delete(reqBody, key)
 			result.Modified = true
 		}
+	}
+
+	// GPT-6 Astra does not accept the legacy none spelling; normalize it to
+	// the model's lowest supported effort before forwarding OAuth requests.
+	if normalizeOpenAIGPT6AstraReasoningEffort(reqBody, normalizedModel) {
+		result.Modified = true
 	}
 
 	// 请求带 reasoning 时补齐 include:["reasoning.encrypted_content"]，与真实 Codex 对齐

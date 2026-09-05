@@ -403,6 +403,22 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:         openAIGPT54LongContextInputMultiplier,
 		LongContextOutputMultiplier:        openAIGPT54LongContextOutputMultiplier,
 	}
+	// OpenAI GPT-6 Astra 官方价格（USD/token）：$10/$50 MTok，缓存读取 $1，写入 $12.5；
+	// 长上下文超过 272K 输入 token 时输入/缓存费率 2x，输出 1.5x。
+	s.fallbackPrices["gpt-6-astra"] = &ModelPricing{
+		InputPricePerToken:                 10e-6,
+		InputPricePerTokenPriority:         20e-6,
+		OutputPricePerToken:                50e-6,
+		OutputPricePerTokenPriority:        100e-6,
+		CacheCreationPricePerToken:         12.5e-6,
+		CacheCreationPricePerTokenPriority: 25e-6,
+		CacheReadPricePerToken:             1e-6,
+		CacheReadPricePerTokenPriority:     2e-6,
+		SupportsServiceTier:                true,
+		LongContextInputThreshold:          272000,
+		LongContextInputMultiplier:         2.0,
+		LongContextOutputMultiplier:        1.5,
+	}
 
 	s.fallbackPrices["gpt-5.4-mini"] = &ModelPricing{
 		InputPricePerToken:     7.5e-7,
@@ -832,7 +848,7 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 		return s.fallbackPrices["doubao-embedding-vision"]
 	}
 
-	// OpenAI 仅匹配已知 GPT-5/Codex 族，避免未知 OpenAI 型号误计价。
+	// OpenAI 仅匹配已知 GPT-5/GPT-6/Codex 族，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
 		case "gpt-5.6-sol":
@@ -841,6 +857,8 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 			return s.fallbackPrices["gpt-5.6-terra"]
 		case "gpt-5.6-luna":
 			return s.fallbackPrices["gpt-5.6-luna"]
+		case "gpt-6-astra":
+			return s.fallbackPrices["gpt-6-astra"]
 		case "gpt-5.5-pro":
 			return s.fallbackPrices["gpt-5.5-pro"]
 		case "gpt-5.5":

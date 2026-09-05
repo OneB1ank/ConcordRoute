@@ -1269,6 +1269,8 @@ func TestApplyCodexOAuthTransform_EmptyInput(t *testing.T) {
 func TestNormalizeCodexModel_Gpt53(t *testing.T) {
 	cases := map[string]string{
 		"gpt-5.4":                   "gpt-5.4",
+		"gpt-6-astra":               "gpt-6-astra",
+		"gpt6astra-max":             "gpt-6-astra",
 		"gpt5.5":                    "gpt-5.5",
 		"openai/gpt5.5":             "gpt-5.5",
 		"gpt-5.5-pro":               "gpt-5.5-pro",
@@ -1869,4 +1871,19 @@ func TestFilterCodexInput_StripsReasoningIDsWhenReferencesArePreserved(t *testin
 	require.True(t, ok)
 	require.Equal(t, "reasoning", reasoning["type"])
 	require.NotContains(t, reasoning, "id")
+}
+
+func TestApplyCodexOAuthTransform_GPT6AstraNoneMapsToLow(t *testing.T) {
+	for _, body := range []map[string]any{
+		{"model": "gpt-6-astra", "reasoning": map[string]any{"effort": "none"}},
+		{"model": "gpt6astra", "reasoning_effort": "none"},
+	} {
+		applyCodexOAuthTransform(body, false, false)
+		if reasoning, ok := body["reasoning"].(map[string]any); ok {
+			require.Equal(t, "low", reasoning["effort"])
+		}
+		if effort, ok := body["reasoning_effort"]; ok {
+			require.Equal(t, "low", effort)
+		}
+	}
 }

@@ -46,6 +46,16 @@ func TestNormalizeOpenAICodexCompactReasoningEffortDowngradesMax(t *testing.T) {
 	require.Equal(t, "auto", gjson.GetBytes(normalized, "reasoning.summary").String())
 }
 
+func TestNormalizeOpenAICodexCompactReasoningEffortDowngradesGPT6AstraMax(t *testing.T) {
+	body := []byte(`{"model":"gpt-6-astra","input":"compact me","reasoning":{"effort":"max"}}`)
+
+	normalized, changed, err := normalizeOpenAICodexCompactReasoningEffort(body, "gpt-6-astra")
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "xhigh", gjson.GetBytes(normalized, "reasoning.effort").String())
+}
+
 func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-5.6-sol","input":"compact me","reasoning":{"effort":"max"}}`)

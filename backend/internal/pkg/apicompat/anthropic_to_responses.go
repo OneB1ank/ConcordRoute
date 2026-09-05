@@ -431,9 +431,21 @@ func mapAnthropicEffortToResponsesForModel(model, effort string) string {
 			return "max"
 		}
 		return "xhigh"
+	case "none":
+		// GPT-6 Astra exposes low as its lowest supported effort;
+		// normalize the legacy none spelling instead of sending an invalid value.
+		if isResponsesGPT6AstraModel(model) {
+			return "low"
+		}
+		return normalized
 	default:
 		return normalized
 	}
+}
+
+func isResponsesGPT6AstraModel(model string) bool {
+	normalized := normalizeResponsesGPTModel(model)
+	return normalized == "gpt-6-astra" || strings.HasPrefix(normalized, "gpt-6-astra-")
 }
 
 func supportsResponsesMaxReasoningEffort(model string) bool {
@@ -504,11 +516,15 @@ func normalizeResponsesGPTModel(model string) string {
 	if strings.HasPrefix(normalized, "gpt5") {
 		normalized = "gpt-5" + strings.TrimPrefix(normalized, "gpt5")
 	}
+	if strings.HasPrefix(normalized, "gpt6") {
+		normalized = "gpt-6" + strings.TrimPrefix(normalized, "gpt6")
+	}
 	replacements := []struct {
 		from string
 		to   string
 	}{
 		{"gpt-5.6sol", "gpt-5.6-sol"},
+		{"gpt-6astra", "gpt-6-astra"},
 		{"gpt-5.6terra", "gpt-5.6-terra"},
 		{"gpt-5.6luna", "gpt-5.6-luna"},
 	}
@@ -545,9 +561,10 @@ func boolPtr(v bool) *bool {
 }
 
 // isReasoningModel 判断模型是否为 Responses API 下不支持 temperature/top_p 的推理模型。
-// 当前所有 gpt-5.x 模型都按推理模型处理。
+// 当前 GPT-5.x / GPT-6.x 模型都按推理模型处理。
 func isReasoningModel(model string) bool {
-	return strings.HasPrefix(model, "gpt-5")
+	normalized := normalizeResponsesGPTModel(model)
+	return strings.HasPrefix(normalized, "gpt-5") || strings.HasPrefix(normalized, "gpt-6")
 }
 
 // normalizeToolParameters ensures the tool parameter schema is valid for

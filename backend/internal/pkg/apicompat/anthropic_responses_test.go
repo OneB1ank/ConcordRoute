@@ -1242,6 +1242,36 @@ func TestAnthropicToResponses_OutputConfigMaxForGPT56(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+func TestAnthropicToResponses_NoneForGPT6AstraMapsToLow(t *testing.T) {
+	req := &AnthropicRequest{
+		Model:        "gpt-6-astra",
+		MaxTokens:    1024,
+		Messages:     []AnthropicMessage{{Role: "user", Content: json.RawMessage(`"Hello"`)}},
+		OutputConfig: &AnthropicOutputConfig{Effort: "none"},
+	}
+	resp, err := AnthropicToResponses(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Reasoning)
+	assert.Equal(t, "low", resp.Reasoning.Effort)
+}
+
+func TestAnthropicToResponses_OutputConfigMaxForGPT6Astra(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt6astra", "openai/gpt-6-astra"} {
+		t.Run(model, func(t *testing.T) {
+			req := &AnthropicRequest{
+				Model:        model,
+				MaxTokens:    1024,
+				Messages:     []AnthropicMessage{{Role: "user", Content: json.RawMessage(`"Hello"`)}},
+				OutputConfig: &AnthropicOutputConfig{Effort: "max"},
+			}
+			resp, err := AnthropicToResponses(req)
+			require.NoError(t, err)
+			require.NotNil(t, resp.Reasoning)
+			assert.Equal(t, "max", resp.Reasoning.Effort)
+		})
+	}
+}
+
 func TestAnthropicToResponses_RejectsUltraReasoningEffort(t *testing.T) {
 	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"} {
 		t.Run(model, func(t *testing.T) {

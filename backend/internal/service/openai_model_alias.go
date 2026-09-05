@@ -32,6 +32,9 @@ func canonicalizeOpenAIModelAliasSpelling(model string) string {
 	if strings.HasPrefix(normalized, "gpt5") {
 		normalized = "gpt-5" + strings.TrimPrefix(normalized, "gpt5")
 	}
+	if strings.HasPrefix(normalized, "gpt6") {
+		normalized = "gpt-6" + strings.TrimPrefix(normalized, "gpt6")
+	}
 	if !strings.HasPrefix(normalized, "gpt-") && !strings.Contains(normalized, "codex") {
 		return ""
 	}
@@ -41,6 +44,7 @@ func canonicalizeOpenAIModelAliasSpelling(model string) string {
 		to   string
 	}{
 		{"gpt-5.6sol", "gpt-5.6-sol"},
+		{"gpt-6astra", "gpt-6-astra"},
 		{"gpt-5.6terra", "gpt-5.6-terra"},
 		{"gpt-5.6luna", "gpt-5.6-luna"},
 		{"gpt-5.5pro", "gpt-5.5-pro"},
@@ -143,6 +147,14 @@ func normalizeKnownOpenAICodexModel(model string) string {
 	}
 
 	switch {
+	case normalized == "gpt-6-astra":
+		return "gpt-6-astra"
+	case strings.HasPrefix(normalized, "gpt-6-astra-"):
+		suffix := strings.TrimPrefix(normalized, "gpt-6-astra-")
+		if isKnownCodexModelSuffixForTarget("gpt-6-astra", suffix) {
+			return "gpt-6-astra"
+		}
+		return ""
 	case strings.Contains(normalized, "gpt-5.6-sol"):
 		return "gpt-5.6-sol"
 	case strings.Contains(normalized, "gpt-5.6-terra"):

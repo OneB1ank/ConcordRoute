@@ -1696,3 +1696,11 @@ func TestBufferedResponseAccumulator_IgnoresNonFunctionCallItems(t *testing.T) {
 
 	assert.False(t, acc.HasContent())
 }
+
+func TestChatCompletionsToResponses_GPT6AstraNoneMapsToLow(t *testing.T) {
+	req := &ChatCompletionsRequest{Model: "gpt-6-astra", ReasoningEffort: "none"}
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Reasoning)
+	assert.Equal(t, "low", resp.Reasoning.Effort)
+}
