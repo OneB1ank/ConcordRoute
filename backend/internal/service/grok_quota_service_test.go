@@ -314,6 +314,13 @@ func healthyGrokQuotaOAuthAccount(id int64) *Account {
 		Status:      StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
+		// 额度测试使用新鲜模型快照，隔离无关后台同步，保持请求次数断言确定。
+		Extra: map[string]any{
+			grokObservedModelsExtraKey: grokObservedModelsSnapshot{
+				Models:    []string{"grok-4.5"},
+				FetchedAt: time.Now().UTC().Format(time.RFC3339),
+			},
+		},
 		Credentials: map[string]any{
 			"access_token":  "access-token",
 			"refresh_token": "refresh-token",

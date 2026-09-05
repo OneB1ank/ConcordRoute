@@ -896,17 +896,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// turn 快照的异常和最终汇总路径兜底使用。
 	usageMeta.initFromFirstFrame(firstClientMessage, firstUpstreamModel)
 	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
-	turnPayloads := newOpenAIWSTurnPayloadQueue()
-	turnPayloads.Push(openAIWSTurnPayload{
-		RequestBody:        firstClientMessage,
-		OriginalModel:      requestModel,
-		RoutingModel:       firstRoutingModel,
-		UpstreamModel:      firstUpstreamModel,
-		ServiceTier:        usageMeta.serviceTier.Load(),
-		ReasoningEffort:    usageMeta.reasoningEffort.Load(),
-		PreviousResponseID: requestPreviousResponseID,
-		Source:             "passthrough",
-	})
 
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
 	if err != nil {
@@ -960,6 +949,18 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if account.Type == AccountTypeOAuth {
 		firstClientMessage = rewriteCodexVersionClientMetadataRaw(firstClientMessage, codexVersionFromOutboundHeaders(headers))
 	}
+	// 首帧版本确定后再保存恢复快照，重试仅移除失效续链锚点，避免恢复旧版本。
+	turnPayloads := newOpenAIWSTurnPayloadQueue()
+	turnPayloads.Push(openAIWSTurnPayload{
+		RequestBody:        firstClientMessage,
+		OriginalModel:      requestModel,
+		RoutingModel:       firstRoutingModel,
+		UpstreamModel:      firstUpstreamModel,
+		ServiceTier:        usageMeta.serviceTier.Load(),
+		ReasoningEffort:    usageMeta.reasoningEffort.Load(),
+		PreviousResponseID: requestPreviousResponseID,
+		Source:             "passthrough",
+	})
 	proxyURL := resolveAccountProxyURL(account)
 
 	dialer := s.getOpenAIWSPassthroughDialer()
