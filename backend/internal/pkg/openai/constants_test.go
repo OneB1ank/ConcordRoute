@@ -32,6 +32,8 @@ func TestDefaultModelsPreferConcreteGPT56SolForAccountTests(t *testing.T) {
 func TestDefaultModelsContainsGPT6Astra(t *testing.T) {
 	for _, model := range DefaultModels {
 		if model.ID == "gpt-6-astra" {
+			require.Equal(t, int64(1783468800), model.Created)
+			require.Equal(t, "GPT-6 Astra", model.DisplayName)
 			return
 		}
 	}
