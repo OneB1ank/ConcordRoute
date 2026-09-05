@@ -1275,6 +1275,7 @@ func TestCalculateCost_LargeTokenCount(t *testing.T) {
 func TestServiceTierCostMultiplier(t *testing.T) {
 	require.InDelta(t, 2.0, serviceTierCostMultiplier("priority"), 1e-12)
 	require.InDelta(t, 2.0, serviceTierCostMultiplier(" Priority "), 1e-12)
+	require.InDelta(t, 2.0, serviceTierCostMultiplier("fast"), 1e-12)
 	require.InDelta(t, 0.5, serviceTierCostMultiplier("flex"), 1e-12)
 	require.InDelta(t, 1.0, serviceTierCostMultiplier(""), 1e-12)
 	require.InDelta(t, 1.0, serviceTierCostMultiplier("default"), 1e-12)
@@ -1520,6 +1521,28 @@ func TestCalculateCost_GPT6AstraServiceTiersAndLongContext(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 5.44752, longContext.TotalCost, 1e-12)
 	require.True(t, longContext.LongContextBillingApplied)
+}
+
+func TestCalculateCost_GPT6AstraFastAliasUsesPriorityPricing(t *testing.T) {
+	svc := newTestBillingService()
+	tokens := UsageTokens{
+		InputTokens: 1000, OutputTokens: 200, CacheCreationTokens: 100, CacheReadTokens: 300,
+	}
+
+	priority, err := svc.CalculateCostWithServiceTier("gpt-6-astra", tokens, 1, "priority")
+	require.NoError(t, err)
+	fast, err := svc.CalculateCostWithServiceTier("gpt-6-astra", tokens, 1, "fast")
+	require.NoError(t, err)
+	require.InDelta(t, priority.TotalCost, fast.TotalCost, 1e-12)
+	require.InDelta(t, 0.0431, fast.TotalCost, 1e-12)
+
+	multiplier := 1.5
+	channelPricing := &ChannelModelPricing{FastModeMultiplier: &multiplier}
+	customFast, err := svc.calculateCostInternal("gpt-6-astra", tokens, 1, "fast", channelPricing)
+	require.NoError(t, err)
+	standard, err := svc.calculateCostInternal("gpt-6-astra", tokens, 1, "", channelPricing)
+	require.NoError(t, err)
+	require.InDelta(t, standard.TotalCost*multiplier, customFast.TotalCost, 1e-12)
 }
 func TestGetModelPricing_OpenAIGpt52FallbacksExposePriorityPrices(t *testing.T) {
 	svc := newTestBillingService()

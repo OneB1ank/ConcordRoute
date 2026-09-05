@@ -119,7 +119,8 @@ func normalizeBillingServiceTier(serviceTier string) string {
 }
 
 func usePriorityServiceTierPricing(serviceTier string, pricing *ModelPricing) bool {
-	if pricing == nil || normalizeBillingServiceTier(serviceTier) != "priority" {
+	tier := normalizeBillingServiceTier(serviceTier)
+	if pricing == nil || (tier != "priority" && tier != "fast") {
 		return false
 	}
 	return pricing.InputPricePerTokenPriority > 0 || pricing.OutputPricePerTokenPriority > 0 ||
@@ -128,7 +129,7 @@ func usePriorityServiceTierPricing(serviceTier string, pricing *ModelPricing) bo
 
 func serviceTierCostMultiplier(serviceTier string) float64 {
 	switch normalizeBillingServiceTier(serviceTier) {
-	case "priority":
+	case "priority", "fast":
 		return 2.0
 	case "flex":
 		return 0.5
@@ -1138,7 +1139,8 @@ func (s *BillingService) computeTokenBreakdown(
 	cacheCreationMultiplier := 1.0
 	tierMultiplier := 1.0
 
-	if normalizeBillingServiceTier(serviceTier) == "priority" {
+	tier := normalizeBillingServiceTier(serviceTier)
+	if tier == "priority" || tier == "fast" {
 		if fastMultiplier, configured := normalizedFastModeMultiplier(pricing); configured {
 			// 渠道显式倍率以普通模式最终价为基准，避免和模型内置 priority 价重复叠乘。
 			tierMultiplier = fastMultiplier

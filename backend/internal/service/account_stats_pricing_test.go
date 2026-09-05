@@ -551,6 +551,7 @@ func TestTryModelFilePricing_AppliesServiceTierPricing(t *testing.T) {
 	}{
 		{name: "standard", serviceTier: "", want: 0.265},
 		{name: "priority", serviceTier: "priority", want: 0.53},
+		{name: "fast alias", serviceTier: "fast", want: 0.53},
 		{name: "flex", serviceTier: "flex", want: 0.1325},
 	}
 
