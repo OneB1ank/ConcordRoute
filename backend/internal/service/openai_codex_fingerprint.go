@@ -736,7 +736,8 @@ func normalizeCodexWindowID(raw, threadID string) string {
 }
 
 func codexWindowGeneration(windowID string) uint64 {
-	if idx := strings.LastIndex(strings.TrimSpace(windowID), ":"); idx >= 0 {
+	windowID = strings.TrimSpace(windowID)
+	if idx := strings.LastIndex(windowID, ":"); idx >= 0 {
 		if value := strings.TrimSpace(windowID[idx+1:]); value != "" {
 			if n, err := strconv.ParseUint(value, 10, 64); err == nil {
 				return n
@@ -746,9 +747,8 @@ func codexWindowGeneration(windowID string) uint64 {
 	return 0
 }
 
-// resolveCodexWindowLineage mirrors Codex's auto-compact window state. The
-// current wire window_id remains thread_id:generation; the compact history
-// fields are UUIDv7 IDs for the first/current predecessor windows.
+// resolveCodexWindowLineage 按窗口代数派生账号隔离的历史锚点。
+// 保留 thread_id:generation 线格式；首窗口和前一窗口使用稳定 UUIDv7。
 func resolveCodexWindowLineage(account *Account, threadID, windowID string) (uint64, string, string) {
 	generation := codexWindowGeneration(windowID)
 	first := resolveConvergedContextWindowID(account, threadID, strings.TrimSpace(threadID)+":0")
@@ -768,14 +768,7 @@ func resolveConvergedContextWindowID(account *Account, threadID, windowID string
 	if account == nil || strings.TrimSpace(threadID) == "" {
 		return ""
 	}
-	generation := "0"
-	if idx := strings.LastIndex(strings.TrimSpace(windowID), ":"); idx >= 0 {
-		if value := strings.TrimSpace(windowID[idx+1:]); value != "" {
-			if _, err := strconv.ParseUint(value, 10, 64); err == nil {
-				generation = value
-			}
-		}
-	}
+	generation := strconv.FormatUint(codexWindowGeneration(windowID), 10)
 	seed := fmt.Sprintf("codex-context-window:%s:%s", strings.TrimSpace(threadID), generation)
 	return deriveStableUUIDv7ForAccount(account, seed)
 }
@@ -899,16 +892,9 @@ func resolveConvergedThreadID(account *Account, clientSessionID string) string {
 	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
 }
 
-// resolveCodexRootTurnID follows Codex turn-tree semantics without creating an
-// account-persistent root mapping. A top-level modern turn has neither a
-// parent nor a root in the request; Codex fills its root with the newly
-// generated turn ID. A supplied root without a parent is likewise a top-level
-// turn and is rewritten to the new upstream turn ID. A supplied root with a
-// parent is a child lineage value and is inherited verbatim. A child that has
-// a parent but omits its root remains unset because inventing a lineage root
-// would be less faithful than preserving the incomplete client metadata.
-// Clients below the extended-identity gate (for example Codex 0.145) are
-// handled by the surrounding version gate and never receive this field.
+// resolveCodexRootTurnID 遵守回合树语义：现代顶层回合使用新 turn_id 作根，
+// 子回合继承已有根；仅提供 parent 却缺少 root 时保持缺失，不猜测树根。
+// 旧客户端由外层版本门控处理，不新增扩展回合字段。
 func resolveCodexRootTurnID(originalRootTurnID, parentTurnID, turnID string) string {
 	originalRootTurnID = strings.TrimSpace(originalRootTurnID)
 	parentTurnID = strings.TrimSpace(parentTurnID)
@@ -971,27 +957,23 @@ func resolveCockpitThreadSeed(source codexFingerprintSource) string {
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
 type codexFingerprintSource struct {
-	clientVersion          string
-	installationID         string
-	clientSessionID        string
-	originalSessionID      string
-	threadID               string
-	turnID                 string
-	parentTurnID           string
-	rootTurnID             string
-	windowID               string
-	windowNumber           uint64
-	windowNumberPresent    bool
-	firstWindowID          string
-	previousWindowID       string
-	windowNumberInBody     bool
-	firstWindowIDInBody    bool
-	previousWindowIDInBody bool
-	contextWindowID        string
-	promptCacheKey         string
-	promptCacheKeyInBody   bool
-	allowPromptCacheCarry  bool
-	contextWindowIDInBody  bool
+	clientVersion         string
+	installationID        string
+	clientSessionID       string
+	originalSessionID     string
+	threadID              string
+	turnID                string
+	parentTurnID          string
+	rootTurnID            string
+	windowID              string
+	windowNumber          uint64
+	windowNumberPresent   bool
+	firstWindowID         string
+	previousWindowID      string
+	contextWindowID       string
+	promptCacheKey        string
+	promptCacheKeyInBody  bool
+	allowPromptCacheCarry bool
 }
 
 // codexFingerprintIDs 收敛后的完整 ID 集合。
@@ -1018,7 +1000,6 @@ type codexFingerprintIDs struct {
 	rootTurnID               string
 	originalContextWindowID  string
 	contextWindowID          string
-	contextWindowIDInBody    bool
 	turnStartedAtUnixMS      int64
 	originalWindowID         string
 	windowID                 string
@@ -1027,9 +1008,6 @@ type codexFingerprintIDs struct {
 	firstWindowID            string
 	originalPreviousWindowID string
 	previousWindowID         string
-	windowNumberInBody       bool
-	firstWindowIDInBody      bool
-	previousWindowIDInBody   bool
 	originalPromptCacheKey   string
 	promptCacheKey           string
 	// promptCacheKeyInBody 区分原请求体字段与仅用于 Header 的兼容缓存键。
@@ -1075,11 +1053,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		originalWindowID:         strings.TrimSpace(source.windowID),
 		originalFirstWindowID:    strings.TrimSpace(source.firstWindowID),
 		originalPreviousWindowID: strings.TrimSpace(source.previousWindowID),
-		windowNumberInBody:       source.windowNumberInBody,
-		firstWindowIDInBody:      source.firstWindowIDInBody,
-		previousWindowIDInBody:   source.previousWindowIDInBody,
 		originalPromptCacheKey:   strings.TrimSpace(source.promptCacheKey),
-		contextWindowIDInBody:    source.contextWindowIDInBody,
 	}
 	if ids.originalSessionID == "" {
 		ids.originalSessionID = strings.TrimSpace(source.clientSessionID)
@@ -1111,15 +1085,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			ids.parentTurnID = ids.originalParentTurnID
 			ids.rootTurnID = resolveCodexRootTurnID(ids.originalRootTurnID, ids.originalParentTurnID, ids.turnID)
 		}
-		windowSource := source.windowID
-		if source.windowNumberPresent {
-			windowSource = fmt.Sprintf("%s:%d", ids.threadID, source.windowNumber)
-		}
-		ids.windowID = normalizeCodexWindowID(windowSource, ids.threadID)
-		if ids.extendedTurnIdentity {
-			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
-			ids.windowNumber, ids.firstWindowID, ids.previousWindowID = resolveCodexWindowLineage(account, ids.threadID, ids.windowID)
-		}
+		resolveCodexFingerprintWindow(account, source, ids)
 		return ids
 
 	case codexFingerprintCockpit:
@@ -1146,15 +1112,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			ids.parentTurnID = ids.originalParentTurnID
 			ids.rootTurnID = resolveCodexRootTurnID(ids.originalRootTurnID, ids.originalParentTurnID, ids.turnID)
 		}
-		windowSource := source.windowID
-		if source.windowNumberPresent {
-			windowSource = fmt.Sprintf("%s:%d", ids.threadID, source.windowNumber)
-		}
-		ids.windowID = normalizeCodexWindowID(windowSource, ids.threadID)
-		if ids.extendedTurnIdentity {
-			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
-			ids.windowNumber, ids.firstWindowID, ids.previousWindowID = resolveCodexWindowLineage(account, ids.threadID, ids.windowID)
-		}
+		resolveCodexFingerprintWindow(account, source, ids)
 		if strings.TrimSpace(source.promptCacheKey) != "" {
 			ids.promptCacheKey = strings.TrimSpace(source.promptCacheKey)
 			rememberCodexPromptCacheKey(account, ids, ids.promptCacheKey, source.promptCacheKeyInBody)
@@ -1185,19 +1143,25 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			ids.parentTurnID = ids.originalParentTurnID
 			ids.rootTurnID = resolveCodexRootTurnID(ids.originalRootTurnID, ids.originalParentTurnID, ids.turnID)
 		}
-		windowSource := source.windowID
-		if source.windowNumberPresent {
-			windowSource = fmt.Sprintf("%s:%d", ids.threadID, source.windowNumber)
-		}
-		ids.windowID = normalizeCodexWindowID(windowSource, ids.threadID)
-		if ids.extendedTurnIdentity {
-			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
-			ids.windowNumber, ids.firstWindowID, ids.previousWindowID = resolveCodexWindowLineage(account, ids.threadID, ids.windowID)
-		}
+		resolveCodexFingerprintWindow(account, source, ids)
 		return ids
 	}
 
 	return nil
+}
+
+// resolveCodexFingerprintWindow 统一三种模式的窗口派生及版本门控，
+// 旧客户端已剥离的 window_number 不得再改变窗口身份或缓存绑定。
+func resolveCodexFingerprintWindow(account *Account, source codexFingerprintSource, ids *codexFingerprintIDs) {
+	windowSource := source.windowID
+	if ids.extendedTurnIdentity && source.windowNumberPresent {
+		windowSource = fmt.Sprintf("%s:%d", ids.threadID, source.windowNumber)
+	}
+	ids.windowID = normalizeCodexWindowID(windowSource, ids.threadID)
+	if ids.extendedTurnIdentity {
+		ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
+		ids.windowNumber, ids.firstWindowID, ids.previousWindowID = resolveCodexWindowLineage(account, ids.threadID, ids.windowID)
+	}
 }
 
 // extractCodexStringField 读取 map 中的非空字符串字段。
@@ -1209,37 +1173,41 @@ func extractCodexStringField(values map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
-// extractCodexWindowNumberField accepts the numeric JSON form emitted by Codex
-// and the string form used by a few compatibility clients. Zero is a valid
-// initial window number, so presence is returned separately from the value.
+// extractCodexWindowNumberField 兼容 JSON 数字与字符串形式；0 是合法首窗口，
+// 因而额外返回存在性。统一限制在 JSON float64 精确整数范围，防止两条路径分叉。
 func extractCodexWindowNumberField(values map[string]any, key string) (uint64, bool) {
 	if values == nil {
 		return 0, false
 	}
 	switch value := values[key].(type) {
 	case json.Number:
-		n, err := strconv.ParseUint(string(value), 10, 64)
-		return n, err == nil
+		n, err := strconv.ParseFloat(string(value), 64)
+		if err == nil {
+			return extractCodexWindowNumberField(map[string]any{key: n}, key)
+		}
 	case float64:
-		// JSON decoded into any uses float64. Values above 2^53 lose integer
-		// precision and must not be converted into a window generation.
+		// 解码体使用 float64，超出精确范围的数字不得影响窗口身份。
 		const maxExactJSONInteger = float64(1<<53 - 1)
 		if value >= 0 && value == math.Trunc(value) && value <= maxExactJSONInteger {
 			return uint64(value), true
 		}
 	case int:
-		if value >= 0 {
+		if value >= 0 && uint64(value) <= 1<<53-1 {
 			return uint64(value), true
 		}
 	case int64:
-		if value >= 0 {
+		if value >= 0 && uint64(value) <= 1<<53-1 {
 			return uint64(value), true
 		}
 	case uint64:
-		return value, true
+		if value <= 1<<53-1 {
+			return value, true
+		}
 	case string:
 		n, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-		return n, err == nil
+		if err == nil && n <= 1<<53-1 {
+			return n, true
+		}
 	}
 	return 0, false
 }
@@ -1250,8 +1218,7 @@ func extractCodexWindowNumberRaw(body []byte, path string) (uint64, bool) {
 		return 0, false
 	}
 	if result.Type == gjson.Number {
-		n, err := strconv.ParseUint(result.Raw, 10, 64)
-		return n, err == nil
+		return extractCodexWindowNumberField(map[string]any{"value": json.Number(result.Raw)}, "value")
 	}
 	return extractCodexWindowNumberField(map[string]any{"value": result.String()}, "value")
 }
@@ -1359,16 +1326,11 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberField(clientMetadata, "window_number")
 	}
 	if !source.windowNumberPresent {
-		if raw := extractCodexTurnMetadataField(embeddedTurnMetadata, "window_number"); raw != "" {
-			source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberField(map[string]any{"value": raw}, "value")
-		}
+		source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberRaw([]byte(embeddedTurnMetadata), "window_number")
 	}
 	if !source.windowNumberPresent {
-		if raw := extractCodexTurnMetadataField(headerTurnMetadata, "window_number"); raw != "" {
-			source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberField(map[string]any{"value": raw}, "value")
-		}
+		source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberRaw([]byte(headerTurnMetadata), "window_number")
 	}
-	source.windowNumberInBody = source.windowNumberPresent && reqBody != nil && reqBody["window_number"] != nil
 	source.firstWindowID = firstNonEmptyCodexValue(
 		extractCodexStringField(reqBody, "first_window_id"),
 		extractCodexStringField(clientMetadata, "first_window_id"),
@@ -1381,8 +1343,6 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		extractCodexTurnMetadataField(embeddedTurnMetadata, "previous_window_id"),
 		extractCodexTurnMetadataField(headerTurnMetadata, "previous_window_id"),
 	)
-	source.firstWindowIDInBody = source.firstWindowID != "" && reqBody != nil && reqBody["first_window_id"] != nil
-	source.previousWindowIDInBody = source.previousWindowID != "" && reqBody != nil && reqBody["previous_window_id"] != nil
 	source.contextWindowID = firstNonEmptyCodexValue(
 		extractCodexStringField(reqBody, "context_window_id"),
 		extractCodexStringField(clientMetadata, "context_window_id"),
@@ -1390,7 +1350,6 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		extractCodexTurnMetadataField(headerTurnMetadata, "context_window_id"),
 		h.Get("x-codex-context-window-id"),
 	)
-	source.contextWindowIDInBody = extractCodexStringField(reqBody, "context_window_id") != ""
 	source.promptCacheKey = extractCodexStringField(reqBody, "prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
 	if source.promptCacheKey == "" {
@@ -1495,16 +1454,11 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberRaw(body, "client_metadata.window_number")
 	}
 	if !source.windowNumberPresent {
-		if raw := extractCodexTurnMetadataField(embeddedTurnMetadata, "window_number"); raw != "" {
-			source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberField(map[string]any{"value": raw}, "value")
-		}
+		source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberRaw([]byte(embeddedTurnMetadata), "window_number")
 	}
 	if !source.windowNumberPresent {
-		if raw := extractCodexTurnMetadataField(headerTurnMetadata, "window_number"); raw != "" {
-			source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberField(map[string]any{"value": raw}, "value")
-		}
+		source.windowNumber, source.windowNumberPresent = extractCodexWindowNumberRaw([]byte(headerTurnMetadata), "window_number")
 	}
-	source.windowNumberInBody = source.windowNumberPresent && gjson.GetBytes(body, "window_number").Exists()
 	source.firstWindowID = firstNonEmptyCodexValue(
 		read("first_window_id"),
 		read("client_metadata.first_window_id"),
@@ -1517,8 +1471,6 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		extractCodexTurnMetadataField(embeddedTurnMetadata, "previous_window_id"),
 		extractCodexTurnMetadataField(headerTurnMetadata, "previous_window_id"),
 	)
-	source.firstWindowIDInBody = source.firstWindowID != "" && gjson.GetBytes(body, "first_window_id").Exists()
-	source.previousWindowIDInBody = source.previousWindowID != "" && gjson.GetBytes(body, "previous_window_id").Exists()
 	source.contextWindowID = firstNonEmptyCodexValue(
 		read("context_window_id"),
 		read("client_metadata.context_window_id"),
@@ -1526,7 +1478,6 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		extractCodexTurnMetadataField(headerTurnMetadata, "context_window_id"),
 		h.Get("x-codex-context-window-id"),
 	)
-	source.contextWindowIDInBody = read("context_window_id") != ""
 	source.promptCacheKey = read("prompt_cache_key")
 	source.promptCacheKeyInBody = source.promptCacheKey != ""
 	if source.promptCacheKey == "" {
@@ -1862,6 +1813,9 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	if ids.extendedTurnIdentity {
 		fields["window_number"] = ids.windowNumber
 		fields["first_window_id"] = ids.firstWindowID
+		fields["previous_window_id"] = nil
+		fields["parent_turn_id"] = nil
+		fields["root_turn_id"] = nil
 		if ids.previousWindowID != "" {
 			fields["previous_window_id"] = ids.previousWindowID
 		}
@@ -1882,18 +1836,22 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 }
 
 // rewriteCodexTurnMetadataFields 解析 x-codex-turn-metadata 头中的 JSON，
-// 替换指定字段后回写。保留未指定字段原样（如 sandbox、thread_source 等）。
+// 替换指定字段后回写，nil 表示删除。未指定字段（如 sandbox）保持原样。
 func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	raw := strings.TrimSpace(h.Get("x-codex-turn-metadata"))
 	if raw == "" {
 		return
 	}
 	var metadata map[string]any
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
 		return
 	}
 	for k, v := range fields {
-		metadata[k] = v
+		if v == nil {
+			delete(metadata, k)
+		} else {
+			metadata[k] = v
+		}
 	}
 	rebuilt, err := json.Marshal(metadata)
 	if err != nil {
@@ -1967,6 +1925,25 @@ func stripUnsupportedCodexExtendedTurnIdentityBody(reqBody map[string]any) bool 
 	return modified
 }
 
+// codexMetadataOnlyBodyFields 只允许作为元数据传递，不属于 Responses 顶层参数。
+var codexMetadataOnlyBodyFields = []string{
+	"root_turn_id", "parent_turn_id", "context_window_id", "window_number", "first_window_id", "previous_window_id",
+}
+
+// preserveCodexTopLevelMetadata 在删除兼容客户端的顶层字段前保留有效值。
+// device 模式也只迁移载体，不改动客户端的回合与窗口身份。
+func preserveCodexTopLevelMetadata(body, metadata map[string]any) {
+	for _, key := range codexMetadataOnlyBodyFields {
+		if key == "window_number" {
+			if number, ok := extractCodexWindowNumberField(body, key); ok {
+				metadata[key] = strconv.FormatUint(number, 10)
+			}
+		} else if value := extractCodexStringField(body, key); value != "" {
+			metadata[key] = value
+		}
+	}
+}
+
 // applyCodexFingerprintClientMetadata 按预计算的收敛 ID 改写请求体中的 client_metadata。
 // 使用与头改写相同的 ids 实例，确保 turn_id 等随机字段一致。
 func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFingerprintIDs) bool {
@@ -1981,29 +1958,16 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 	if existing == nil {
 		existing = make(map[string]any)
 	}
+	preserveCodexTopLevelMetadata(reqBody, existing)
 	if !applyCodexFingerprintToClientMetadataMap(existing, ids) {
 		return false
 	}
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" && ids.promptCacheKeyInBody {
 		reqBody["prompt_cache_key"] = ids.promptCacheKey
 	}
-	// 官方 Responses 请求只在 client_metadata / turn metadata 中承载
-	// root_turn_id；顶层字段会被上游判定为不支持参数。
-	delete(reqBody, "root_turn_id")
-	if ids.contextWindowID != "" && ids.contextWindowIDInBody {
-		reqBody["context_window_id"] = ids.contextWindowID
-	}
-	if ids.extendedTurnIdentity && ids.windowNumberInBody {
-		reqBody["window_number"] = float64(ids.windowNumber)
-	}
-	if ids.extendedTurnIdentity && ids.firstWindowIDInBody {
-		reqBody["first_window_id"] = ids.firstWindowID
-	}
-	if ids.extendedTurnIdentity && ids.previousWindowIDInBody && ids.previousWindowID != "" {
-		reqBody["previous_window_id"] = ids.previousWindowID
-	}
-	if ids.extendedTurnIdentity && ids.parentTurnID != "" {
-		reqBody["parent_turn_id"] = ids.parentTurnID
+	// 官方生成协议不接受这些顶层字段；已有有效值已迁入元数据。
+	for _, key := range codexMetadataOnlyBodyFields {
+		delete(reqBody, key)
 	}
 	reqBody["client_metadata"] = existing
 	return true
@@ -2039,8 +2003,11 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
 	if ids.extendedTurnIdentity {
-		existing["window_number"] = float64(ids.windowNumber)
+		existing["window_number"] = strconv.FormatUint(ids.windowNumber, 10)
 		existing["first_window_id"] = ids.firstWindowID
+		delete(existing, "previous_window_id")
+		delete(existing, "parent_turn_id")
+		delete(existing, "root_turn_id")
 		if ids.previousWindowID != "" {
 			existing["previous_window_id"] = ids.previousWindowID
 		}
@@ -2066,6 +2033,9 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	if ids.extendedTurnIdentity {
 		fields["window_number"] = ids.windowNumber
 		fields["first_window_id"] = ids.firstWindowID
+		fields["previous_window_id"] = nil
+		fields["parent_turn_id"] = nil
+		fields["root_turn_id"] = nil
 		if ids.previousWindowID != "" {
 			fields["previous_window_id"] = ids.previousWindowID
 		}
@@ -2102,6 +2072,17 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 			return body, false, fmt.Errorf("decode client_metadata for fingerprint: %w", err)
 		}
 	}
+	// 仅抽取小范围身份字段，不解码 input/tools 等大对象。
+	topLevel := make(map[string]any)
+	for _, key := range codexMetadataOnlyBodyFields {
+		value := gjson.GetBytes(body, key)
+		if value.Type == gjson.String {
+			topLevel[key] = value.Str
+		} else if key == "window_number" && value.Type == gjson.Number {
+			topLevel[key] = json.Number(value.Raw)
+		}
+	}
+	preserveCodexTopLevelMetadata(topLevel, existing)
 	if !applyCodexFingerprintToClientMetadataMap(existing, ids) {
 		return body, false, nil
 	}
@@ -2119,65 +2100,33 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 			return body, false, fmt.Errorf("splice converged prompt_cache_key: %w", err)
 		}
 	}
-	// 与解码请求路径保持一致：root_turn_id 只写入官方 metadata 载体。
-	updated, err = sjson.DeleteBytes(updated, "root_turn_id")
-	if err != nil {
-		return body, false, fmt.Errorf("remove unsupported top-level root_turn_id: %w", err)
-	}
-	if ids.contextWindowID != "" && ids.contextWindowIDInBody {
-		updated, err = sjson.SetBytes(updated, "context_window_id", ids.contextWindowID)
+	// 与解码路径保持一致，扩展身份字段只保留在元数据中。
+	for _, path := range codexMetadataOnlyBodyFields {
+		updated, err = sjson.DeleteBytes(updated, path)
 		if err != nil {
-			return body, false, fmt.Errorf("splice converged context_window_id: %w", err)
-		}
-	}
-	if ids.extendedTurnIdentity && ids.windowNumberInBody {
-		updated, err = sjson.SetBytes(updated, "window_number", ids.windowNumber)
-		if err != nil {
-			return body, false, fmt.Errorf("splice converged window_number: %w", err)
-		}
-	}
-	if ids.extendedTurnIdentity && ids.firstWindowIDInBody {
-		updated, err = sjson.SetBytes(updated, "first_window_id", ids.firstWindowID)
-		if err != nil {
-			return body, false, fmt.Errorf("splice converged first_window_id: %w", err)
-		}
-	}
-	if ids.extendedTurnIdentity && ids.previousWindowIDInBody && ids.previousWindowID != "" {
-		updated, err = sjson.SetBytes(updated, "previous_window_id", ids.previousWindowID)
-		if err != nil {
-			return body, false, fmt.Errorf("splice converged previous_window_id: %w", err)
-		}
-	}
-	if ids.extendedTurnIdentity && ids.parentTurnID != "" {
-		updated, err = sjson.SetBytes(updated, "parent_turn_id", ids.parentTurnID)
-		if err != nil {
-			return body, false, fmt.Errorf("splice converged parent_turn_id: %w", err)
-		}
-	}
-	if !ids.extendedTurnIdentity {
-		for _, path := range []string{"parent_turn_id", "root_turn_id", "context_window_id", "window_number", "first_window_id", "previous_window_id"} {
-			updated, err = sjson.DeleteBytes(updated, path)
-			if err != nil {
-				return body, false, fmt.Errorf("remove unsupported %s: %w", path, err)
-			}
+			return body, false, fmt.Errorf("remove unsupported top-level %s: %w", path, err)
 		}
 	}
 	return updated, true, nil
 }
 
 // rewriteClientMetadataEmbeddedTurnMetadata 改写 client_metadata 中内嵌的
-// x-codex-turn-metadata JSON 字符串里的指定字段。
+// x-codex-turn-metadata JSON 字符串里的指定字段，nil 表示删除。
 func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fields map[string]any) {
 	raw, ok := clientMetadata["x-codex-turn-metadata"].(string)
 	if !ok || raw == "" {
 		return
 	}
 	var metadata map[string]any
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
 		return
 	}
 	for k, v := range fields {
-		metadata[k] = v
+		if v == nil {
+			delete(metadata, k)
+		} else {
+			metadata[k] = v
+		}
 	}
 	if rebuilt, err := json.Marshal(metadata); err == nil {
 		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)

@@ -600,7 +600,7 @@ func TestCockpitWindowLineage_WindowNumberAdvancesStaleWindowID(t *testing.T) {
 	assert.NotEmpty(t, ids.previousWindowID)
 }
 
-func TestCockpitWindowLineage_WritesMetadataAndPreservesBodyShape(t *testing.T) {
+func TestCockpitWindowLineage_MovesTopLevelFieldsToMetadata(t *testing.T) {
 	account := newTestOAuthAccount(116, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	thread := uuid.Must(uuid.NewV7()).String()
 	body := map[string]any{
@@ -615,12 +615,12 @@ func TestCockpitWindowLineage_WritesMetadataAndPreservesBodyShape(t *testing.T) 
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
 	require.NotNil(t, ids)
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-	assert.Equal(t, float64(ids.windowNumber), body["window_number"])
-	assert.Equal(t, ids.firstWindowID, body["first_window_id"])
-	assert.Equal(t, ids.previousWindowID, body["previous_window_id"])
+	assert.NotContains(t, body, "window_number")
+	assert.NotContains(t, body, "first_window_id")
+	assert.NotContains(t, body, "previous_window_id")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, float64(ids.windowNumber), metadata["window_number"])
+	assert.Equal(t, fmt.Sprint(ids.windowNumber), metadata["window_number"])
 	assert.Equal(t, ids.firstWindowID, metadata["first_window_id"])
 	assert.Equal(t, ids.previousWindowID, metadata["previous_window_id"])
 	var embedded map[string]any
@@ -753,7 +753,7 @@ func TestCodexFingerprint151PreservesParentTurnIdentity(t *testing.T) {
 
 	body := map[string]any{"prompt_cache_key": "cache-parent"}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-	assert.Equal(t, parent, body["parent_turn_id"])
+	assert.NotContains(t, body, "parent_turn_id", "子回合 ID 只进入元数据，不写入 Responses 顶层")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, parent, metadata["parent_turn_id"])
@@ -782,7 +782,7 @@ func TestCodexFingerprintPre151RawBodyRemovesExtendedTurnIdentity(t *testing.T) 
 	assert.NotContains(t, metadata, "context_window_id")
 }
 
-func TestCockpitContextWindowID_RewritesBodyAndMetadata(t *testing.T) {
+func TestCockpitContextWindowID_MovesTopLevelFieldToMetadata(t *testing.T) {
 	account := newTestOAuthAccount(110, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	clientContext := uuid.Must(uuid.NewV7()).String()
 	body := map[string]any{
@@ -796,9 +796,10 @@ func TestCockpitContextWindowID_RewritesBodyAndMetadata(t *testing.T) {
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, body)
 	require.NotNil(t, ids)
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-	assert.Equal(t, ids.contextWindowID, body["context_window_id"])
+	assert.NotContains(t, body, "context_window_id")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
+	assert.Equal(t, ids.contextWindowID, metadata["context_window_id"])
 	metadataJSON, ok := metadata["x-codex-turn-metadata"].(string)
 	require.True(t, ok)
 	var turnMetadata map[string]any

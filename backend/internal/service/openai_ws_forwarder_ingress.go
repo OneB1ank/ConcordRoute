@@ -184,6 +184,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				wsDecision,
 				tlsRouterMatch,
 				firstFingerprintIDs,
+				fingerprintAccount,
 			)
 		case OpenAIWSIngressModeHTTPBridge:
 			forceHTTPBridge = true
@@ -262,6 +263,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return rebuilt, nil
 	}
 
+	currentFingerprintIDs := firstFingerprintIDs
+	fingerprintState := newCodexWebSocketFingerprintState(fingerprintAccount, firstFingerprintIDs, firstClientMessage)
 	parseClientPayload := func(raw []byte, applyUserPromptReplacement bool, turn int) (openAIWSClientPayload, error) {
 		trimmed := bytes.TrimSpace(raw)
 		if len(trimmed) == 0 {
@@ -338,7 +341,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				nil,
 			)
 		}
-		if turnMetadata := strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader)); turnMetadata != "" {
+		// 帧内元数据比连接握手更新；现代连接后续省略时也不得回灌首窗口旧值。
+		frameTurnMetadata := gjson.GetBytes(normalized, "client_metadata."+openAIWSTurnMetadataHeader)
+		allowHeaderFallback := turn == 1 || currentFingerprintIDs == nil || !currentFingerprintIDs.extendedTurnIdentity
+		if turnMetadata := strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader)); turnMetadata != "" && !frameTurnMetadata.Exists() && allowHeaderFallback {
 			next, setErr := applyPayloadMutation(normalized, "client_metadata."+openAIWSTurnMetadataHeader, turnMetadata)
 			if setErr != nil {
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", setErr)
@@ -474,11 +480,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		}
 		normalized = policyApplied
-		// WebSocket 握手头在连接建立后不可变；首帧生成的身份快照必须由
-		// 同一连接内所有 response.create 复用，避免后续帧重新生成 turn/session
-		// 后与握手头形成不可实现的混合身份。
+		// 握手保留首帧身份，现代客户端后续帧独立推进回合、窗口及显式缓存键。
 		if firstFingerprintIDs != nil {
-			fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(normalized, firstFingerprintIDs)
+			if turn > 1 {
+				previousWindow := currentFingerprintIDs.windowID
+				var identityErr error
+				currentFingerprintIDs, identityErr = fingerprintState.advance(normalized)
+				if identityErr != nil {
+					return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, identityErr.Error(), identityErr)
+				}
+				if currentFingerprintIDs.windowID != previousWindow {
+					_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
+				}
+			}
+			fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(normalized, currentFingerprintIDs)
 			if fingerprintErr != nil {
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
 					coderws.StatusPolicyViolation,
@@ -487,9 +502,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				)
 			}
 			normalized = fingerprinted
-			stageCodexFingerprintIDs(c, firstFingerprintIDs)
-			if firstFingerprintIDs.promptCacheKey != "" {
-				promptCacheKey = firstFingerprintIDs.promptCacheKey
+			stageCodexFingerprintIDs(c, currentFingerprintIDs)
+			if currentFingerprintIDs.promptCacheKey != "" {
+				promptCacheKey = currentFingerprintIDs.promptCacheKey
 			}
 		}
 		ingressSessionOriginalModel = originalModel

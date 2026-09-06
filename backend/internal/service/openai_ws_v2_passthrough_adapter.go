@@ -772,6 +772,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	wsDecision OpenAIWSProtocolDecision,
 	tlsRouterMatch TLSFingerprintRouterMatchResult,
 	firstFingerprintIDs *codexFingerprintIDs,
+	fingerprintAccount *Account,
 ) error {
 	if s == nil {
 		return errors.New("service is nil")
@@ -785,6 +786,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
 	}
+	currentFingerprintIDs := firstFingerprintIDs
+	fingerprintState := newCodexWebSocketFingerprintState(fingerprintAccount, firstFingerprintIDs, firstClientMessage)
 	if isOpenAIResponsesLiteWebSocketPayload(firstClientMessage) {
 		liteFirstMessage, _, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(account, firstClientMessage)
 		if liteErr != nil {
@@ -1173,12 +1176,21 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if policyErr == nil && blocked == nil && isResponseCreate {
 				out = s.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, out)
 				if firstFingerprintIDs != nil {
-					fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(out, firstFingerprintIDs)
+					previousWindow := currentFingerprintIDs.windowID
+					var identityErr error
+					currentFingerprintIDs, identityErr = fingerprintState.advance(out)
+					if identityErr != nil {
+						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, identityErr.Error(), identityErr)
+					}
+					if currentFingerprintIDs.windowID != previousWindow {
+						_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
+					}
+					fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(out, currentFingerprintIDs)
 					if fingerprintErr != nil {
 						return payload, nil, fmt.Errorf("apply Codex fingerprint on ws turn %d: %w", turnNo, fingerprintErr)
 					}
 					out = fingerprinted
-					stageCodexFingerprintIDs(c, firstFingerprintIDs)
+					stageCodexFingerprintIDs(c, currentFingerprintIDs)
 				}
 			}
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）

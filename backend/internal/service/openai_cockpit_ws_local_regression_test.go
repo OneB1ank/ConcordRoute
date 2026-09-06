@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,18 +15,28 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func TestLocalCockpitWebSocketIngressIdentityMatchesHandshakeAndFirstFrame(t *testing.T) {
 	for _, ingressMode := range []string{OpenAIWSIngressModePassthrough, OpenAIWSIngressModeCtxPool} {
 		ingressMode := ingressMode
 		t.Run(ingressMode, func(t *testing.T) {
-			runLocalCockpitWebSocketIngressIdentityTest(t, ingressMode)
+			runLocalCockpitWebSocketIngressIdentityTest(t, ingressMode, false)
 		})
 	}
 }
 
-func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode string) {
+// 现代客户端在同一连接内压缩，后续帧必须切换窗口与显式缓存键。
+func TestLocalCockpitWebSocketCompactionUpdatesFrameIdentity(t *testing.T) {
+	for _, ingressMode := range []string{OpenAIWSIngressModePassthrough, OpenAIWSIngressModeCtxPool} {
+		t.Run(ingressMode, func(t *testing.T) {
+			runLocalCockpitWebSocketIngressIdentityTest(t, ingressMode, true)
+		})
+	}
+}
+
+func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode string, compact bool) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{}
@@ -115,6 +126,24 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 	clientHeaders.Set("x-codex-installation-id", "client-install")
 	clientHeaders.Set("x-codex-window-id", "client-thread-a:0")
 	clientHeaders.Set("x-codex-turn-metadata", `{"codex_version":"0.145.0","installation_id":"client-install","session_id":"client-session-a","thread_id":"client-thread-a","turn_id":"client-turn-a","window_id":"client-thread-a:0","prompt_cache_key":"client-cache-a"}`)
+	if compact {
+		clientHeaders.Set("User-Agent", "codex_cli_rs/0.153.4")
+		for index, frame := range []*[]byte{&firstMessage, &secondMessage} {
+			metadata := map[string]any{
+				"codex_version": "0.153.4",
+				"session_id":    "client-session-a", "thread_id": "client-thread-a",
+				"turn_id":       []string{"client-turn-a", "client-turn-b"}[index],
+				"window_id":     []string{"client-thread-a:0", "client-thread-a:1"}[index],
+				"window_number": index, "parent_turn_id": "client-parent", "root_turn_id": "client-root",
+			}
+			encoded, err := json.Marshal(metadata)
+			require.NoError(t, err)
+			*frame, err = sjson.SetBytes(*frame, "client_metadata.x-codex-turn-metadata", string(encoded))
+			require.NoError(t, err)
+			*frame, err = sjson.SetBytes(*frame, "prompt_cache_key", []string{"client-cache-a", "client-cache-b"}[index])
+			require.NoError(t, err)
+		}
+	}
 	expectedIDs := bindCodexFingerprintIDsToAccount(
 		resolveCodexFingerprintIDsFromRawRequest(account, clientHeaders, firstMessage),
 		account,
@@ -216,13 +245,32 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 
 	forwardedSecond := requestToJSONString(upstreamConn.writes[1])
 	require.Equal(t, "0.153.3", gjson.Get(forwardedSecond, "client_metadata.codex_version").String())
-	require.Equal(t, expectedIDs.promptCacheKey, gjson.Get(forwardedSecond, "prompt_cache_key").String())
+	if compact {
+		require.Equal(t, "client-cache-b", gjson.Get(forwardedSecond, "prompt_cache_key").String())
+	} else {
+		require.Equal(t, expectedIDs.promptCacheKey, gjson.Get(forwardedSecond, "prompt_cache_key").String())
+	}
 	require.Equal(t, expectedIDs.installationID, gjson.Get(forwardedSecond, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, expectedIDs.sessionID, gjson.Get(forwardedSecond, "client_metadata.session_id").String())
 	require.Equal(t, expectedIDs.threadID, gjson.Get(forwardedSecond, "client_metadata.thread_id").String())
 	secondTurnID := gjson.Get(forwardedSecond, "client_metadata.turn_id").String()
 	require.NotEmpty(t, secondTurnID)
-	require.Equal(t, upstreamTurnID, secondTurnID, "同一 WS 连接必须复用首帧身份快照")
+	if compact {
+		require.NotEqual(t, upstreamTurnID, secondTurnID, "新的客户端回合需独立身份，连接握手保持首帧快照")
+		require.Equal(t, expectedIDs.threadID+":1", gjson.Get(forwardedSecond, "client_metadata.x-codex-window-id").String())
+		require.Equal(t, gjson.Get(forwarded, "client_metadata.context_window_id").String(), gjson.Get(forwardedSecond, "client_metadata.previous_window_id").String())
+		for _, frame := range []string{forwarded, forwardedSecond} {
+			require.False(t, gjson.Get(frame, "parent_turn_id").Exists())
+			require.False(t, gjson.Get(frame, "root_turn_id").Exists())
+			require.Equal(t, "client-parent", gjson.Get(frame, "client_metadata.parent_turn_id").String())
+			var wire struct {
+				Metadata map[string]string `json:"client_metadata"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(frame), &wire))
+		}
+	} else {
+		require.Equal(t, upstreamTurnID, secondTurnID, "旧客户端保持连接内兼容身份行为")
+	}
 	secondMetadata := gjson.Get(forwardedSecond, "client_metadata.x-codex-turn-metadata").String()
 	require.Equal(t, "0.153.3", gjson.Get(secondMetadata, "codex_version").String())
 	require.Equal(t, secondTurnID, gjson.Get(secondMetadata, "turn_id").String())
