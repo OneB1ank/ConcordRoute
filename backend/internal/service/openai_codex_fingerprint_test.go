@@ -317,7 +317,7 @@ func TestCockpitIdentityGraph_HeaderOnlyCacheKeyPreservesBodyShape(t *testing.T)
 	assert.NotContains(t, body, "prompt_cache_key")
 }
 
-func TestCockpitRootTurnID_TopLevelMatchesTurnAndRewritesAcrossCarriers(t *testing.T) {
+func TestCockpitRootTurnID_RewritesOfficialMetadataCarriers(t *testing.T) {
 	account := newTestOAuthAccount(105, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	root := uuid.Must(uuid.NewV7()).String()
 	body := map[string]any{
@@ -347,7 +347,7 @@ func TestCockpitRootTurnID_TopLevelMatchesTurnAndRewritesAcrossCarriers(t *testi
 	assert.Equal(t, ids.rootTurnID, headerMeta["root_turn_id"])
 
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-	assert.Equal(t, ids.rootTurnID, body["root_turn_id"])
+	assert.NotContains(t, body, "root_turn_id", "Responses 顶层不支持 root_turn_id")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
@@ -369,7 +369,7 @@ func TestCockpitRootTurnID_ChildInheritsClientRoot(t *testing.T) {
 	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 }
 
-func TestCockpitRootTurnID_MissingTopLevelIsSynthesizedForModernClient(t *testing.T) {
+func TestCockpitRootTurnID_MissingTopLevelUsesOfficialMetadataCarrier(t *testing.T) {
 	account := newTestOAuthAccount(106, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{"prompt_cache_key": "cache-only"})
 	require.NotNil(t, ids)
@@ -378,8 +378,26 @@ func TestCockpitRootTurnID_MissingTopLevelIsSynthesizedForModernClient(t *testin
 	assert.Equal(t, ids.turnID, ids.rootTurnID)
 	body := map[string]any{"prompt_cache_key": "cache-only"}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-	assert.Equal(t, ids.rootTurnID, body["root_turn_id"])
+	assert.NotContains(t, body, "root_turn_id", "Responses 顶层不支持 root_turn_id")
 	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
+}
+
+func TestCockpitRootTurnID_MissingTopLevelRawUsesOfficialMetadataCarrier(t *testing.T) {
+	account := newTestOAuthAccount(120, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	body := []byte(`{"prompt_cache_key":"cache-only"}`)
+	ids := resolveCodexFingerprintIDsFromRawRequest(account, nil, body)
+	require.NotNil(t, ids)
+	require.NotEmpty(t, ids.rootTurnID)
+
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
+	require.NoError(t, err)
+	require.True(t, changed)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(updated, &decoded))
+	assert.NotContains(t, decoded, "root_turn_id", "Responses 顶层不支持 root_turn_id")
+	metadata, ok := decoded["client_metadata"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
 }

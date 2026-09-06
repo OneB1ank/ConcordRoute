@@ -922,18 +922,6 @@ func resolveCodexRootTurnID(originalRootTurnID, parentTurnID, turnID string) str
 	return originalRootTurnID
 }
 
-// shouldWriteCodexRootTurnID reports whether a synthesized top-level root
-// should also be materialized as a top-level request field. Existing roots
-// found only in client metadata/header metadata retain their original carrier;
-// only a truly absent top-level root is added. This keeps carrier shape stable
-// while ensuring modern top-level turns are complete on the wire.
-func shouldWriteCodexRootTurnID(ids *codexFingerprintIDs) bool {
-	if ids == nil || !ids.extendedTurnIdentity || ids.rootTurnID == "" {
-		return false
-	}
-	return ids.rootTurnIDInBody || (ids.originalRootTurnID == "" && ids.originalParentTurnID == "")
-}
-
 // resolveConvergedPromptCacheKey 按账号和客户端原始缓存键稳定派生上游缓存键。
 // 相同账号的相同对话保持稳定，不同账号或不同对话互相隔离。
 func resolveConvergedPromptCacheKey(account *Account, promptCacheKey string) string {
@@ -1003,7 +991,6 @@ type codexFingerprintSource struct {
 	promptCacheKey         string
 	promptCacheKeyInBody   bool
 	allowPromptCacheCarry  bool
-	rootTurnIDInBody       bool
 	contextWindowIDInBody  bool
 }
 
@@ -1047,7 +1034,6 @@ type codexFingerprintIDs struct {
 	promptCacheKey           string
 	// promptCacheKeyInBody 区分原请求体字段与仅用于 Header 的兼容缓存键。
 	promptCacheKeyInBody bool
-	rootTurnIDInBody     bool
 }
 
 // bindCodexFingerprintIDsToAccount 将派生结果绑定到本次实际调度账号。
@@ -1093,7 +1079,6 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		firstWindowIDInBody:      source.firstWindowIDInBody,
 		previousWindowIDInBody:   source.previousWindowIDInBody,
 		originalPromptCacheKey:   strings.TrimSpace(source.promptCacheKey),
-		rootTurnIDInBody:         source.rootTurnIDInBody,
 		contextWindowIDInBody:    source.contextWindowIDInBody,
 	}
 	if ids.originalSessionID == "" {
@@ -1362,7 +1347,6 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		extractCodexTurnMetadataField(headerTurnMetadata, "root_turn_id"),
 		h.Get("x-codex-root-turn-id"),
 	)
-	source.rootTurnIDInBody = extractCodexStringField(reqBody, "root_turn_id") != ""
 	source.windowID = firstNonEmptyCodexValue(
 		extractCodexStringField(clientMetadata, "x-codex-window-id"),
 		extractCodexStringField(reqBody, "window_id"),
@@ -1499,7 +1483,6 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		extractCodexTurnMetadataField(headerTurnMetadata, "root_turn_id"),
 		h.Get("x-codex-root-turn-id"),
 	)
-	source.rootTurnIDInBody = read("root_turn_id") != ""
 	source.windowID = firstNonEmptyCodexValue(
 		read("client_metadata.x-codex-window-id"),
 		read("window_id"),
@@ -2004,9 +1987,9 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 	if ids.mode == codexFingerprintCockpit && ids.promptCacheKey != "" && ids.promptCacheKeyInBody {
 		reqBody["prompt_cache_key"] = ids.promptCacheKey
 	}
-	if shouldWriteCodexRootTurnID(ids) {
-		reqBody["root_turn_id"] = ids.rootTurnID
-	}
+	// 官方 Responses 请求只在 client_metadata / turn metadata 中承载
+	// root_turn_id；顶层字段会被上游判定为不支持参数。
+	delete(reqBody, "root_turn_id")
 	if ids.contextWindowID != "" && ids.contextWindowIDInBody {
 		reqBody["context_window_id"] = ids.contextWindowID
 	}
@@ -2136,11 +2119,10 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 			return body, false, fmt.Errorf("splice converged prompt_cache_key: %w", err)
 		}
 	}
-	if shouldWriteCodexRootTurnID(ids) {
-		updated, err = sjson.SetBytes(updated, "root_turn_id", ids.rootTurnID)
-		if err != nil {
-			return body, false, fmt.Errorf("splice converged root_turn_id: %w", err)
-		}
+	// 与解码请求路径保持一致：root_turn_id 只写入官方 metadata 载体。
+	updated, err = sjson.DeleteBytes(updated, "root_turn_id")
+	if err != nil {
+		return body, false, fmt.Errorf("remove unsupported top-level root_turn_id: %w", err)
 	}
 	if ids.contextWindowID != "" && ids.contextWindowIDInBody {
 		updated, err = sjson.SetBytes(updated, "context_window_id", ids.contextWindowID)
