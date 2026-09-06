@@ -563,6 +563,15 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 			pricing.InputCostPerImageToken = *entry.InputCostPerImageToken
 		}
 
+		// 此次仅补 Astra 远程目录，其他模型保留既有阈值/边际规则，避免叠加整单倍率。
+		// above_* 绝对价只在内部字段全缺失时折算；显式配置（包括 0）始终优先。
+		normalizedModel := normalizeModelNameForPricing(modelName)
+		isAstra := normalizedModel == "gpt-6-astra" || strings.HasPrefix(normalizedModel, "gpt-6-astra-")
+		if isAstra && entry.LongContextInputTokenThreshold == nil &&
+			entry.LongContextInputCostMultiplier == nil && entry.LongContextOutputCostMultiplier == nil {
+			deriveLongContextFromAboveTierFields(rawEntry, pricing)
+		}
+
 		result[modelName] = pricing
 	}
 
