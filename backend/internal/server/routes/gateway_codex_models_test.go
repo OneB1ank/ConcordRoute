@@ -61,6 +61,8 @@ func TestGatewayRoutesModelsWithClientVersionUsesLocalList(t *testing.T) {
 		service.PlatformOpenAI,
 	)
 	paths := []string{
+		"/v1/models",
+		"/models",
 		"/v1/models?client_version=0.144.0",
 		"/models?client_version=0.144.0",
 	}
@@ -76,13 +78,20 @@ func TestGatewayRoutesModelsWithClientVersionUsesLocalList(t *testing.T) {
 			var response struct {
 				Object string `json:"object"`
 				Data   []struct {
-					ID string `json:"id"`
+					ID      string `json:"id"`
+					Object  string `json:"object"`
+					Created int64  `json:"created"`
+					OwnedBy string `json:"owned_by"`
 				} `json:"data"`
 			}
 			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 			require.Equal(t, "list", response.Object)
 			require.Len(t, response.Data, 1)
 			require.Equal(t, "local-api-key-model", response.Data[0].ID)
+			// 两个入口及客户端版本查询参数共用 OpenAI 模型项格式。
+			require.Equal(t, "model", response.Data[0].Object)
+			require.Positive(t, response.Data[0].Created)
+			require.Equal(t, "openai", response.Data[0].OwnedBy)
 		})
 	}
 }

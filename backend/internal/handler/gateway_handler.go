@@ -1071,7 +1071,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		// 自定义列表只能与已通过渠道和账号校验的模型取交集，不能重新加入被拒绝的模型。
 		availableModels = filterModelsByCustomList(availableModels, nil, apiKey.Group.ModelsListConfig.Models)
 		availableModels = service.AppendAPIKeyModelAliases(availableModels, apiKey.ModelMapping)
-		writeCustomModelsList(c, platform, availableModels)
+		writeModelsList(c, platform, availableModels)
 		return
 	}
 	if apiKey != nil {
@@ -1080,20 +1080,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	if len(availableModels) > 0 {
 		if resolution.HadExplicitAccountModels {
-			if platform == service.PlatformGrok {
-				// Grok Build 需要 reasoning 元数据，同时保留显式列表的旧兼容字段。
-				writeGrokModelsList(c, availableModels)
-			} else {
-				// 其它平台的账号显式列表继续使用历史 Claude 兼容字段结构。
-				writeModelsList(c, availableModels)
-			}
+			writeModelsList(c, platform, availableModels)
 		} else {
 			writeDefaultModelsList(c, platform, availableModels)
 		}
 		return
 	}
 	if resolution.Restricted || groupID != nil {
-		writeModelsList(c, nil)
+		writeModelsList(c, platform, nil)
 		return
 	}
 
@@ -1178,7 +1172,17 @@ func writeCompositeModelsList(c *gin.Context, modelIDs []string) {
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": models})
 }
 
-func writeModelsList(c *gin.Context, modelIDs []string) {
+// writeModelsList 按平台统一显式、自定义及空列表的响应格式，不改变模型筛选结果。
+// @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_catalog_resolution
+func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
+	switch platform {
+	case service.PlatformOpenAI:
+		writeOpenAIModelsList(c, modelIDs)
+		return
+	case service.PlatformGrok:
+		writeGrokModelsList(c, modelIDs)
+		return
+	}
 	models := make([]claude.Model, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
 		models = append(models, claude.Model{
@@ -1192,18 +1196,6 @@ func writeModelsList(c *gin.Context, modelIDs []string) {
 		"object": "list",
 		"data":   models,
 	})
-}
-
-// writeCustomModelsList 保持分组自定义列表原有的响应结构。
-func writeCustomModelsList(c *gin.Context, platform string, modelIDs []string) {
-	switch platform {
-	case service.PlatformOpenAI:
-		writeOpenAIModelsList(c, modelIDs)
-	case service.PlatformGrok:
-		writeGrokModelsList(c, modelIDs)
-	default:
-		writeModelsList(c, modelIDs)
-	}
 }
 
 type grokReasoningEffortOption struct {
@@ -1283,7 +1275,7 @@ func writeDefaultModelsList(c *gin.Context, platform string, modelIDs []string) 
 	case service.PlatformAnthropic, service.PlatformGemini, service.PlatformAntigravity, service.PlatformQoder:
 		writeClaudeCompatiblePlatformModelsList(c, platform, modelIDs)
 	default:
-		writeModelsList(c, modelIDs)
+		writeModelsList(c, platform, modelIDs)
 	}
 }
 

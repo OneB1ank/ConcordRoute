@@ -17,6 +17,8 @@
 
 模型 ID 是客户端请求键，display name 是展示信息，pricing model 是定价解析键。三者可以不同。Key 级重定向和渠道映射必须让 `/v1/models`、`/models`、实际调度和响应模型恢复保持一致；目标不可请求的别名不应只出现在列表里。
 
+OpenAI 分组的 `/v1/models` 与 `/models` 共用模型列表格式，不因账号显式映射、分组自定义列表或 `client_version` 查询参数而切换为 Claude 格式。每个模型项都包含 `id`、`object: "model"`、`created` 和 `owned_by`，并保留已有的 `type`、`display_name` 扩展字段；内置模型复用既有目录元数据，自定义别名使用既有回退值。空结果保持 `object: "list"` 与 `data: []`。序列化不增加候选模型，不修改映射、筛选、排序或推理请求；其它平台保留各自响应格式。
+
 ## 市场可见性
 
 公开市场只返回 active、非 exclusive、且至少有一个 active account 的 Group。每个 Group 在解析后没有可请求模型时也会被隐藏。排序使用 Group 的显式顺序；市场不会按临时价格或实时错误任意重排产品。
