@@ -17,6 +17,7 @@ type TLSFingerprintProfile struct {
 	Name                string    `json:"name"`
 	Description         *string   `json:"description"`
 	EnableGREASE        bool      `json:"enable_grease"`
+	RustlsNativeOrder   bool      `json:"rustls_native_order"` // 默认关闭，兼容旧模板
 	CipherSuites        []uint16  `json:"cipher_suites"`
 	Curves              []uint16  `json:"curves"`
 	PointFormats        []uint16  `json:"point_formats"`
@@ -34,6 +35,9 @@ type TLSFingerprintProfile struct {
 func (p *TLSFingerprintProfile) Validate() error {
 	if strings.TrimSpace(p.Name) == "" {
 		return &ValidationError{Field: "name", Message: "name is required"}
+	}
+	if err := p.ToTLSProfile().ValidateRustlsNativeOrder(); err != nil {
+		return &ValidationError{Field: "rustls_native_order", Message: err.Error()}
 	}
 
 	for _, field := range []struct {
@@ -175,6 +179,7 @@ func (p *TLSFingerprintProfile) ToTLSProfile() *tlsfingerprint.Profile {
 	return &tlsfingerprint.Profile{
 		Name:                p.Name,
 		EnableGREASE:        p.EnableGREASE,
+		RustlsNativeOrder:   p.RustlsNativeOrder,
 		CipherSuites:        p.CipherSuites,
 		Curves:              p.Curves,
 		PointFormats:        p.PointFormats,

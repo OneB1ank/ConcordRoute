@@ -354,6 +354,10 @@ func normalizeCodexToolChoice(reqBody map[string]any) bool {
 	if choiceType == "" {
 		return false
 	}
+	// allowed_tools 是选择策略而非工具类型；格式校验交给上游，不应放宽为 auto。
+	if choiceType == "allowed_tools" {
+		return false
+	}
 	modified := false
 	if choiceType == "function" {
 		name := strings.TrimSpace(firstNonEmptyString(choiceMap["name"]))

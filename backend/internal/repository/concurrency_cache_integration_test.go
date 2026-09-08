@@ -522,7 +522,7 @@ func (s *ConcurrencyCacheSuite) TestGetUserConcurrency_Missing() {
 }
 
 func (s *ConcurrencyCacheSuite) TestGetAccountsLoadBatch() {
-	s.T().Skip("TODO: Fix this test - CurrentConcurrency returns 0 instead of expected value in CI")
+	// 使用真实 Redis 验证批量负载，避免旧跳过标记掩盖并发数与排队数回归。
 	// Setup: Create accounts with different load states
 	account1 := int64(100)
 	account2 := int64(101)

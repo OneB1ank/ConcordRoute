@@ -40,6 +40,8 @@ HTTP client 池可按 `proxy`、`account` 或 `account_proxy` 隔离，并有最
 
 TLS fingerprint profile 描述 ClientHello/HTTP 行为，账号可以直接绑定 profile，也可以绑定 router。Router 依据平台、请求和配置选择 profile、User-Agent 或 originator；结果进入连接池隔离键。配置缓存更新后需要跨实例失效，不能让同一账号长期使用不同规则版本。
 
+模板可选 `rustls_native_order`，新建、旧记录及采集导入均默认关闭；更新时省略字段保留原值。开启后仅按 rustls 0.23.36 算法排列扩展，不更换 TLS 后端或改动 UA、业务 ID。该模式拒绝 GREASE、手工 PSK/Cookie/outer_extensions 等未实现组合。开关进入连接池键，关闭时保持旧键格式；每次新握手的随机种子不进入池键。ALPN 非空仍要求扩展 16，真实无 ALPN 模板允许两者同时缺省。详见 [排序实现与回退边界](../guides/rustls-native-order.md)。
+
 TLS collector 可采集受控会话以建立或检查 profile。采集入口是管理员诊断面，不允许接收任意公网目标或把捕获的 Authorization/Cookie 作为普通样本保存。OAuth token/reset 等特殊请求可以使用专用 profile/UA，但仍遵守目标和代理校验。
 
 ## 目标与重定向校验

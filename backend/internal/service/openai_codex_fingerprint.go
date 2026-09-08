@@ -218,7 +218,7 @@ var codexIdentityHotCache sync.Map        // account+seed -> codexIdentityHotBin
 var codexIdentityHotCacheOps atomic.Uint64
 
 // codexPromptCacheCarry 保存同一会话最近一次明确的客户端缓存键。
-// 仅用于普通 Responses 请求的一轮缺失容错，避免压缩边界造成命名空间跳变。
+// 普通 Responses 允许同窗口续用、相邻压缩窗口单向继承；旧 compact 仍保持独立协议。
 var codexPromptCacheCarry = struct {
 	sync.Mutex
 	items map[string]codexPromptCacheCarryEntry
@@ -250,19 +250,24 @@ func rememberCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs, key
 	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, ids.windowID)
 	codexPromptCacheCarry.Lock()
 	defer codexPromptCacheCarry.Unlock()
+	storeCodexPromptCacheKeyLocked(cacheKey, codexPromptCacheCarryEntry{Key: strings.TrimSpace(key), WindowID: ids.windowID, InBody: inBody, LastUsedAt: now})
+}
+
+// 显式绑定和跨窗口继承共用容量控制，调用方须持有缓存锁。
+func storeCodexPromptCacheKeyLocked(cacheKey string, entry codexPromptCacheCarryEntry) {
 	if _, exists := codexPromptCacheCarry.items[cacheKey]; !exists && len(codexPromptCacheCarry.items) >= codexPromptCacheCarryMaxEntries {
 		var oldestKey string
-		oldest := now
-		for candidate, entry := range codexPromptCacheCarry.items {
-			if entry.LastUsedAt <= oldest {
-				oldestKey, oldest = candidate, entry.LastUsedAt
+		oldest := int64(math.MaxInt64)
+		for candidate, existing := range codexPromptCacheCarry.items {
+			if existing.LastUsedAt <= oldest {
+				oldestKey, oldest = candidate, existing.LastUsedAt
 			}
 		}
 		if oldestKey != "" {
 			delete(codexPromptCacheCarry.items, oldestKey)
 		}
 	}
-	codexPromptCacheCarry.items[cacheKey] = codexPromptCacheCarryEntry{Key: strings.TrimSpace(key), WindowID: ids.windowID, InBody: inBody, LastUsedAt: now}
+	codexPromptCacheCarry.items[cacheKey] = entry
 }
 
 func loadCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs) (codexPromptCacheCarryEntry, bool) {
@@ -273,15 +278,30 @@ func loadCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs) (codexP
 	now := time.Now().UnixMilli()
 	codexPromptCacheCarry.Lock()
 	defer codexPromptCacheCarry.Unlock()
-	entry, ok := codexPromptCacheCarry.items[cacheKey]
-	if !ok || now-entry.LastUsedAt > codexIdentityBindingIdleTTL.Milliseconds() || entry.WindowID != ids.windowID {
-		if ok {
-			delete(codexPromptCacheCarry.items, cacheKey)
+	load := func(key, windowID string) (codexPromptCacheCarryEntry, bool) {
+		entry, ok := codexPromptCacheCarry.items[key]
+		if !ok {
+			return codexPromptCacheCarryEntry{}, false
 		}
+		if now-entry.LastUsedAt > codexIdentityBindingIdleTTL.Milliseconds() || entry.WindowID != windowID {
+			delete(codexPromptCacheCarry.items, key)
+			return codexPromptCacheCarryEntry{}, false
+		}
+		return entry, true
+	}
+	entry, ok := load(cacheKey, ids.windowID)
+	if !ok && ids.extendedTurnIdentity && ids.windowNumber > 0 {
+		// 仅从同账号、同 session/thread 的直接前一窗口继承，不向未来窗口借键。
+		// 每个窗口保留独立绑定，旧窗口迟到或重试不会覆盖新窗口的显式键。
+		previousWindow := fmt.Sprintf("%s:%d", ids.threadID, ids.windowNumber-1)
+		entry, ok = load(codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, previousWindow), previousWindow)
+	}
+	if !ok {
 		return codexPromptCacheCarryEntry{}, false
 	}
+	entry.WindowID = ids.windowID
 	entry.LastUsedAt = now
-	codexPromptCacheCarry.items[cacheKey] = entry
+	storeCodexPromptCacheKeyLocked(cacheKey, entry)
 	return entry, true
 }
 
@@ -735,6 +755,17 @@ func normalizeCodexWindowID(raw, threadID string) string {
 	return threadID + ":0"
 }
 
+// 仅窗口标记缺省识别会话时去掉代数，避免压缩把同一个线程当成新会话。
+func codexSessionSeedFromWindowID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if idx := strings.LastIndex(raw, ":"); idx > 0 {
+		if _, err := strconv.ParseUint(strings.TrimSpace(raw[idx+1:]), 10, 64); err == nil {
+			return raw[:idx]
+		}
+	}
+	return raw
+}
+
 func codexWindowGeneration(windowID string) uint64 {
 	windowID = strings.TrimSpace(windowID)
 	if idx := strings.LastIndex(windowID, ":"); idx >= 0 {
@@ -892,18 +923,18 @@ func resolveConvergedThreadID(account *Account, clientSessionID string) string {
 	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
 }
 
-// resolveCodexRootTurnID 遵守回合树语义：现代顶层回合使用新 turn_id 作根，
-// 子回合继承已有根；仅提供 parent 却缺少 root 时保持缺失，不猜测树根。
+// resolveCodexRootTurnID 仅处理客户端明确提供的根，不因缺少 parent 而补全 root。
+// 已有顶层根对齐出站 turn_id，子回合继承已有根；缺失始终保持缺失。
 // 旧客户端由外层版本门控处理，不新增扩展回合字段。
 func resolveCodexRootTurnID(originalRootTurnID, parentTurnID, turnID string) string {
 	originalRootTurnID = strings.TrimSpace(originalRootTurnID)
 	parentTurnID = strings.TrimSpace(parentTurnID)
 	turnID = strings.TrimSpace(turnID)
-	if parentTurnID == "" {
-		return strings.TrimSpace(turnID)
-	}
 	if originalRootTurnID == "" {
 		return ""
+	}
+	if parentTurnID == "" {
+		return turnID
 	}
 	return originalRootTurnID
 }
@@ -1115,7 +1146,11 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		resolveCodexFingerprintWindow(account, source, ids)
 		if strings.TrimSpace(source.promptCacheKey) != "" {
 			ids.promptCacheKey = strings.TrimSpace(source.promptCacheKey)
-			rememberCodexPromptCacheKey(account, ids, ids.promptCacheKey, source.promptCacheKeyInBody)
+			// 旧 compact 的 Header-only 临时键不属于普通 Responses 缓存绑定。
+			// 禁止其覆盖此前明确的 Body 键及载体，读写遵守同一入口门控。
+			if source.allowPromptCacheCarry {
+				rememberCodexPromptCacheKey(account, ids, ids.promptCacheKey, source.promptCacheKeyInBody)
+			}
 		} else if source.allowPromptCacheCarry {
 			if carried, ok := loadCodexPromptCacheKey(account, ids); ok {
 				ids.promptCacheKey = carried.Key
@@ -1276,7 +1311,7 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 			extractCodexStringField(clientMetadata, "session_id"),
 			extractCodexTurnMetadataField(embeddedTurnMetadata, "session_id"),
 			extractCodexTurnMetadataField(headerTurnMetadata, "session_id"),
-			extractCodexStringField(clientMetadata, "x-codex-window-id"),
+			codexSessionSeedFromWindowID(extractCodexStringField(clientMetadata, "x-codex-window-id")),
 			extractCodexStringField(reqBody, "prompt_cache_key"),
 		} {
 			if value != "" {
@@ -1404,7 +1439,7 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 			read("client_metadata.session_id"),
 			extractCodexTurnMetadataField(embeddedTurnMetadata, "session_id"),
 			extractCodexTurnMetadataField(headerTurnMetadata, "session_id"),
-			read("client_metadata.x-codex-window-id"),
+			codexSessionSeedFromWindowID(read("client_metadata.x-codex-window-id")),
 			read("prompt_cache_key"),
 		} {
 			if value != "" {

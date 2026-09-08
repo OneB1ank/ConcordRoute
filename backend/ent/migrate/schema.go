@@ -1774,6 +1774,7 @@ var (
 		{Name: "name", Type: field.TypeString, Unique: true, Size: 100},
 		{Name: "description", Type: field.TypeString, Nullable: true, Size: 2147483647},
 		{Name: "enable_grease", Type: field.TypeBool, Default: false},
+		{Name: "rustls_native_order", Type: field.TypeBool, Default: false},
 		{Name: "cipher_suites", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "curves", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "point_formats", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},

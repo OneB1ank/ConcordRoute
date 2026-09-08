@@ -592,7 +592,7 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) observeUpstreamActivity(msgTyp
 	if c == nil {
 		return
 	}
-	if msgType == coderws.MessageText && openAIWSPassthroughIsTerminalOutput(payload) {
+	if openAIWSPassthroughIsTerminalFrame(msgType, payload) {
 		c.disarmDeadline(0)
 		return
 	}
@@ -679,6 +679,12 @@ func openAIWSPassthroughIsTerminalOutput(payload []byte) bool {
 	default:
 		return false
 	}
+}
+
+// 与底层 relay 接受的帧类型保持一致，二进制终态同样结束本轮超时与写入生命周期。
+func openAIWSPassthroughIsTerminalFrame(msgType coderws.MessageType, payload []byte) bool {
+	return (msgType == coderws.MessageText || msgType == coderws.MessageBinary) &&
+		openAIWSPassthroughIsTerminalOutput(payload)
 }
 
 func openAIWSPassthroughStartsTurnOutput(eventType string) bool {
@@ -1331,13 +1337,30 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					hooks.OnUpstreamError(turnNo, turnPayload.OriginalModel, warning.StatusCode, warning.ResponseBody, warning.Message)
 				}
 			},
-			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
+			OnTurnSettled: func(msgType coderws.MessageType) {
 				turnNo := int(completedTurns.Add(1))
 				turnPayload := turnPayloads.Pop()
 				currentTurnOutputStarted.Store(false)
 				previousResponseRecoveryTried.Store(false)
-				turnPayloadForWrite := turnPayload
-				terminalWritePayload.Store(&turnPayloadForWrite)
+				terminalWritePayload.Store(&turnPayload)
+				if msgType == coderws.MessageBinary && hooks != nil && hooks.AfterTurn != nil {
+					// 二进制终态仍须释放处理器的并发槽位；Result 保持 nil，不伪造用量或成功记录。
+					hooks.AfterTurn(OpenAIWSTurnCapture{
+						Turn:               turnNo,
+						RequestBody:        turnPayload.RequestBody,
+						OriginalModel:      turnPayload.OriginalModel,
+						PreviousResponseID: turnPayload.PreviousResponseID,
+						PayloadSource:      turnPayload.Source,
+					})
+				}
+			},
+			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
+				// 生命周期先出队，再使用同一份请求快照记账，避免无 ID 终态造成轮次错位。
+				turnNo := int(completedTurns.Load())
+				turnPayload := openAIWSTurnPayload{}
+				if completed := terminalWritePayload.Load(); completed != nil {
+					turnPayload = *completed
+				}
 				turnOriginalModel := strings.TrimSpace(turnPayload.OriginalModel)
 				if turnOriginalModel == "" {
 					turnOriginalModel = turn.RequestModel
@@ -1391,12 +1414,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 			},
 			BeforeClientWrite: func(msgType coderws.MessageType, payload []byte) {
-				if msgType == coderws.MessageText && openAIWSPassthroughIsTerminalOutput(payload) {
+				if openAIWSPassthroughIsTerminalFrame(msgType, payload) {
 					turnLifecycle.beginTerminalWrite()
 				}
 			},
 			AfterClientWrite: func(msgType coderws.MessageType, payload []byte, writeErr error) {
-				if msgType == coderws.MessageText && openAIWSPassthroughIsTerminalOutput(payload) {
+				if openAIWSPassthroughIsTerminalFrame(msgType, payload) {
+					terminalWritePayload.Store(nil)
 					turnLifecycle.finishTerminalWrite(writeErr == nil, clientFrameConn.markTurnCompleted)
 				}
 			},
@@ -1433,6 +1457,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						false,
 						s.shouldFailoverOpenAIWSError(account, terminalPolicy.StatusCode, payload),
 					) {
+						if completedTurns.Load() > 0 {
+							// 后续轮次交给客户端重连，避免 handler 重放已完成的首轮请求。
+							return NewOpenAIWSClientCloseError(
+								coderws.StatusTryAgainLater,
+								"upstream request failed; please reconnect",
+								errors.New("later passthrough turn failed before output"),
+							)
+						}
 						return newOpenAIUpstreamFailoverError(
 							terminalPolicy.StatusCode,
 							handshakeHeaders,
@@ -1498,6 +1530,17 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						truncateOpenAIWSLogValue(errTypeRaw, openAIWSLogValueMaxLen),
 						truncateOpenAIWSLogValue(errMsgRaw, openAIWSLogValueMaxLen),
 					)
+					if completedTurns.Load() > 0 {
+						// 限流副作用已写入；后续轮次返回重连信号，不重放整条会话。
+						reason := "upstream request failed; please reconnect"
+						if errorStatus == http.StatusTooManyRequests {
+							reason = "upstream rate limit exceeded; please reconnect"
+						}
+						return NewOpenAIWSClientCloseError(
+							coderws.StatusTryAgainLater, reason,
+							errors.New("later passthrough turn failed before output"),
+						)
+					}
 					return newOpenAIUpstreamFailoverError(
 						errorStatus,
 						handshakeHeaders,

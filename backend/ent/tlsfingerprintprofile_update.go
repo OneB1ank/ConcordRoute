@@ -83,6 +83,20 @@ func (_u *TLSFingerprintProfileUpdate) SetNillableEnableGrease(v *bool) *TLSFing
 	return _u
 }
 
+// SetRustlsNativeOrder sets the "rustls_native_order" field.
+func (_u *TLSFingerprintProfileUpdate) SetRustlsNativeOrder(v bool) *TLSFingerprintProfileUpdate {
+	_u.mutation.SetRustlsNativeOrder(v)
+	return _u
+}
+
+// SetNillableRustlsNativeOrder sets the "rustls_native_order" field if the given value is not nil.
+func (_u *TLSFingerprintProfileUpdate) SetNillableRustlsNativeOrder(v *bool) *TLSFingerprintProfileUpdate {
+	if v != nil {
+		_u.SetRustlsNativeOrder(*v)
+	}
+	return _u
+}
+
 // SetCipherSuites sets the "cipher_suites" field.
 func (_u *TLSFingerprintProfileUpdate) SetCipherSuites(v []uint16) *TLSFingerprintProfileUpdate {
 	_u.mutation.SetCipherSuites(v)
@@ -323,6 +337,9 @@ func (_u *TLSFingerprintProfileUpdate) sqlSave(ctx context.Context) (_node int, 
 	if value, ok := _u.mutation.EnableGrease(); ok {
 		_spec.SetField(tlsfingerprintprofile.FieldEnableGrease, field.TypeBool, value)
 	}
+	if value, ok := _u.mutation.RustlsNativeOrder(); ok {
+		_spec.SetField(tlsfingerprintprofile.FieldRustlsNativeOrder, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.CipherSuites(); ok {
 		_spec.SetField(tlsfingerprintprofile.FieldCipherSuites, field.TypeJSON, value)
 	}
@@ -492,6 +509,20 @@ func (_u *TLSFingerprintProfileUpdateOne) SetEnableGrease(v bool) *TLSFingerprin
 func (_u *TLSFingerprintProfileUpdateOne) SetNillableEnableGrease(v *bool) *TLSFingerprintProfileUpdateOne {
 	if v != nil {
 		_u.SetEnableGrease(*v)
+	}
+	return _u
+}
+
+// SetRustlsNativeOrder sets the "rustls_native_order" field.
+func (_u *TLSFingerprintProfileUpdateOne) SetRustlsNativeOrder(v bool) *TLSFingerprintProfileUpdateOne {
+	_u.mutation.SetRustlsNativeOrder(v)
+	return _u
+}
+
+// SetNillableRustlsNativeOrder sets the "rustls_native_order" field if the given value is not nil.
+func (_u *TLSFingerprintProfileUpdateOne) SetNillableRustlsNativeOrder(v *bool) *TLSFingerprintProfileUpdateOne {
+	if v != nil {
+		_u.SetRustlsNativeOrder(*v)
 	}
 	return _u
 }
@@ -765,6 +796,9 @@ func (_u *TLSFingerprintProfileUpdateOne) sqlSave(ctx context.Context) (_node *T
 	}
 	if value, ok := _u.mutation.EnableGrease(); ok {
 		_spec.SetField(tlsfingerprintprofile.FieldEnableGrease, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RustlsNativeOrder(); ok {
+		_spec.SetField(tlsfingerprintprofile.FieldRustlsNativeOrder, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CipherSuites(); ok {
 		_spec.SetField(tlsfingerprintprofile.FieldCipherSuites, field.TypeJSON, value)

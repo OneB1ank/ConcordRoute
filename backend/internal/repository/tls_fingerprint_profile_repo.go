@@ -50,7 +50,8 @@ func (r *tlsFingerprintProfileRepository) GetByID(ctx context.Context, id int64)
 func (r *tlsFingerprintProfileRepository) Create(ctx context.Context, p *model.TLSFingerprintProfile) (*model.TLSFingerprintProfile, error) {
 	builder := r.client.TLSFingerprintProfile.Create().
 		SetName(p.Name).
-		SetEnableGrease(p.EnableGREASE)
+		SetEnableGrease(p.EnableGREASE).
+		SetRustlsNativeOrder(p.RustlsNativeOrder)
 
 	if p.Description != nil {
 		builder.SetDescription(*p.Description)
@@ -94,7 +95,8 @@ func (r *tlsFingerprintProfileRepository) Create(ctx context.Context, p *model.T
 func (r *tlsFingerprintProfileRepository) Update(ctx context.Context, p *model.TLSFingerprintProfile) (*model.TLSFingerprintProfile, error) {
 	builder := r.client.TLSFingerprintProfile.UpdateOneID(p.ID).
 		SetName(p.Name).
-		SetEnableGrease(p.EnableGREASE)
+		SetEnableGrease(p.EnableGREASE).
+		SetRustlsNativeOrder(p.RustlsNativeOrder)
 
 	if p.Description != nil {
 		builder.SetDescription(*p.Description)
@@ -167,6 +169,7 @@ func (r *tlsFingerprintProfileRepository) toModel(e *ent.TLSFingerprintProfile) 
 		Name:                e.Name,
 		Description:         e.Description,
 		EnableGREASE:        e.EnableGrease,
+		RustlsNativeOrder:   e.RustlsNativeOrder,
 		CipherSuites:        e.CipherSuites,
 		Curves:              e.Curves,
 		PointFormats:        e.PointFormats,

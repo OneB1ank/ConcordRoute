@@ -309,12 +309,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
 			if trimmedPayload != "[DONE]" {
-				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
 					usage = *u
 				}
 				streamAccumulator.ObservePayload(payload)
-				if firstTokenMs == nil && !usageOnlyChunk {
+				if firstTokenMs == nil && openAIChatStreamHasVisibleOutput(payload) {
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
 				}
@@ -377,6 +376,28 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		FirstTokenMs:                firstTokenMs,
 		ResponseBody:                streamAccumulator.ResponseBody(&usage),
 	}, nil
+}
+
+// 原生 Chat 流只以正文、思考、拒答、音频或工具参数开始计时，排除角色帧和空结束帧。
+func openAIChatStreamHasVisibleOutput(payload string) bool {
+	if !gjson.Valid(payload) {
+		return false
+	}
+	for _, choice := range gjson.Get(payload, "choices").Array() {
+		delta := choice.Get("delta")
+		for _, path := range []string{"content", "reasoning_content", "reasoning", "refusal", "audio.data", "audio.transcript", "function_call.arguments"} {
+			value := delta.Get(path)
+			if value.Type == gjson.String && value.Str != "" {
+				return true
+			}
+		}
+		for _, call := range delta.Get("tool_calls").Array() {
+			if call.Get("function.arguments").String() != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。

@@ -23,6 +23,8 @@ const (
 	FieldDescription = "description"
 	// FieldEnableGrease holds the string denoting the enable_grease field in the database.
 	FieldEnableGrease = "enable_grease"
+	// FieldRustlsNativeOrder holds the string denoting the rustls_native_order field in the database.
+	FieldRustlsNativeOrder = "rustls_native_order"
 	// FieldCipherSuites holds the string denoting the cipher_suites field in the database.
 	FieldCipherSuites = "cipher_suites"
 	// FieldCurves holds the string denoting the curves field in the database.
@@ -53,6 +55,7 @@ var Columns = []string{
 	FieldName,
 	FieldDescription,
 	FieldEnableGrease,
+	FieldRustlsNativeOrder,
 	FieldCipherSuites,
 	FieldCurves,
 	FieldPointFormats,
@@ -85,6 +88,8 @@ var (
 	NameValidator func(string) error
 	// DefaultEnableGrease holds the default value on creation for the "enable_grease" field.
 	DefaultEnableGrease bool
+	// DefaultRustlsNativeOrder holds the default value on creation for the "rustls_native_order" field.
+	DefaultRustlsNativeOrder bool
 )
 
 // OrderOption defines the ordering options for the TLSFingerprintProfile queries.
@@ -118,4 +123,9 @@ func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 // ByEnableGrease orders the results by the enable_grease field.
 func ByEnableGrease(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldEnableGrease, opts...).ToFunc()
+}
+
+// ByRustlsNativeOrder orders the results by the rustls_native_order field.
+func ByRustlsNativeOrder(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRustlsNativeOrder, opts...).ToFunc()
 }

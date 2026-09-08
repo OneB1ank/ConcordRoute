@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -3452,7 +3453,7 @@ func TestNormalizeOpenAICompactRequestBodyPreservesCurrentCodexPayloadFields(t *
 	require.Equal(t, "resp_123", gjson.GetBytes(normalized, "previous_response_id").String())
 	require.False(t, gjson.GetBytes(normalized, "store").Exists())
 	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
-	require.False(t, gjson.GetBytes(normalized, "prompt_cache_key").Exists())
+	require.Equal(t, "cache_123", gjson.GetBytes(normalized, "prompt_cache_key").String())
 }
 
 func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *testing.T) {
@@ -3572,7 +3573,13 @@ func TestOpenAICompactStagedPromptCacheKeyPreservesStickyHashAndUpstreamSession(
 	normalizedBody, changed, err := normalizeOpenAICompactRequestBody(originalBody)
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.False(t, gjson.GetBytes(normalizedBody, "prompt_cache_key").Exists())
+	require.Equal(t, "stable-compact-session", gjson.GetBytes(normalizedBody, "prompt_cache_key").String())
+	// 兼顾旧请求已经删掉 Body 键、只剩暂存种子的回退路径，保留原测试覆盖。
+	var stagedOnlyBody map[string]any
+	require.NoError(t, json.Unmarshal(normalizedBody, &stagedOnlyBody))
+	delete(stagedOnlyBody, "prompt_cache_key")
+	normalizedBody, err = json.Marshal(stagedOnlyBody)
+	require.NoError(t, err)
 
 	normalRecorder := httptest.NewRecorder()
 	normalContext, _ := gin.CreateTestContext(normalRecorder)

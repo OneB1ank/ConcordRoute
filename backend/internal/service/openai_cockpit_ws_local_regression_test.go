@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -36,7 +37,16 @@ func TestLocalCockpitWebSocketCompactionUpdatesFrameIdentity(t *testing.T) {
 	}
 }
 
-func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode string, compact bool) {
+// 实际两个 WS 入口均验证压缩后省略键、root 和 parent，不依赖只有显式键的用例。
+func TestLocalCockpitWebSocketCompactionCarriesMissingCacheAndClearsRoot(t *testing.T) {
+	for _, ingressMode := range []string{OpenAIWSIngressModePassthrough, OpenAIWSIngressModeCtxPool} {
+		t.Run(ingressMode, func(t *testing.T) {
+			runLocalCockpitWebSocketIngressIdentityTest(t, ingressMode, true, true)
+		})
+	}
+}
+
+func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode string, compact bool, omitAfterCompact ...bool) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{}
@@ -84,7 +94,7 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 		Extra: map[string]any{
 			"openai_oauth_responses_websockets_v2_mode": ingressMode,
 			codexFingerprintModeExtraKey:                "cockpit",
-			CodexFingerprintSeedExtraKey:                "b8ad8772-3594-4a7a-9f5b-d7394024a8c3",
+			CodexFingerprintSeedExtraKey:                uuid.NewString(),
 		},
 	}
 
@@ -143,6 +153,19 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 			*frame, err = sjson.SetBytes(*frame, "prompt_cache_key", []string{"client-cache-a", "client-cache-b"}[index])
 			require.NoError(t, err)
 		}
+	}
+	omit := len(omitAfterCompact) > 0 && omitAfterCompact[0]
+	if omit {
+		var err error
+		secondMessage, err = sjson.DeleteBytes(secondMessage, "prompt_cache_key")
+		require.NoError(t, err)
+		metadata := gjson.GetBytes(secondMessage, "client_metadata.x-codex-turn-metadata").String()
+		for _, key := range []string{"parent_turn_id", "root_turn_id"} {
+			metadata, err = sjson.Delete(metadata, key)
+			require.NoError(t, err)
+		}
+		secondMessage, err = sjson.SetBytes(secondMessage, "client_metadata.x-codex-turn-metadata", metadata)
+		require.NoError(t, err)
 	}
 	expectedIDs := bindCodexFingerprintIDsToAccount(
 		resolveCodexFingerprintIDsFromRawRequest(account, clientHeaders, firstMessage),
@@ -245,7 +268,7 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 
 	forwardedSecond := requestToJSONString(upstreamConn.writes[1])
 	require.Equal(t, "0.153.3", gjson.Get(forwardedSecond, "client_metadata.codex_version").String())
-	if compact {
+	if compact && !omit {
 		require.Equal(t, "client-cache-b", gjson.Get(forwardedSecond, "prompt_cache_key").String())
 	} else {
 		require.Equal(t, expectedIDs.promptCacheKey, gjson.Get(forwardedSecond, "prompt_cache_key").String())
@@ -259,10 +282,17 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 		require.NotEqual(t, upstreamTurnID, secondTurnID, "新的客户端回合需独立身份，连接握手保持首帧快照")
 		require.Equal(t, expectedIDs.threadID+":1", gjson.Get(forwardedSecond, "client_metadata.x-codex-window-id").String())
 		require.Equal(t, gjson.Get(forwarded, "client_metadata.context_window_id").String(), gjson.Get(forwardedSecond, "client_metadata.previous_window_id").String())
-		for _, frame := range []string{forwarded, forwardedSecond} {
+		for index, frame := range []string{forwarded, forwardedSecond} {
 			require.False(t, gjson.Get(frame, "parent_turn_id").Exists())
 			require.False(t, gjson.Get(frame, "root_turn_id").Exists())
-			require.Equal(t, "client-parent", gjson.Get(frame, "client_metadata.parent_turn_id").String())
+			if omit && index == 1 {
+				require.False(t, gjson.Get(frame, "client_metadata.root_turn_id").Exists())
+				require.False(t, gjson.Get(frame, "client_metadata.parent_turn_id").Exists())
+				embedded := gjson.Get(frame, "client_metadata.x-codex-turn-metadata").String()
+				require.False(t, gjson.Get(embedded, "root_turn_id").Exists())
+			} else {
+				require.Equal(t, "client-parent", gjson.Get(frame, "client_metadata.parent_turn_id").String())
+			}
 			var wire struct {
 				Metadata map[string]string `json:"client_metadata"`
 			}

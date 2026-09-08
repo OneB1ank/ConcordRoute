@@ -66,7 +66,7 @@ func TestOpenAIOAuthCompactConvergesFingerprintHeadersWithoutChangingSchema(t *t
 			require.Equal(t, uuid.Version(7), parsedThread.Version())
 			require.Equal(t, uuid.RFC4122, parsedThread.Variant())
 			require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata").Exists())
-			require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
+			require.Equal(t, "client-cache", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 		})
 	}
 }

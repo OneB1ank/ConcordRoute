@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -322,8 +323,13 @@ func startPassthroughLifecycleServer(
 	controlCtx context.Context,
 	svc *OpenAIGatewayService,
 	account *Account,
+	hooks ...*OpenAIWSIngressHooks,
 ) (*httptest.Server, <-chan error) {
 	t.Helper()
+	var ingressHooks *OpenAIWSIngressHooks
+	if len(hooks) > 0 {
+		ingressHooks = hooks[0]
+	}
 	serverErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
@@ -354,7 +360,7 @@ func startPassthroughLifecycleServer(
 		req := r.Clone(controlCtx)
 		req.Header = req.Header.Clone()
 		ginCtx.Request = req
-		serverErr <- svc.ProxyResponsesWebSocketFromClient(controlCtx, ginCtx, conn, account, "sk-test", firstMessage, nil)
+		serverErr <- svc.ProxyResponsesWebSocketFromClient(controlCtx, ginCtx, conn, account, "sk-test", firstMessage, ingressHooks)
 	}))
 	return server, serverErr
 }
@@ -854,5 +860,203 @@ func TestPassthroughLifecycle_SecondTurnTimeoutIsNotFailoverSafe(t *testing.T) {
 		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
 	case <-time.After(2500 * time.Millisecond):
 		t.Fatal("second turn first semantic output was left unbounded")
+	}
+}
+
+// 上游核心修复回归：保留现有协议行为并锁定原故障边界。
+func TestPassthroughLifecycle_LaterTurnPreOutputRateLimitRequestsReconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancelControl := context.WithCancelCause(context.Background())
+	defer cancelControl(context.Canceled)
+	upstream := newStagedPassthroughConn()
+	account := passthroughLifecycleAccount()
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
+	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
+	svc.accountRepo = repo
+	svc.rateLimitService = &RateLimitService{accountRepo: repo}
+
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	clientConn := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = clientConn.CloseNow() }()
+	firstRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+	require.Equal(t, "response.create", gjson.GetBytes(firstRequest, "type").String())
+
+	upstream.Send(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+	completed, err := readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
+	cancelWrite()
+	require.NoError(t, err)
+	secondRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+	require.Equal(t, "response.create", gjson.GetBytes(secondRequest, "type").String())
+
+	resetAt := time.Now().Add(90 * time.Minute).Unix()
+	upstream.Send(fmt.Sprintf(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":%d}}`, resetAt))
+	_, err = readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	var websocketCloseErr coderws.CloseError
+	require.ErrorAs(t, err, &websocketCloseErr)
+	require.Equal(t, coderws.StatusTryAgainLater, websocketCloseErr.Code)
+	require.Equal(t, "upstream rate limit exceeded; please reconnect", websocketCloseErr.Reason)
+	require.Len(t, repo.rateLimitCalls, 1)
+	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
+
+	select {
+	case err := <-serverErr:
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
+	case <-time.After(time.Second):
+		t.Fatal("later-turn rate limit did not terminate passthrough")
+	}
+	select {
+	case replay := <-upstream.writes:
+		t.Fatalf("later-turn reconnect must not replay the retained first request: %s", replay)
+	default:
+	}
+}
+
+// 下一轮服务端失败也只请求重连，避免按已保留首帧进行整会话重放。
+func TestPassthroughLifecycle_LaterTurnPreOutputFailureRequestsReconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancelControl := context.WithCancelCause(context.Background())
+	defer cancelControl(context.Canceled)
+	upstream := newStagedPassthroughConn()
+	account := passthroughLifecycleAccount()
+	// 此用例显式选择会重试 502 的池模式，普通账号原有 failed 透传策略保持不变。
+	account.Credentials["pool_mode"] = true
+	account.Credentials["pool_mode_retry_status_codes"] = []any{502}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
+	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
+	svc.accountRepo = repo
+	svc.rateLimitService = &RateLimitService{accountRepo: repo}
+
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	clientConn := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = clientConn.CloseNow() }()
+	firstRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+	require.Equal(t, "response.create", gjson.GetBytes(firstRequest, "type").String())
+
+	upstream.Send(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+	completed, err := readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
+	cancelWrite()
+	require.NoError(t, err)
+	secondRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+	require.Equal(t, "response.create", gjson.GetBytes(secondRequest, "type").String())
+
+	upstream.Send(`{"type":"response.failed","response":{"id":"resp_failed_second","error":{"code":"server_error","message":"upstream unavailable"}}}`)
+	_, err = readPassthroughLifecycleFrame(t, clientConn, time.Second)
+	var websocketCloseErr coderws.CloseError
+	require.ErrorAs(t, err, &websocketCloseErr)
+	require.Equal(t, coderws.StatusTryAgainLater, websocketCloseErr.Code)
+	require.Equal(t, "upstream request failed; please reconnect", websocketCloseErr.Reason)
+	require.Empty(t, repo.rateLimitCalls)
+
+	select {
+	case err := <-serverErr:
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
+	case <-time.After(time.Second):
+		t.Fatal("later-turn rate limit did not terminate passthrough")
+	}
+	select {
+	case replay := <-upstream.writes:
+		t.Fatalf("later-turn reconnect must not replay the retained first request: %s", replay)
+	default:
+	}
+}
+
+// 二次复查：完整 adapter 接收二进制终止后，应放行下一轮，而不是误报重叠请求。
+func TestOpenAIWSPassthroughBinaryTerminalAllowsNextTurn(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancelControl := context.WithCancelCause(context.Background())
+	defer cancelControl(context.Canceled)
+	upstream := newStagedPassthroughConn()
+	account := passthroughLifecycleAccount()
+	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	client := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = client.CloseNow() }()
+	require.NotEmpty(t, requirePassthroughUpstreamWrite(t, upstream, time.Second))
+	upstream.frames <- stagedPassthroughFrame{
+		messageType: coderws.MessageBinary,
+		payload:     []byte(`{"type":"response.completed","response":{"id":"resp_binary","status":"completed"}}`),
+	}
+	readCtx, cancelRead := context.WithTimeout(context.Background(), time.Second)
+	kind, body, err := client.Read(readCtx)
+	cancelRead()
+	require.NoError(t, err)
+	require.Equal(t, coderws.MessageBinary, kind)
+	require.Equal(t, "response.completed", gjson.GetBytes(body, "type").String())
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+	err = client.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1"}`))
+	cancelWrite()
+	require.NoError(t, err)
+	nextReadCtx, cancelNextRead := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelNextRead()
+	clientResult := make(chan error, 1)
+	go func() {
+		_, _, readErr := client.Read(nextReadCtx)
+		clientResult <- readErr
+	}()
+	select {
+	case second := <-upstream.writes:
+		require.Equal(t, "response.create", gjson.GetBytes(second, "type").String())
+	case err := <-clientResult:
+		t.Fatalf("二进制首轮已终止，第二轮触发错误关连接：%v", err)
+	case err := <-serverErr:
+		t.Fatalf("二进制首轮已终止，第二轮仍被 adapter 拒绝：%v", err)
+	case <-time.After(time.Second):
+		t.Fatal("二进制首轮已终止，第二轮未转发")
+	}
+}
+
+// 二次复查：无 response.id 的首轮终态之后，第二轮错误仍应要求重连，而不是首轮 failover。
+func TestOpenAIWSPassthroughIDLessTerminalLaterFailureReconnects(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancelControl := context.WithCancelCause(context.Background())
+	defer cancelControl(context.Canceled)
+	upstream := newStagedPassthroughConn()
+	account := passthroughLifecycleAccount()
+	account.Credentials["pool_mode"] = true
+	account.Credentials["pool_mode_retry_status_codes"] = []any{502}
+	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
+	defer server.Close()
+	client := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = client.CloseNow() }()
+	require.NotEmpty(t, requirePassthroughUpstreamWrite(t, upstream, time.Second))
+	upstream.Send(`{"type":"response.completed","response":{"status":"completed","model":"gpt-5.1"}}`)
+	first, err := readPassthroughLifecycleFrame(t, client, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(first, "type").String())
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+	err = client.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"second turn"}`))
+	cancelWrite()
+	require.NoError(t, err)
+	second := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+	require.Equal(t, "second turn", gjson.GetBytes(second, "input").String())
+	upstream.Send(`{"type":"response.failed","response":{"id":"resp_second","error":{"code":"server_error","message":"upstream unavailable"}}}`)
+	_, _ = readPassthroughLifecycleFrame(t, client, time.Second)
+	select {
+	case err := <-serverErr:
+		var failover *UpstreamFailoverError
+		require.NotErrorAs(t, err, &failover, "第二轮错误不应退回允许 handler 重放首帧的 failover 分支")
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
+	case <-time.After(2 * time.Second):
+		t.Fatal("第二轮错误未退出")
 	}
 }

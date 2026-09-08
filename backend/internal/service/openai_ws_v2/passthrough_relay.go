@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 )
@@ -71,7 +72,10 @@ type RelayOptions struct {
 	StartClientAfterFirstDownstream bool
 	OnUsageParseFailure             func(eventType string, usageRaw string)
 	// OnUpstreamEvent 在每个上游文本事件解析出 type 后回调，由 service 层统一筛选 warning 事件。
-	OnUpstreamEvent   func(eventType string, payload []byte)
+	OnUpstreamEvent func(eventType string, payload []byte)
+	// OnTurnSettled 先推进所有已识别终态的生命周期，不依赖响应 ID 或用量解析。
+	// OnTurnComplete 随后仅对文本观测结果回调，保留二进制帧不纳入统计的约定。
+	OnTurnSettled     func(msgType coderws.MessageType)
 	OnTurnComplete    func(turn RelayTurnResult)
 	BeforeWriteClient func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error
 	BeforeClientWrite func(msgType coderws.MessageType, payload []byte)
@@ -93,6 +97,10 @@ type RelayTraceEvent struct {
 }
 
 type relayState struct {
+	// pendingTurns 覆盖请求已发送、尚未获得响应 ID 的空档；不参与首字计时。
+	pendingTurns atomic.Int64
+	// turnOutputState 高位为轮次代数，最低位为本轮已写出，避免上一轮迟到的写完成覆盖新轮次。
+	turnOutputState      atomic.Uint64
 	usage                Usage
 	requestModel         string
 	lastResponseID       string
@@ -158,6 +166,9 @@ func Relay(
 	}
 	startAt := nowFn()
 	state := &relayState{requestModel: result.RequestModel}
+	if isClientResponseCreateFrame(firstMessageType, firstClientMessage) {
+		state.beginPendingTurn()
+	}
 	onTrace := options.OnTrace
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
@@ -173,6 +184,13 @@ func Relay(
 		writeCtx, cancel := context.WithTimeout(relayCtx, writeTimeout)
 		defer cancel()
 		return upstreamConn.WriteFrame(writeCtx, msgType, payload)
+	}
+	writeNextTurnUpstream := func(msgType coderws.MessageType, payload []byte) error {
+		if isClientResponseCreateFrame(msgType, payload) {
+			// 在写入前登记，保证上游立即应答时已经能观察到当前轮次。
+			state.beginPendingTurn()
+		}
+		return writeUpstream(msgType, payload)
 	}
 	writeClient := func(msgType coderws.MessageType, payload []byte) error {
 		// 下行写超时故意不挂在 relayCtx 上：coder/websocket 在已武装的 write
@@ -231,7 +249,7 @@ func Relay(
 		if !clientReaderStarted.CompareAndSwap(false, true) {
 			return
 		}
-		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeNextTurnUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
 	}
 	if !options.StartClientAfterFirstDownstream {
 		startClientReader()
@@ -245,6 +263,7 @@ func Relay(
 		state,
 		options.OnUsageParseFailure,
 		options.OnUpstreamEvent,
+		options.OnTurnSettled,
 		options.OnTurnComplete,
 		options.BeforeWriteClient,
 		options.BeforeClientWrite,
@@ -457,6 +476,7 @@ func runUpstreamToClient(
 	state *relayState,
 	onUsageParseFailure func(eventType string, usageRaw string),
 	onUpstreamEvent func(eventType string, payload []byte),
+	onTurnSettled func(msgType coderws.MessageType),
 	onTurnComplete func(turn RelayTurnResult),
 	beforeWriteClient func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error,
 	beforeClientWrite func(msgType coderws.MessageType, payload []byte),
@@ -476,7 +496,7 @@ func runUpstreamToClient(
 			graceful := isDisconnectError(err)
 			// 干净关闭只代表传输层完成关闭握手；如果当前已有未完成的
 			// Responses turn，仍必须收到终止事件才算成功。
-			if graceful && state != nil && len(state.turnTimingByID) > 0 {
+			if graceful && state.hasUnfinishedTurn() {
 				graceful = false
 				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
 			}
@@ -496,8 +516,16 @@ func runUpstreamToClient(
 			return
 		}
 		markActivity()
+		turnOutputState := uint64(0)
+		if state != nil {
+			turnOutputState = state.turnOutputState.Load()
+		}
 		if beforeWriteClient != nil {
-			if err := beforeWriteClient(msgType, payload, wroteDownstream); err != nil {
+			wroteInTurn := wroteDownstream
+			if state != nil {
+				wroteInTurn = turnOutputState&1 != 0
+			}
+			if err := beforeWriteClient(msgType, payload, wroteInTurn); err != nil {
 				if errors.Is(err, ErrDropDownstreamFrame) {
 					if droppedFrames != nil {
 						droppedFrames.Add(1)
@@ -529,11 +557,20 @@ func runUpstreamToClient(
 			}
 		}
 		observedEvent := observedUpstreamEvent{}
+		terminal := false
 		switch msgType {
 		case coderws.MessageText:
 			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure, onUpstreamEvent)
+			terminal = observedEvent.terminal
 		case coderws.MessageBinary:
-			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
+			// 二进制帧仍不解析用量，但其中明确的终止事件需要结算连接生命周期。
+			terminal = isTerminalEvent(strings.TrimSpace(gjson.GetBytes(payload, "type").String()))
+			if terminal {
+				state.settleUnobservedTurn(strings.TrimSpace(gjson.GetBytes(payload, "response.id").String()))
+			}
+		}
+		if terminal && onTurnSettled != nil {
+			onTurnSettled(msgType)
 		}
 		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
@@ -547,7 +584,7 @@ func runUpstreamToClient(
 				PayloadBytes:    len(payload),
 				WroteDownstream: wroteDownstream,
 			})
-			if observedEvent.terminal {
+			if terminal {
 				exitCh <- relayExitSignal{
 					stage:           "drain_terminal",
 					graceful:        true,
@@ -578,6 +615,10 @@ func runUpstreamToClient(
 			return
 		}
 		wroteDownstream = true
+		if state != nil {
+			// 下行写完成期间客户端可能已开始下一轮，仅更新写入所属的那一代。
+			state.turnOutputState.CompareAndSwap(turnOutputState, turnOutputState|1)
+		}
 		if afterWriteClient != nil {
 			afterWriteClient(msgType, payload)
 		}
@@ -697,17 +738,33 @@ func observeUpstreamMessage(
 		}
 	}
 	now := nowFn()
+	if eventType == "error" && responseID == "" && state.activeTurn == nil {
+		// 首响应前的明确拒绝不是无响应断流；仍透传错误，不合成成功终止事件。
+		state.consumePendingTurn()
+	}
 
-	if state.firstTokenMs == nil && isTokenEvent(eventType) {
+	// 仅统计采用内容判断；不修改透传帧、流控制或终止事件分类。
+	// 已有首内容样本的轮次不再扫描后续大帧，避免统计本身增加转发开销。
+	turnTiming := state.activeTurn
+	if responseID != "" {
+		turnTiming = state.turnTimingByID[responseID]
+	}
+	needsFirstToken := state.firstTokenMs == nil
+	if turnTiming != nil && turnTiming.firstTokenMs == nil || responseID != "" && turnTiming == nil {
+		needsFirstToken = true
+	}
+	visibleOutput := needsFirstToken && openai.StreamDataStartsVisibleOutput(string(message), eventType)
+	if state.firstTokenMs == nil && visibleOutput {
 		ms := int(now.Sub(startAt).Milliseconds())
 		if ms >= 0 {
 			state.firstTokenMs = &ms
 		}
-		if state.activeTurn != nil && state.activeTurn.firstTokenMs == nil {
-			tms := int(now.Sub(state.activeTurn.startAt).Milliseconds())
-			if tms >= 0 {
-				state.activeTurn.firstTokenMs = &tms
-			}
+	}
+	// 无 ID 内容使用活动轮次，不受连接级首字已经产生的影响。
+	if visibleOutput && turnTiming != nil && turnTiming.firstTokenMs == nil {
+		tms := int(now.Sub(turnTiming.startAt).Milliseconds())
+		if tms >= 0 {
+			turnTiming.firstTokenMs = &tms
 		}
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
@@ -718,7 +775,7 @@ func observeUpstreamMessage(
 	}
 	if responseID != "" {
 		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
+		if turnTiming != nil && turnTiming.firstTokenMs == nil && visibleOutput {
 			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
 			if ms >= 0 {
 				turnTiming.firstTokenMs = &ms
@@ -732,16 +789,21 @@ func observeUpstreamMessage(
 	observed.responseBody = terminalEventResponseBody(message)
 	state.terminalEventType = eventType
 	state.terminalResponseBody = cloneBytes(observed.responseBody)
+	var completedTiming relayTurnTiming
+	var timingFound bool
 	if responseID != "" {
 		state.lastResponseID = responseID
-		if turnTiming, ok := openAIWSRelayDeleteTurnTiming(state, responseID); ok {
-			duration := now.Sub(turnTiming.startAt)
-			if duration < 0 {
-				duration = 0
-			}
-			observed.duration = duration
-			observed.firstToken = openAIWSRelayCloneIntPtr(turnTiming.firstTokenMs)
+		completedTiming, timingFound = openAIWSRelayDeleteTurnTiming(state, responseID)
+	} else {
+		completedTiming, timingFound = state.settleUnobservedTurn("")
+	}
+	if timingFound {
+		duration := now.Sub(completedTiming.startAt)
+		if duration < 0 {
+			duration = 0
 		}
+		observed.duration = duration
+		observed.firstToken = openAIWSRelayCloneIntPtr(completedTiming.firstTokenMs)
 	}
 	return observed
 }
@@ -755,9 +817,7 @@ func emitTurnComplete(
 		return
 	}
 	responseID := strings.TrimSpace(observed.responseID)
-	if responseID == "" {
-		return
-	}
+	// 无 ID 的文本终态也必须完成本轮观测；保留空值，不伪造上游响应 ID。
 	requestModel := ""
 	if state != nil {
 		requestModel = state.requestModel
@@ -801,12 +861,68 @@ func openAIWSRelayGetOrInitTurnTiming(state *relayState, responseID string, now 
 	}
 	timing, ok := state.turnTimingByID[responseID]
 	if !ok || timing == nil || timing.startAt.IsZero() {
+		state.consumePendingTurn()
 		timing = &relayTurnTiming{startAt: now}
 		state.turnTimingByID[responseID] = timing
 		state.activeTurn = timing
 		return timing
 	}
 	return timing
+}
+
+// isClientResponseCreateFrame 同时识别文本和二进制承载的创建请求，不改写帧内容。
+func isClientResponseCreateFrame(msgType coderws.MessageType, payload []byte) bool {
+	return (msgType == coderws.MessageText || msgType == coderws.MessageBinary) &&
+		strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create"
+}
+
+// beginPendingTurn 由客户端读侧调用，其状态通过原子变量交给上游读侧。
+func (s *relayState) beginPendingTurn() {
+	s.pendingTurns.Add(1)
+	for {
+		current := s.turnOutputState.Load()
+		if s.turnOutputState.CompareAndSwap(current, (current&^1)+2) {
+			return
+		}
+	}
+}
+
+// consumePendingTurn 每个新响应只消耗一次登记，避免把辅助事件误算为新轮次。
+func (s *relayState) consumePendingTurn() {
+	if s == nil {
+		return
+	}
+	for {
+		current := s.pendingTurns.Load()
+		if current <= 0 || s.pendingTurns.CompareAndSwap(current, current-1) {
+			return
+		}
+	}
+}
+
+// hasUnfinishedTurn 仅由上游读侧查询；轮次映射仍保持单协程所有权。
+func (s *relayState) hasUnfinishedTurn() bool {
+	return s != nil && (s.pendingTurns.Load() > 0 || len(s.turnTimingByID) > 0)
+}
+
+// settleUnobservedTurn 结算无 ID 或二进制终态，并保留已观测的轮次计时供文本回调使用。
+func (s *relayState) settleUnobservedTurn(responseID string) (relayTurnTiming, bool) {
+	if s == nil {
+		return relayTurnTiming{}, false
+	}
+	if responseID != "" {
+		if timing, ok := openAIWSRelayDeleteTurnTiming(s, responseID); ok {
+			return timing, true
+		}
+	} else if s.activeTurn != nil {
+		for id, timing := range s.turnTimingByID {
+			if timing == s.activeTurn {
+				return openAIWSRelayDeleteTurnTiming(s, id)
+			}
+		}
+	}
+	s.consumePendingTurn()
+	return relayTurnTiming{}, false
 }
 
 func openAIWSRelayDeleteTurnTiming(state *relayState, responseID string) (relayTurnTiming, bool) {

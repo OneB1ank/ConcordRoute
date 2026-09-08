@@ -68,6 +68,11 @@ var instructionsGPT52 string
 //go:embed instructions_gpt5_5.txt
 var instructionsGPT55 string
 
+// 来源：openai/codex 的模型目录，固定提交 121f91fd5d9d。
+//
+//go:embed instructions_gpt6_astra.txt
+var instructionsGPT6Astra string
+
 // latestCodexInstructions 返回当前已知最新版本的 Codex base instructions，
 // 当前为 GPT-5.5；若 5.5 prompt 意外为空则回退到 DefaultInstructions 保证非空。
 func latestCodexInstructions() string {
@@ -77,7 +82,56 @@ func latestCodexInstructions() string {
 	return DefaultInstructions
 }
 
+// CanonicalizeOpenAIModelAliasSpelling 统一供应商前缀、大小写、分隔符及已知紧凑别名。
+func CanonicalizeOpenAIModelAliasSpelling(model string) string {
+	model = strings.TrimSpace(model)
+	if slash := strings.LastIndexByte(model, '/'); slash >= 0 {
+		model = strings.TrimSpace(model[slash+1:])
+	}
+	model = strings.ToLower(model)
+	if model == "" {
+		return ""
+	}
+
+	normalized := strings.ReplaceAll(model, "_", "-")
+	normalized = strings.Join(strings.Fields(normalized), "-")
+	for strings.Contains(normalized, "--") {
+		normalized = strings.ReplaceAll(normalized, "--", "-")
+	}
+
+	if strings.HasPrefix(normalized, "gpt5") {
+		normalized = "gpt-5" + strings.TrimPrefix(normalized, "gpt5")
+	}
+	if strings.HasPrefix(normalized, "gpt6") {
+		normalized = "gpt-6" + strings.TrimPrefix(normalized, "gpt6")
+	}
+	if !strings.HasPrefix(normalized, "gpt-") && !strings.Contains(normalized, "codex") {
+		return ""
+	}
+
+	replacements := []struct {
+		from string
+		to   string
+	}{
+		{"gpt-5.6sol", "gpt-5.6-sol"},
+		{"gpt-6astra", "gpt-6-astra"},
+		{"gpt-5.6terra", "gpt-5.6-terra"},
+		{"gpt-5.6luna", "gpt-5.6-luna"},
+		{"gpt-5.5pro", "gpt-5.5-pro"},
+		{"gpt-5.4mini", "gpt-5.4-mini"},
+		{"gpt-5.4nano", "gpt-5.4-nano"},
+		{"gpt-5.3-codexspark", "gpt-5.3-codex-spark"},
+		{"gpt-5.3codexspark", "gpt-5.3-codex-spark"},
+		{"gpt-5.3codex", "gpt-5.3-codex"},
+	}
+	for _, replacement := range replacements {
+		normalized = strings.ReplaceAll(normalized, replacement.from, replacement.to)
+	}
+	return normalized
+}
+
 // CodexBaseInstructionsForModel 按模型返回最匹配的真实 Codex base instructions：
+//   - gpt-6 / gpt-6-astra 及日期变体 → GPT-6 Astra prompt
 //   - 含 "codex" 的模型（gpt-5-codex / gpt-5.x-codex / codex-max / spark 等）→ GPT-5-Codex prompt
 //   - gpt-5.5 系非 codex 模型 → GPT-5.5 prompt
 //   - gpt-5.2 系非 codex 模型 → GPT-5.2 prompt
@@ -86,8 +140,12 @@ func latestCodexInstructions() string {
 //
 // 任一专用 prompt 意外为空时回退链最终落到 DefaultInstructions，保证返回非空。
 func CodexBaseInstructionsForModel(model string) string {
-	m := strings.ToLower(strings.TrimSpace(model))
+	m := CanonicalizeOpenAIModelAliasSpelling(model)
 	switch {
+	case m == "gpt-6" || m == "gpt-6-astra" || strings.HasPrefix(m, "gpt-6-astra-"):
+		if v := strings.TrimSpace(instructionsGPT6Astra); v != "" {
+			return instructionsGPT6Astra
+		}
 	case strings.Contains(m, "codex"):
 		return DefaultInstructions
 	case strings.HasPrefix(m, "gpt-5.5"):

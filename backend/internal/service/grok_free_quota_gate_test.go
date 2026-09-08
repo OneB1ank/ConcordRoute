@@ -81,15 +81,18 @@ func TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 	filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1, 2, 3, 4}, accountIDs(filtered), "miss fails open on hot path")
 
+	// 仓库被调用时后台任务还未发布缓存；等待真正可见的缓存而不是调用计数。
 	require.Eventually(t, func() bool {
-		repo.mu.Lock()
-		defer repo.mu.Unlock()
-		return repo.calls >= 1
+		value, ok := scheduler.grokFreeQuotaGateCache.Load(int64(1))
+		entry, valid := value.(grokFreeQuotaGateCacheEntry)
+		return ok && valid && entry.known && entry.tokens == 475_000
 	}, 2*time.Second, 10*time.Millisecond)
 
 	// 第二次执行使用已刷新缓存，并阻断超过门禁的免费 OAuth 账号。
 	filtered = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{2, 3, 4}, accountIDs(filtered), "paid and unknown fail-open; API-key free marker is not gated")
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
 	require.Equal(t, []int64{1}, repo.lastIDs, "paid, unknown, and API-key accounts must not enter the local free-tier query")
 	require.WithinDuration(t, time.Now().UTC().Add(-24*time.Hour), repo.start, time.Second)
 }
@@ -106,13 +109,15 @@ func TestFilterGrokFreeQuotaAccountsStatsFailureFailsOpen(t *testing.T) {
 	filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1}, accountIDs(filtered))
 	require.Eventually(t, func() bool {
-		repo.mu.Lock()
-		defer repo.mu.Unlock()
-		return repo.calls >= 1
+		value, ok := scheduler.grokFreeQuotaGateCache.Load(int64(1))
+		entry, valid := value.(grokFreeQuotaGateCacheEntry)
+		return ok && valid && !entry.known
 	}, 2*time.Second, 10*time.Millisecond)
 	// 负缓存条目使后续热点调用保持失败开放，同时避免频繁刷新。
 	filtered = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1}, accountIDs(filtered))
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
 	require.Equal(t, 1, repo.calls)
 }
 
@@ -157,13 +162,15 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 	require.Empty(t, scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts), "fresh cache keeps the soft-gate hold")
 
 	// 使条目过期后，缓存未命中会失败开放，并使用恢复后的用量安排刷新。
-	// 清除进行中标记，使强制条目过期后能够再次刷新。
-	if root, ok := freeQuotaRefreshInFlight.Load(&scheduler.grokFreeQuotaGateCache); ok {
-		if m, ok := root.(*sync.Map); ok {
-			m.Delete(int64(1))
+	// 等前一轮刷新完整退出，不在测试中强行清除真实后台任务的并发保护。
+	require.Eventually(t, func() bool {
+		root, ok := freeQuotaRefreshInFlight.Load(&scheduler.grokFreeQuotaGateCache)
+		if !ok {
+			return true
 		}
-	}
-	callsBeforeExpire := repo.calls
+		_, refreshing := root.(*sync.Map).Load(int64(1))
+		return !refreshing
+	}, 2*time.Second, 10*time.Millisecond)
 	scheduler.grokFreeQuotaGateCache.Store(int64(1), grokFreeQuotaGateCacheEntry{
 		tokens: 490_000, checkedAt: time.Now().Add(-2 * time.Minute), known: true, // TTL=60s → stale
 	})
@@ -171,8 +178,10 @@ func TestFilterGrokFreeQuotaAccountsRecoversAfterRollingUsageFalls(t *testing.T)
 	require.Equal(t, []int64{1}, accountIDs(scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)))
 	require.Eventually(t, func() bool {
 		filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
+		value, ok := scheduler.grokFreeQuotaGateCache.Load(int64(1))
+		entry, valid := value.(grokFreeQuotaGateCacheEntry)
 		return len(filtered) == 1 && filtered[0].ID == 1 &&
-			repo.calls > callsBeforeExpire
+			ok && valid && entry.known && entry.tokens == 100_000
 	}, 2*time.Second, 10*time.Millisecond)
 }
 

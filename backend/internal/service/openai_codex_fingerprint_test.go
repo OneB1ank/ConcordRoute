@@ -369,27 +369,26 @@ func TestCockpitRootTurnID_ChildInheritsClientRoot(t *testing.T) {
 	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 }
 
-func TestCockpitRootTurnID_MissingTopLevelUsesOfficialMetadataCarrier(t *testing.T) {
+func TestCockpitRootTurnID_MissingTopLevelRemainsUnset(t *testing.T) {
 	account := newTestOAuthAccount(106, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{"prompt_cache_key": "cache-only"})
 	require.NotNil(t, ids)
 	assert.Empty(t, ids.originalRootTurnID)
-	require.NotEmpty(t, ids.rootTurnID)
-	assert.Equal(t, ids.turnID, ids.rootTurnID)
+	require.Empty(t, ids.rootTurnID)
 	body := map[string]any{"prompt_cache_key": "cache-only"}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
 	assert.NotContains(t, body, "root_turn_id", "Responses 顶层不支持 root_turn_id")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
+	assert.NotContains(t, metadata, "root_turn_id")
 }
 
-func TestCockpitRootTurnID_MissingTopLevelRawUsesOfficialMetadataCarrier(t *testing.T) {
+func TestCockpitRootTurnID_MissingTopLevelRawRemainsUnset(t *testing.T) {
 	account := newTestOAuthAccount(120, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	body := []byte(`{"prompt_cache_key":"cache-only"}`)
 	ids := resolveCodexFingerprintIDsFromRawRequest(account, nil, body)
 	require.NotNil(t, ids)
-	require.NotEmpty(t, ids.rootTurnID)
+	require.Empty(t, ids.rootTurnID)
 
 	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, ids)
 	require.NoError(t, err)
@@ -399,7 +398,7 @@ func TestCockpitRootTurnID_MissingTopLevelRawUsesOfficialMetadataCarrier(t *test
 	assert.NotContains(t, decoded, "root_turn_id", "Responses 顶层不支持 root_turn_id")
 	metadata, ok := decoded["client_metadata"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, ids.rootTurnID, metadata["root_turn_id"])
+	assert.NotContains(t, metadata, "root_turn_id")
 }
 
 func TestCockpitRootTurnID_MissingChildRootRemainsUnset(t *testing.T) {

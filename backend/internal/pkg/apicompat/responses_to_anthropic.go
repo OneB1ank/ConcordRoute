@@ -51,12 +51,20 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 					})
 				}
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
+			arguments := item.Arguments
+			if item.Type == "custom_tool_call" {
+				arguments = item.Input
+				// Messages 工具输入必须是对象；保留已有 JSON 对象，自由文本使用既有代理契约。
+				if !json.Valid([]byte(arguments)) || !strings.HasPrefix(strings.TrimSpace(arguments), "{") {
+					arguments = customToolCallArguments(arguments)
+				}
+			}
 			blocks = append(blocks, AnthropicContentBlock{
 				Type:  "tool_use",
 				ID:    fromResponsesCallID(item.CallID),
 				Name:  item.Name,
-				Input: sanitizeAnthropicToolUseInput(item.Name, item.Arguments),
+				Input: sanitizeAnthropicToolUseInput(item.Name, arguments),
 			})
 		case "web_search_call":
 			toolUseID := "srvtoolu_" + item.ID

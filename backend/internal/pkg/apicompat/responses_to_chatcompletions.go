@@ -13,9 +13,8 @@ import (
 // Non-streaming: ResponsesResponse → ChatCompletionsResponse
 // ---------------------------------------------------------------------------
 
-// ResponsesToChatCompletions converts a Responses API response into a Chat
-// Completions response. Text output items are concatenated into
-// choices[0].message.content; function_call items become tool_calls.
+// ResponsesToChatCompletions 将 Responses 正文、推理和工具输出转换为 Chat 响应；
+// 普通函数及自定义工具统一映射到 tool_calls，并分别读取 Arguments 和 Input。
 func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatCompletionsResponse {
 	id := resp.ID
 	if id == "" {
@@ -41,13 +40,18 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 					contentText += part.Text
 				}
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
+			// Chat 的自定义工具代理使用 input 字符串参数，包装后仍可无损还原自由文本。
+			arguments := item.Arguments
+			if item.Type == "custom_tool_call" {
+				arguments = customToolCallArguments(item.Input)
+			}
 			toolCalls = append(toolCalls, ChatToolCall{
 				ID:   item.CallID,
 				Type: "function",
 				Function: ChatFunctionCall{
 					Name:      item.Name,
-					Arguments: item.Arguments,
+					Arguments: arguments,
 				},
 			})
 		case "reasoning":
@@ -124,6 +128,7 @@ type ResponsesEventToChatState struct {
 	Finalized              bool        // true after finish chunk has been emitted
 	NextToolCallIndex      int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
+	OutputIndexToArguments map[int]string
 	IncludeUsage           bool
 	Usage                  *ChatUsage
 }
@@ -134,6 +139,7 @@ func NewResponsesEventToChatState() *ResponsesEventToChatState {
 		ID:                     generateChatCmplID(),
 		Created:                time.Now().Unix(),
 		OutputIndexToToolIndex: make(map[int]int),
+		OutputIndexToArguments: make(map[int]string),
 	}
 }
 
@@ -152,6 +158,8 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 		// 均按 OutputIndex 累加到对应工具调用。
 		"response.custom_tool_call_input.delta":
 		return resToChatHandleFuncArgsDelta(evt, state)
+	case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+		return resToChatHandleFuncArgsDone(evt, state)
 	case "response.reasoning_summary_text.delta",
 		// 原始推理文本增量（真实 Codex 客户端消费的 reasoning_text.delta），
 		// 与 reasoning summary 一样映射为 reasoning_content。
@@ -271,12 +279,47 @@ func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	if !ok {
 		return nil
 	}
+	if state.OutputIndexToArguments == nil {
+		state.OutputIndexToArguments = make(map[int]string)
+	}
+	state.OutputIndexToArguments[evt.OutputIndex] += evt.Delta
 
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
 			Index: &idx,
 			Function: ChatFunctionCall{
 				Arguments: evt.Delta,
+			},
+		}},
+	})}
+}
+
+// resToChatHandleFuncArgsDone 仅补完整参数中尚未发出的后缀，避免重复或拼接不兼容的数据。
+func resToChatHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	idx, ok := state.OutputIndexToToolIndex[evt.OutputIndex]
+	if !ok {
+		return nil
+	}
+
+	completed := evt.Arguments
+	if evt.Type == "response.custom_tool_call_input.done" {
+		completed = evt.Input
+	}
+	current := state.OutputIndexToArguments[evt.OutputIndex]
+	if completed == "" || !strings.HasPrefix(completed, current) || completed == current {
+		return nil
+	}
+
+	remainder := completed[len(current):]
+	if state.OutputIndexToArguments == nil {
+		state.OutputIndexToArguments = make(map[int]string)
+	}
+	state.OutputIndexToArguments[evt.OutputIndex] = completed
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
+		ToolCalls: []ChatToolCall{{
+			Index: &idx,
+			Function: ChatFunctionCall{
+				Arguments: remainder,
 			},
 		}},
 	})}
@@ -440,9 +483,11 @@ func generateChatCmplID() string {
 // ---------------------------------------------------------------------------
 
 type bufferedFuncCall struct {
-	CallID string
-	Name   string
-	Args   strings.Builder
+	OutputIndex int
+	Type        string
+	CallID      string
+	Name        string
+	Args        strings.Builder
 }
 
 // BufferedResponseAccumulator collects content from Responses SSE delta events
@@ -462,9 +507,7 @@ func NewBufferedResponseAccumulator() *BufferedResponseAccumulator {
 	}
 }
 
-// ProcessEvent inspects a single Responses SSE event and accumulates any
-// content it carries. Only delta events that contribute to the final output
-// are handled; all other event types are silently ignored.
+// ProcessEvent 收集正文、推理、工具增量以及工具 done 的完整内容，其余事件保持忽略。
 func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) {
 	switch event.Type {
 	case "response.output_text.delta":
@@ -476,14 +519,28 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 			idx := len(a.funcCalls)
 			a.outputIndexToFuncIdx[event.OutputIndex] = idx
 			a.funcCalls = append(a.funcCalls, bufferedFuncCall{
-				CallID: event.Item.CallID,
-				Name:   event.Item.Name,
+				OutputIndex: event.OutputIndex,
+				Type:        event.Item.Type,
+				CallID:      event.Item.CallID,
+				Name:        event.Item.Name,
 			})
 		}
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		if event.Delta != "" {
 			if idx, ok := a.outputIndexToFuncIdx[event.OutputIndex]; ok {
 				_, _ = a.funcCalls[idx].Args.WriteString(event.Delta)
+			}
+		}
+	case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+		// 非流式尚未提交内容，可直接使用权威完整参数替代累积的增量。
+		completed := event.Arguments
+		if event.Type == "response.custom_tool_call_input.done" {
+			completed = event.Input
+		}
+		if completed != "" {
+			if idx, ok := a.outputIndexToFuncIdx[event.OutputIndex]; ok {
+				a.funcCalls[idx].Args.Reset()
+				_, _ = a.funcCalls[idx].Args.WriteString(completed)
 			}
 		}
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
@@ -498,9 +555,7 @@ func (a *BufferedResponseAccumulator) HasContent() bool {
 	return a.text.Len() > 0 || len(a.funcCalls) > 0 || a.reasoning.Len() > 0
 }
 
-// BuildOutput constructs a []ResponsesOutput from the accumulated delta
-// content. The order matches what ResponsesToChatCompletions expects:
-// reasoning → message → function_calls.
+// BuildOutput 按推理、正文、工具的顺序重建 Responses 输出，保留工具的原始类型。
 func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	var out []ResponsesOutput
 
@@ -526,26 +581,68 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	}
 
 	for i := range a.funcCalls {
-		out = append(out, ResponsesOutput{
-			Type:      "function_call",
-			CallID:    a.funcCalls[i].CallID,
-			Name:      a.funcCalls[i].Name,
-			Arguments: a.funcCalls[i].Args.String(),
-		})
+		call := &a.funcCalls[i]
+		item := ResponsesOutput{Type: call.Type, CallID: call.CallID, Name: call.Name}
+		// 累积器也服务于原生 Responses 重建，不能把自由文本工具改型成普通函数。
+		if call.Type == "custom_tool_call" {
+			item.Input = call.Args.String()
+		} else {
+			item.Type = "function_call"
+			item.Arguments = call.Args.String()
+		}
+		out = append(out, item)
 	}
 
 	return out
 }
 
-// SupplementResponseOutput fills resp.Output from accumulated delta content
-// when the terminal event delivered an empty output array. If resp.Output is
-// already populated, this is a no-op (preserves backward compatibility).
+// SupplementResponseOutput 为缺少 output 的终止事件补全累积内容；
+// 已有 output 仅补空工具参数，并优先按 call_id 匹配，避免数组重排后串用参数。
 func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesResponse) {
-	if resp == nil || len(resp.Output) > 0 {
+	if resp == nil {
 		return
 	}
-	if !a.HasContent() {
+	if len(resp.Output) == 0 {
+		if a.HasContent() {
+			resp.Output = a.BuildOutput()
+		}
 		return
 	}
-	resp.Output = a.BuildOutput()
+
+	for outputIndex := range resp.Output {
+		item := &resp.Output[outputIndex]
+		var destination *string
+		switch item.Type {
+		case "function_call":
+			destination = &item.Arguments
+		case "custom_tool_call":
+			destination = &item.Input
+		default:
+			continue
+		}
+		if *destination != "" {
+			continue
+		}
+		var matched *bufferedFuncCall
+		for funcIndex := range a.funcCalls {
+			call := &a.funcCalls[funcIndex]
+			if item.CallID != "" && item.CallID == call.CallID {
+				matched = call
+				break
+			}
+		}
+		if matched == nil {
+			for funcIndex := range a.funcCalls {
+				call := &a.funcCalls[funcIndex]
+				// 只有一侧没有身份时才按下标兜底，已知但不同的 call_id 绝不混用。
+				if call.OutputIndex == outputIndex && (item.CallID == "" || call.CallID == "") {
+					matched = call
+					break
+				}
+			}
+		}
+		if matched != nil {
+			*destination = matched.Args.String()
+		}
+	}
 }

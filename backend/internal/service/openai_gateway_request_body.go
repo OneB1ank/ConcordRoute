@@ -294,8 +294,8 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	}
 
 	normalized := []byte(`{}`)
-	// Keep the current Codex /compact schema while still dropping request-scoped
-	// fields such as prompt_cache_key, store, and stream.
+	// 保留当前 Codex /compact 支持的字段，包括客户端显式提供的缓存键；
+	// 不补齐缺省键，仍移除 stream、store、client_metadata 等非该端点字段。
 	for _, field := range []string{
 		"model",
 		"input",
@@ -306,6 +306,7 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		"service_tier",
 		"text",
 		"previous_response_id",
+		"prompt_cache_key",
 	} {
 		value := gjson.GetBytes(body, field)
 		if !value.Exists() {
@@ -930,7 +931,7 @@ func (s *OpenAIGatewayService) evaluateOpenAIFastPolicy(ctx context.Context, acc
 	}
 	settings := openAIFastPolicySettingsFromContext(ctx)
 	if settings == nil {
-		fetched, err := s.settingService.GetOpenAIFastPolicySettings(ctx)
+		fetched, err := s.settingService.getOpenAIFastPolicySettingsCached(ctx)
 		if err != nil || fetched == nil {
 			return BetaPolicyActionPass, ""
 		}

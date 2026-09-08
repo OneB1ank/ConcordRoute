@@ -740,6 +740,8 @@ func tlsFingerprintProfileToYAML(profile *model.TLSFingerprintProfile) string {
 		writeYAMLString(&b, "description", *profile.Description)
 	}
 	fmt.Fprintf(&b, "  enable_grease: %t\n", profile.EnableGREASE)
+	// 单次采集不能推断排序策略；导出保存的显式选择，采集新模板默认关闭。
+	fmt.Fprintf(&b, "  rustls_native_order: %t\n", profile.RustlsNativeOrder)
 	writeYAMLNumberArray(&b, "cipher_suites", profile.CipherSuites)
 	writeYAMLNumberArray(&b, "curves", profile.Curves)
 	writeYAMLNumberArray(&b, "point_formats", profile.PointFormats)

@@ -41,6 +41,14 @@ func TestChangedTLSFingerprintProfileIDsOnlyReportsHandshakeChanges(t *testing.T
 		map[int64]*model.TLSFingerprintProfile{3: &updatedTimestampOnly},
 	))
 
+	// 排序策略变化只失效对应模板，不让无关模板的身份快照抖动。
+	nativeOrder := *base
+	nativeOrder.RustlsNativeOrder = true
+	require.Equal(t, map[int64]struct{}{3: {}}, changedTLSFingerprintProfileIDs(
+		map[int64]*model.TLSFingerprintProfile{3: base, 4: base},
+		map[int64]*model.TLSFingerprintProfile{3: &nativeOrder, 4: base},
+	))
+
 	changedProfile := updatedTimestampOnly
 	changedProfile.CipherSuites = []uint16{4865, 4867}
 	changed := changedTLSFingerprintProfileIDs(

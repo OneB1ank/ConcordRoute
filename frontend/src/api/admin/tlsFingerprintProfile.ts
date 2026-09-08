@@ -13,6 +13,8 @@ export interface TLSFingerprintProfile {
   name: string
   description: string | null
   enable_grease: boolean
+  // 兼容旧服务端和旧采集记录，缺失时按固定排序处理。
+  rustls_native_order?: boolean
   cipher_suites: number[]
   curves: number[]
   point_formats: number[]
@@ -33,6 +35,7 @@ export interface CreateProfileRequest {
   name: string
   description?: string | null
   enable_grease?: boolean
+  rustls_native_order?: boolean
   cipher_suites?: number[]
   curves?: number[]
   point_formats?: number[]
@@ -51,6 +54,7 @@ export interface UpdateProfileRequest {
   name?: string
   description?: string | null
   enable_grease?: boolean
+  rustls_native_order?: boolean
   cipher_suites?: number[]
   curves?: number[]
   point_formats?: number[]

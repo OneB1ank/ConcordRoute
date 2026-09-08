@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -255,8 +256,11 @@ func TestRelay_UpstreamDisconnect(t *testing.T) {
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	// 上游 EOF 属于 disconnect，标记为 graceful
-	require.Nil(t, relayExit, "上游 EOF 应被视为 graceful disconnect")
+	// 请求已发出却没有终止事件，EOF 不代表业务成功。
+	require.NotNil(t, relayExit)
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.False(t, relayExit.Graceful)
+	require.ErrorContains(t, relayExit.Err, "before terminal event")
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
 
@@ -606,7 +610,10 @@ func TestRelay_BinaryFramePassthrough(t *testing.T) {
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	require.Nil(t, relayExit)
+	require.NotNil(t, relayExit)
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.False(t, relayExit.Graceful)
+	require.ErrorContains(t, relayExit.Err, "before terminal event")
 	// binary frame 不解析 usage
 	require.Equal(t, 0, result.Usage.InputTokens)
 
@@ -671,7 +678,9 @@ func TestRelay_PreservesFirstMessageType(t *testing.T) {
 	t.Parallel()
 
 	clientConn := newPassthroughTestFrameConn(nil, false)
-	upstreamConn := newPassthroughTestFrameConn(nil, true)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageBinary, payload: []byte(`{"type":"response.completed","response":{"id":"resp_binary_first_type"}}`)},
+	}, true)
 
 	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1058,4 +1067,110 @@ func TestRelay_OnTurnComplete_RealOpenAIStream_FirstTokenMs(t *testing.T) {
 
 	require.NotNil(t, result.FirstTokenMs)
 	require.Greater(t, *result.FirstTokenMs, 0)
+}
+
+// 上游核心修复回归：保留现有协议行为并锁定原故障边界。
+func TestRelay_UpstreamNormalCloseBeforeResponseIDIsFailure(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := &eofReplacementFrameConn{
+		FrameConn: newPassthroughTestFrameConn([]passthroughTestFrame{
+			{
+				msgType: coderws.MessageText,
+				payload: []byte(`{"type":"response.created","status":"in_progress"}`),
+			},
+			{
+				msgType: coderws.MessageText,
+				payload: []byte(`{"type":"response.in_progress","status":"in_progress"}`),
+			},
+		}, true),
+		err: coderws.CloseError{Code: coderws.StatusNormalClosure},
+	}
+
+	firstPayload := []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[]}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
+	require.NotNil(t, relayExit)
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.False(t, relayExit.Graceful)
+	require.True(t, relayExit.WroteDownstream)
+	require.ErrorContains(t, relayExit.Err, "upstream websocket closed before terminal event")
+	require.Empty(t, result.RequestID)
+	require.Empty(t, result.TerminalEventType)
+	require.Len(t, clientConn.Writes(), 2)
+}
+
+// 上游核心修复回归：保留现有协议行为并锁定原故障边界。
+func TestRelay_BeforeWriteClientTracksDownstreamPerTurn(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn(nil, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wroteStates := make(chan bool, 3)
+	done := make(chan *RelayExit, 1)
+	stopErr := errors.New("stop after second-turn error")
+	go func() {
+		_, relayExit := Relay(
+			ctx,
+			clientConn,
+			upstreamConn,
+			[]byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`),
+			RelayOptions{BeforeWriteClient: func(_ coderws.MessageType, payload []byte, wroteDownstream bool) error {
+				wroteStates <- wroteDownstream
+				if strings.Contains(string(payload), `"type":"error"`) {
+					return stopErr
+				}
+				return nil
+			}},
+		)
+		done <- relayExit
+	}()
+
+	require.Eventually(t, func() bool { return len(upstreamConn.Writes()) == 1 }, time.Second, time.Millisecond)
+	upstreamConn.readCh <- passthroughTestFrame{
+		msgType: coderws.MessageText,
+		payload: []byte(`{"type":"response.completed","response":{"id":"resp_first","usage":{"input_tokens":1,"output_tokens":1}}}`),
+	}
+	require.False(t, <-wroteStates)
+	require.Eventually(t, func() bool { return len(clientConn.Writes()) == 1 }, time.Second, time.Millisecond)
+
+	clientConn.readCh <- passthroughTestFrame{
+		msgType: coderws.MessageText,
+		payload: []byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`),
+	}
+	require.Eventually(t, func() bool { return len(upstreamConn.Writes()) == 2 }, time.Second, time.Millisecond)
+	upstreamConn.readCh <- passthroughTestFrame{
+		msgType: coderws.MessageText,
+		payload: []byte(`{"type":"error","error":{"type":"usage_limit_reached"}}`),
+	}
+	require.False(t, <-wroteStates, "the next turn must not inherit the first turn's downstream write")
+
+	select {
+	case relayExit := <-done:
+		require.NotNil(t, relayExit)
+		require.ErrorIs(t, relayExit.Err, stopErr)
+		require.True(t, relayExit.WroteDownstream, "connection-wide diagnostics must retain prior output")
+	case <-time.After(time.Second):
+		t.Fatal("relay did not stop after the rejected second-turn event")
+	}
+}
+
+// eofReplacementFrameConn 用指定关闭码替代测试连接的 EOF。
+type eofReplacementFrameConn struct {
+	FrameConn
+	err error
+}
+
+func (c *eofReplacementFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+	kind, data, err := c.FrameConn.ReadFrame(ctx)
+	if errors.Is(err, io.EOF) {
+		return kind, data, c.err
+	}
+	return kind, data, err
 }

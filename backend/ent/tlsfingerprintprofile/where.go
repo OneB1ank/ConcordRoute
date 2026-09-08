@@ -79,6 +79,11 @@ func EnableGrease(v bool) predicate.TLSFingerprintProfile {
 	return predicate.TLSFingerprintProfile(sql.FieldEQ(FieldEnableGrease, v))
 }
 
+// RustlsNativeOrder applies equality check predicate on the "rustls_native_order" field. It's identical to RustlsNativeOrderEQ.
+func RustlsNativeOrder(v bool) predicate.TLSFingerprintProfile {
+	return predicate.TLSFingerprintProfile(sql.FieldEQ(FieldRustlsNativeOrder, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.TLSFingerprintProfile {
 	return predicate.TLSFingerprintProfile(sql.FieldEQ(FieldCreatedAt, v))
@@ -307,6 +312,16 @@ func EnableGreaseEQ(v bool) predicate.TLSFingerprintProfile {
 // EnableGreaseNEQ applies the NEQ predicate on the "enable_grease" field.
 func EnableGreaseNEQ(v bool) predicate.TLSFingerprintProfile {
 	return predicate.TLSFingerprintProfile(sql.FieldNEQ(FieldEnableGrease, v))
+}
+
+// RustlsNativeOrderEQ applies the EQ predicate on the "rustls_native_order" field.
+func RustlsNativeOrderEQ(v bool) predicate.TLSFingerprintProfile {
+	return predicate.TLSFingerprintProfile(sql.FieldEQ(FieldRustlsNativeOrder, v))
+}
+
+// RustlsNativeOrderNEQ applies the NEQ predicate on the "rustls_native_order" field.
+func RustlsNativeOrderNEQ(v bool) predicate.TLSFingerprintProfile {
+	return predicate.TLSFingerprintProfile(sql.FieldNEQ(FieldRustlsNativeOrder, v))
 }
 
 // CipherSuitesIsNil applies the IsNil predicate on the "cipher_suites" field.

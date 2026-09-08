@@ -24,6 +24,28 @@ func TestTLSFingerprintProfileValidateAcceptsConsistentProfile(t *testing.T) {
 	require.NoError(t, profile.Validate())
 }
 
+// 旧数据默认固定排序，显式原生模式禁止缺少握手状态的扩展和 GREASE 混入。
+func TestTLSFingerprintProfileNativeOrderValidation(t *testing.T) {
+	valid := &TLSFingerprintProfile{Name: "native", RustlsNativeOrder: true}
+	require.NoError(t, valid.Validate())
+	require.True(t, valid.ToTLSProfile().RustlsNativeOrder)
+	for _, profile := range []*TLSFingerprintProfile{
+		{Name: "native", RustlsNativeOrder: true, EnableGREASE: true},
+		{Name: "native", RustlsNativeOrder: true, Extensions: []uint16{0x0a0a}},
+		{Name: "native", RustlsNativeOrder: true, Extensions: []uint16{41}},
+		{Name: "native", RustlsNativeOrder: true, Extensions: []uint16{44}},
+		{Name: "native", RustlsNativeOrder: true, Extensions: []uint16{64768}},
+	} {
+		err := profile.Validate()
+		require.Error(t, err)
+		var validationErr *ValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, "rustls_native_order", validationErr.Field)
+		profile.RustlsNativeOrder = false
+		require.NoError(t, profile.Validate(), "关闭开关不改变旧模板的校验行为")
+	}
+}
+
 func TestTLSFingerprintProfileValidateRejectsInvalidValuesEarly(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -2195,6 +2195,10 @@ func init() {
 	tlsfingerprintprofileDescEnableGrease := tlsfingerprintprofileFields[2].Descriptor()
 	// tlsfingerprintprofile.DefaultEnableGrease holds the default value on creation for the enable_grease field.
 	tlsfingerprintprofile.DefaultEnableGrease = tlsfingerprintprofileDescEnableGrease.Default.(bool)
+	// tlsfingerprintprofileDescRustlsNativeOrder is the schema descriptor for rustls_native_order field.
+	tlsfingerprintprofileDescRustlsNativeOrder := tlsfingerprintprofileFields[3].Descriptor()
+	// tlsfingerprintprofile.DefaultRustlsNativeOrder holds the default value on creation for the rustls_native_order field.
+	tlsfingerprintprofile.DefaultRustlsNativeOrder = tlsfingerprintprofileDescRustlsNativeOrder.Default.(bool)
 	tlsfingerprintrouterMixin := schema.TLSFingerprintRouter{}.Mixin()
 	tlsfingerprintrouterMixinFields0 := tlsfingerprintrouterMixin[0].Fields()
 	_ = tlsfingerprintrouterMixinFields0

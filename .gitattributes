@@ -4,6 +4,9 @@ backend/migrations/*.sql text eol=lf
 # Go 源代码文件
 *.go text eol=lf
 
+# 固定来源的上游指令文本保留原始行尾空格，避免格式清理改变请求前缀。
+backend/internal/pkg/openai/instructions_gpt6_astra.txt text eol=lf whitespace=-blank-at-eol
+
 # 前端 源代码文件
 *.ts text eol=lf
 *.tsx text eol=lf

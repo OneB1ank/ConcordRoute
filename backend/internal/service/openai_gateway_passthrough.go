@@ -86,7 +86,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		compactRequest := isOpenAIResponsesCompactPath(c)
 		var fingerprintIDs *codexFingerprintIDs
 		if compactRequest {
-			// compact 归一化会删除 client_metadata/prompt_cache_key，先从原始请求
+			// compact 归一化会删除 client_metadata（显式缓存键保留），先从原始请求
 			// 派生账号级 ID，发送时仅收敛 Header，不向不支持的 body schema 注入字段。
 			fingerprintIDs = bindCodexFingerprintIDsToAccount(
 				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body, false),
@@ -896,60 +896,9 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	return !openAIStreamEventIsPreamble(eventType)
 }
 
-func openAIStreamItemHasVisibleOutput(item gjson.Result) bool {
-	if item.Get("arguments").String() != "" || item.Get("input").String() != "" || item.Get("result").String() != "" {
-		return true
-	}
-	for _, path := range []string{"content", "summary"} {
-		for _, part := range item.Get(path).Array() {
-			if part.Get("text").String() != "" || part.Get("transcript").String() != "" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// 结构进度可以提交当前 attempt 并解除首输出故障转移，但只有客户端可用内容才开始计算 TTFT。
+// HTTP 与 WS 共用首内容判断；该判断仅用于统计，不参与重试或帧过滤。
 func openAIStreamDataStartsVisibleOutput(data, eventType string) bool {
-	trimmed := strings.TrimSpace(data)
-	if trimmed == "" || trimmed == "[DONE]" || !gjson.Valid(trimmed) {
-		return false
-	}
-	eventType = strings.TrimSpace(eventType)
-	if eventType == "" {
-		eventType = strings.TrimSpace(gjson.Get(trimmed, "type").String())
-	}
-	if strings.HasSuffix(eventType, ".delta") {
-		delta := gjson.Get(trimmed, "delta")
-		return delta.Exists() && delta.String() != ""
-	}
-	switch eventType {
-	case "response.output_text.done",
-		"response.reasoning_summary_text.done",
-		"response.reasoning_text.done",
-		"response.audio_transcript.done":
-		return gjson.Get(trimmed, "text").String() != ""
-	case "response.function_call_arguments.done":
-		return gjson.Get(trimmed, "arguments").String() != ""
-	case "response.custom_tool_call_input.done":
-		return gjson.Get(trimmed, "input").String() != ""
-	case "response.image_generation_call.partial_image":
-		return gjson.Get(trimmed, "partial_image_b64").String() != ""
-	case "response.content_part.added", "response.content_part.done",
-		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
-		part := gjson.Get(trimmed, "part")
-		return part.Get("text").String() != "" || part.Get("transcript").String() != ""
-	case "response.output_item.added", "response.output_item.done":
-		return openAIStreamItemHasVisibleOutput(gjson.Get(trimmed, "item"))
-	case "response.completed", "response.done":
-		for _, item := range gjson.Get(trimmed, "response.output").Array() {
-			if openAIStreamItemHasVisibleOutput(item) {
-				return true
-			}
-		}
-	}
-	return false
+	return openai.StreamDataStartsVisibleOutput(data, eventType)
 }
 
 // openAIStreamFailedEventErrorCode 提取流内 failed 事件的错误码（小写），
@@ -1531,6 +1480,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						c, account, true, upstreamRequestID, resp.Header, policyStatus, dataBytes, failedMessage,
 						openAIStreamFailedEventRetryableOnSameAccount(decision, account, policyStatus, dataBytes, failedMessage),
 					)
+				}
+				if outputStarted {
+					// 已输出后的失败只记录诊断，保留当前流的终止行为，不触发重放。
+					s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
 				}
 				if outputStarted && decision.ShouldReturnGenericError() {
 					// 流已提交时无法改写 HTTP 状态，只下发净化后的通用终止事件。

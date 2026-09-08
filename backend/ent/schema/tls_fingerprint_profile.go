@@ -52,6 +52,10 @@ func (TLSFingerprintProfile) Fields() []ent.Field {
 		field.Bool("enable_grease").
 			Default(false),
 
+		// 原生排序独立于 GREASE；迁移时不自动修改既有模板行为。
+		field.Bool("rustls_native_order").
+			Default(false),
+
 		// cipher_suites: TLS 加密套件列表（顺序敏感，影响 JA3）
 		field.JSON("cipher_suites", []uint16{}).
 			Optional().

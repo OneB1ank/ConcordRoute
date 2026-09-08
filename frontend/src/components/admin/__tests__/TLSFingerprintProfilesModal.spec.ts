@@ -141,6 +141,58 @@ async function openCreateForm(wrapper: ReturnType<typeof mountModal>) {
 }
 
 describe('TLSFingerprintProfilesModal', () => {
+  it('原生排序默认关闭，可显式启用并随保存请求提交', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    const toggle = wrapper.find('button[role="switch"][aria-label="admin.tlsFingerprintProfiles.form.rustlsNativeOrder"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    const submit = wrapper.findAll('button').find(button => button.text().includes('common.create'))
+    await submit!.trigger('click')
+    await flushPromises()
+    expect(createProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+      rustls_native_order: true,
+      enable_grease: false
+    }))
+    wrapper.unmount()
+  })
+
+  it('导入原生排序 YAML 后再导入旧 YAML，不继承上次的开关', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    const yaml = wrapper.find('textarea')
+    const parse = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.parseYaml')
+    )!
+    await yaml.setValue('name: native\nrustls_native_order: true')
+    await parse.trigger('click')
+    const toggle = wrapper.find('button[role="switch"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await yaml.setValue('name: legacy')
+    await parse.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('原生排序与 GREASE 冲突时在保存前提示，不静默改变选项', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    await wrapper.find('textarea').setValue('name: mixed\nrustls_native_order: true\nenable_grease: true')
+    await wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.parseYaml')
+    )!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('common.create'))!.trigger('click')
+    await flushPromises()
+    expect(createProfileMock).not.toHaveBeenCalled()
+    expect(showErrorMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.form.rustlsNativeOrderConflict')
+    expect(wrapper.find('button[role="switch"]').attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
     listProfilesMock.mockReset()
@@ -283,6 +335,7 @@ describe('TLSFingerprintProfilesModal', () => {
       '  name: "Mac Codex"',
       '  description: "export me"',
       '  enable_grease: true',
+      '  rustls_native_order: false',
       '  cipher_suites: [0x1301, 0x1302]',
       '  curves: [29, 23]',
       '  point_formats: [0]',

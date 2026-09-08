@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 验证 A → 缺省 → B，以及压缩后缺省键不跨窗口继承；输入帧不被原地修改。
+// 验证 A → 缺省 → B，以及相邻压缩窗口继承最近的明确键；输入帧不被原地修改。
 func TestAdvanceCodexWebSocketFingerprintCacheLifecycle(t *testing.T) {
 	account := newTestOAuthAccount(1210, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, []byte(`{"prompt_cache_key":"ws-A","client_metadata":{"session_id":"ws-session","thread_id":"ws-thread","turn_id":"ws-turn-1","x-codex-window-id":"ws-thread:0"}}`))
@@ -23,7 +23,7 @@ func TestAdvanceCodexWebSocketFingerprintCacheLifecycle(t *testing.T) {
 	assert.Equal(t, first.threadID, second.threadID)
 	assert.Equal(t, first.contextWindowID, second.contextWindowID)
 	assert.NotEqual(t, first.turnID, second.turnID)
-	assert.Equal(t, second.turnID, second.rootTurnID)
+	assert.Empty(t, second.rootTurnID)
 	assert.Equal(t, snapshot, *first, "帧身份更新不得污染握手快照")
 
 	retry := advanceCodexWebSocketFingerprint(account, second, []byte(`{"prompt_cache_key":"ws-B","client_metadata":{"turn_id":"ws-turn-2"}}`))
@@ -32,8 +32,8 @@ func TestAdvanceCodexWebSocketFingerprintCacheLifecycle(t *testing.T) {
 	compacted := advanceCodexWebSocketFingerprint(account, retry, []byte(`{"client_metadata":{"window_number":"1","turn_id":"ws-turn-3"}}`))
 	assert.Equal(t, first.firstWindowID, compacted.firstWindowID)
 	assert.Equal(t, first.contextWindowID, compacted.previousWindowID)
-	assert.NotEqual(t, "ws-B", compacted.promptCacheKey)
-	assert.False(t, compacted.promptCacheKeyInBody)
+	assert.Equal(t, "ws-B", compacted.promptCacheKey)
+	assert.True(t, compacted.promptCacheKeyInBody)
 	assert.Equal(t, first.sessionID, compacted.sessionID)
 	assert.Equal(t, first.threadID, compacted.threadID)
 	assert.Equal(t, snapshot, *first)

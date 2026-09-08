@@ -511,6 +511,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					)
 					return
 				}
+				if outputStarted {
+					// 已输出后的失败只记录诊断，保留当前流的终止行为，不触发重放。
+					s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "stream_failed", dataBytes, failedMessage)
+				}
 				if outputStarted && decision.ShouldReturnGenericError() {
 					// 流已提交时无法改写 HTTP 状态，只下发净化后的通用终止事件。
 					dataBytes = openAIStreamGenericFailedEventPayload()

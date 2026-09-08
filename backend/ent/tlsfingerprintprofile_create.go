@@ -84,6 +84,20 @@ func (_c *TLSFingerprintProfileCreate) SetNillableEnableGrease(v *bool) *TLSFing
 	return _c
 }
 
+// SetRustlsNativeOrder sets the "rustls_native_order" field.
+func (_c *TLSFingerprintProfileCreate) SetRustlsNativeOrder(v bool) *TLSFingerprintProfileCreate {
+	_c.mutation.SetRustlsNativeOrder(v)
+	return _c
+}
+
+// SetNillableRustlsNativeOrder sets the "rustls_native_order" field if the given value is not nil.
+func (_c *TLSFingerprintProfileCreate) SetNillableRustlsNativeOrder(v *bool) *TLSFingerprintProfileCreate {
+	if v != nil {
+		_c.SetRustlsNativeOrder(*v)
+	}
+	return _c
+}
+
 // SetCipherSuites sets the "cipher_suites" field.
 func (_c *TLSFingerprintProfileCreate) SetCipherSuites(v []uint16) *TLSFingerprintProfileCreate {
 	_c.mutation.SetCipherSuites(v)
@@ -185,6 +199,10 @@ func (_c *TLSFingerprintProfileCreate) defaults() {
 		v := tlsfingerprintprofile.DefaultEnableGrease
 		_c.mutation.SetEnableGrease(v)
 	}
+	if _, ok := _c.mutation.RustlsNativeOrder(); !ok {
+		v := tlsfingerprintprofile.DefaultRustlsNativeOrder
+		_c.mutation.SetRustlsNativeOrder(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -205,6 +223,9 @@ func (_c *TLSFingerprintProfileCreate) check() error {
 	}
 	if _, ok := _c.mutation.EnableGrease(); !ok {
 		return &ValidationError{Name: "enable_grease", err: errors.New(`ent: missing required field "TLSFingerprintProfile.enable_grease"`)}
+	}
+	if _, ok := _c.mutation.RustlsNativeOrder(); !ok {
+		return &ValidationError{Name: "rustls_native_order", err: errors.New(`ent: missing required field "TLSFingerprintProfile.rustls_native_order"`)}
 	}
 	return nil
 }
@@ -252,6 +273,10 @@ func (_c *TLSFingerprintProfileCreate) createSpec() (*TLSFingerprintProfile, *sq
 	if value, ok := _c.mutation.EnableGrease(); ok {
 		_spec.SetField(tlsfingerprintprofile.FieldEnableGrease, field.TypeBool, value)
 		_node.EnableGrease = value
+	}
+	if value, ok := _c.mutation.RustlsNativeOrder(); ok {
+		_spec.SetField(tlsfingerprintprofile.FieldRustlsNativeOrder, field.TypeBool, value)
+		_node.RustlsNativeOrder = value
 	}
 	if value, ok := _c.mutation.CipherSuites(); ok {
 		_spec.SetField(tlsfingerprintprofile.FieldCipherSuites, field.TypeJSON, value)
@@ -392,6 +417,18 @@ func (u *TLSFingerprintProfileUpsert) SetEnableGrease(v bool) *TLSFingerprintPro
 // UpdateEnableGrease sets the "enable_grease" field to the value that was provided on create.
 func (u *TLSFingerprintProfileUpsert) UpdateEnableGrease() *TLSFingerprintProfileUpsert {
 	u.SetExcluded(tlsfingerprintprofile.FieldEnableGrease)
+	return u
+}
+
+// SetRustlsNativeOrder sets the "rustls_native_order" field.
+func (u *TLSFingerprintProfileUpsert) SetRustlsNativeOrder(v bool) *TLSFingerprintProfileUpsert {
+	u.Set(tlsfingerprintprofile.FieldRustlsNativeOrder, v)
+	return u
+}
+
+// UpdateRustlsNativeOrder sets the "rustls_native_order" field to the value that was provided on create.
+func (u *TLSFingerprintProfileUpsert) UpdateRustlsNativeOrder() *TLSFingerprintProfileUpsert {
+	u.SetExcluded(tlsfingerprintprofile.FieldRustlsNativeOrder)
 	return u
 }
 
@@ -662,6 +699,20 @@ func (u *TLSFingerprintProfileUpsertOne) SetEnableGrease(v bool) *TLSFingerprint
 func (u *TLSFingerprintProfileUpsertOne) UpdateEnableGrease() *TLSFingerprintProfileUpsertOne {
 	return u.Update(func(s *TLSFingerprintProfileUpsert) {
 		s.UpdateEnableGrease()
+	})
+}
+
+// SetRustlsNativeOrder sets the "rustls_native_order" field.
+func (u *TLSFingerprintProfileUpsertOne) SetRustlsNativeOrder(v bool) *TLSFingerprintProfileUpsertOne {
+	return u.Update(func(s *TLSFingerprintProfileUpsert) {
+		s.SetRustlsNativeOrder(v)
+	})
+}
+
+// UpdateRustlsNativeOrder sets the "rustls_native_order" field to the value that was provided on create.
+func (u *TLSFingerprintProfileUpsertOne) UpdateRustlsNativeOrder() *TLSFingerprintProfileUpsertOne {
+	return u.Update(func(s *TLSFingerprintProfileUpsert) {
+		s.UpdateRustlsNativeOrder()
 	})
 }
 
@@ -1125,6 +1176,20 @@ func (u *TLSFingerprintProfileUpsertBulk) SetEnableGrease(v bool) *TLSFingerprin
 func (u *TLSFingerprintProfileUpsertBulk) UpdateEnableGrease() *TLSFingerprintProfileUpsertBulk {
 	return u.Update(func(s *TLSFingerprintProfileUpsert) {
 		s.UpdateEnableGrease()
+	})
+}
+
+// SetRustlsNativeOrder sets the "rustls_native_order" field.
+func (u *TLSFingerprintProfileUpsertBulk) SetRustlsNativeOrder(v bool) *TLSFingerprintProfileUpsertBulk {
+	return u.Update(func(s *TLSFingerprintProfileUpsert) {
+		s.SetRustlsNativeOrder(v)
+	})
+}
+
+// UpdateRustlsNativeOrder sets the "rustls_native_order" field to the value that was provided on create.
+func (u *TLSFingerprintProfileUpsertBulk) UpdateRustlsNativeOrder() *TLSFingerprintProfileUpsertBulk {
+	return u.Update(func(s *TLSFingerprintProfileUpsert) {
+		s.UpdateRustlsNativeOrder()
 	})
 }
 

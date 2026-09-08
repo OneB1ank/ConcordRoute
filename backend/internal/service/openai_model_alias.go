@@ -3,6 +3,8 @@ package service
 import (
 	"strconv"
 	"strings"
+
+	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 )
 
 func lastOpenAIModelSegment(model string) string {
@@ -17,47 +19,9 @@ func lastOpenAIModelSegment(model string) string {
 	return strings.TrimSpace(model)
 }
 
+// canonicalizeOpenAIModelAliasSpelling 与提示词选择共用规范化规则，避免同一别名产生不同解释。
 func canonicalizeOpenAIModelAliasSpelling(model string) string {
-	model = strings.ToLower(lastOpenAIModelSegment(model))
-	if model == "" {
-		return ""
-	}
-
-	normalized := strings.ReplaceAll(model, "_", "-")
-	normalized = strings.Join(strings.Fields(normalized), "-")
-	for strings.Contains(normalized, "--") {
-		normalized = strings.ReplaceAll(normalized, "--", "-")
-	}
-
-	if strings.HasPrefix(normalized, "gpt5") {
-		normalized = "gpt-5" + strings.TrimPrefix(normalized, "gpt5")
-	}
-	if strings.HasPrefix(normalized, "gpt6") {
-		normalized = "gpt-6" + strings.TrimPrefix(normalized, "gpt6")
-	}
-	if !strings.HasPrefix(normalized, "gpt-") && !strings.Contains(normalized, "codex") {
-		return ""
-	}
-
-	replacements := []struct {
-		from string
-		to   string
-	}{
-		{"gpt-5.6sol", "gpt-5.6-sol"},
-		{"gpt-6astra", "gpt-6-astra"},
-		{"gpt-5.6terra", "gpt-5.6-terra"},
-		{"gpt-5.6luna", "gpt-5.6-luna"},
-		{"gpt-5.5pro", "gpt-5.5-pro"},
-		{"gpt-5.4mini", "gpt-5.4-mini"},
-		{"gpt-5.4nano", "gpt-5.4-nano"},
-		{"gpt-5.3-codexspark", "gpt-5.3-codex-spark"},
-		{"gpt-5.3codexspark", "gpt-5.3-codex-spark"},
-		{"gpt-5.3codex", "gpt-5.3-codex"},
-	}
-	for _, replacement := range replacements {
-		normalized = strings.ReplaceAll(normalized, replacement.from, replacement.to)
-	}
-	return normalized
+	return openai.CanonicalizeOpenAIModelAliasSpelling(model)
 }
 
 func openAIModelSupportsReasoningEffort(model string, effort string) bool {

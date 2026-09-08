@@ -606,7 +606,7 @@ func (s *SettingService) GetFallbackModel(ctx context.Context, platform string) 
 		defaultModel = "claude-3-5-sonnet-20241022"
 	case PlatformOpenAI:
 		key = SettingKeyFallbackModelOpenAI
-		defaultModel = "gpt-4o"
+		defaultModel = "gpt-5.6-sol"
 	case PlatformGemini:
 		key = SettingKeyFallbackModelGemini
 		defaultModel = "gemini-2.5-pro"
@@ -987,7 +987,14 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 		return fmt.Errorf("marshal openai fast policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
+	// 串行保存同一实例的策略，保证 DB 提交顺序和缓存发布顺序一致。
+	s.openAIFastPolicyRuntime.writeMu.Lock()
+	defer s.openAIFastPolicyRuntime.writeMu.Unlock()
+	if err := s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.publishOpenAIFastPolicySettings(settings)
+	return nil
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置

@@ -53,11 +53,12 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 		current.originalTurnID = source.turnID
 		current.turnID = newCodexUUIDv7().String()
 		current.turnStartedAtUnixMS = time.Now().UnixMilli()
-		current.originalParentTurnID = source.parentTurnID
-		current.originalRootTurnID = source.rootTurnID
-		current.parentTurnID = source.parentTurnID
-		current.rootTurnID = resolveCodexRootTurnID(source.rootTurnID, source.parentTurnID, current.turnID)
 	}
+	// root/parent 以当前帧为准，即使 turn_id 省略或未变也不回灌上一帧的根。
+	current.originalParentTurnID = source.parentTurnID
+	current.originalRootTurnID = source.rootTurnID
+	current.parentTurnID = source.parentTurnID
+	current.rootTurnID = resolveCodexRootTurnID(source.rootTurnID, source.parentTurnID, current.turnID)
 	if source.windowID != "" || source.windowNumberPresent {
 		resolveCodexFingerprintWindow(account, source, &current)
 		current.originalWindowID = source.windowID
@@ -72,7 +73,7 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 			current.promptCacheKeyInBody = source.promptCacheKeyInBody
 			rememberCodexPromptCacheKey(account, &current, current.promptCacheKey, current.promptCacheKeyInBody)
 		} else if current.windowID != previous.windowID {
-			// 跨窗口缺省不继承旧窗口的键，只查询当前窗口绑定。
+			// 与 HTTP 共用窗口绑定：当前窗口优先，缺省时仅继承直接前一窗口。
 			current.originalPromptCacheKey = ""
 			current.promptCacheKey = resolveOfficialCockpitPromptCacheKey(current.sessionID, "")
 			current.promptCacheKeyInBody = false

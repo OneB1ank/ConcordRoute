@@ -527,7 +527,6 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	var finalResponseBody []byte
 	var upstreamResponseServiceTier string
 	streamAccumulator := newOpenAIChatCompletionsStreamAccumulator(originalModel)
-	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingSSE := make([]string, 0, 4)
@@ -580,8 +579,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	processDataLine := func(payload string) bool {
-		if firstChunk {
-			firstChunk = false
+		// 与原生 Responses 使用同一首内容口径，created、空 delta 和 usage 不算首 token。
+		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(payload, "") {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}

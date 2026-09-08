@@ -42,6 +42,7 @@ type Profile struct {
 	Curves              []uint16
 	PointFormats        []uint16
 	EnableGREASE        bool
+	RustlsNativeOrder   bool     // 显式启用 rustls 0.23.36 原生排序；默认保持模板固定顺序
 	SignatureAlgorithms []uint16 // Empty uses defaultSignatureAlgorithms
 	ALPNProtocols       []string // Empty uses ["http/1.1"]
 	SupportedVersions   []uint16 // Empty uses [TLS1.3, TLS1.2]
@@ -323,12 +324,10 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		host = addr
 	}
 
-	spec := buildClientHelloSpecFromProfile(profile)
-	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
-
-	if err := tlsConn.ApplyPreset(spec); err != nil {
+	tlsConn, err := newTLSFingerprintClient(conn, profile, &utls.Config{ServerName: host})
+	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("apply TLS preset: %w", err)
+		return nil, err
 	}
 
 	handshakeCtx, cancel := context.WithTimeout(ctx, defaultTLSFingerprintHandshakeTimeout)
@@ -384,6 +383,15 @@ func isGREASEValue(v uint16) bool {
 // buildClientHelloSpecFromProfile constructs ClientHelloSpec from a Profile.
 // This is a standalone function that can be used by both Dialer and HTTPProxyDialer.
 func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
+	var seed uint16
+	if profile != nil && profile.RustlsNativeOrder {
+		seed = newRustlsOrderSeed()
+	}
+	return buildClientHelloSpecWithOrderSeed(profile, seed)
+}
+
+// 显式种子仅保存在单条连接内，以便 HRR 新增扩展时继续使用同一排序规则。
+func buildClientHelloSpecWithOrderSeed(profile *Profile, seed uint16) *utls.ClientHelloSpec {
 	// Resolve effective values (profile overrides or built-in defaults)
 	cipherSuites := defaultCipherSuites
 	if profile != nil && len(profile.CipherSuites) > 0 {
@@ -440,6 +448,9 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	extOrder := defaultExtensionOrder
 	if profile != nil && len(profile.Extensions) > 0 {
 		extOrder = profile.Extensions
+	}
+	if profile != nil && profile.RustlsNativeOrder {
+		extOrder = rustlsExtensionOrder(extOrder, seed)
 	}
 
 	// Build extensions list from the ordered IDs.

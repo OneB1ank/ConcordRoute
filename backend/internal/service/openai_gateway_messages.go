@@ -908,7 +908,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	responseID := ""
 	upstreamResponseServiceTier := ""
 	var firstTokenMs *int
-	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
 	responseAccumulator := &anthropicStreamResponseAccumulator{}
@@ -960,8 +959,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 
 	// processDataLine handles a single "data: ..." SSE line from upstream.
 	processDataLine := func(payload string) bool {
-		if firstChunk {
-			firstChunk = false
+		// 协议转换不改变计时口径，避免把响应创建事件误报成首 token。
+		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(payload, "") {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}

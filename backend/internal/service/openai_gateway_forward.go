@@ -293,12 +293,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("image generation disabled for group")
 	}
 
-	instructions := gjson.GetBytes(body, "instructions")
-	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && !compatMessagesBridge {
-		markPatchSet("instructions", defaultCodexSynthInstructions(reqModel))
-	}
-
 	billingModel := account.GetMappedModel(reqModel)
 	if billingModel != reqModel {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", reqModel, billingModel, account.Name, isCodexCLI)
@@ -330,6 +324,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			markPatchSet("model", upstreamModel)
 		}
 	}
+	// 使用最终映射模型补全默认提示词，保留客户端已有 instructions。
+	instructions := gjson.GetBytes(body, "instructions")
+	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
+	if instructionsEmpty && !compatMessagesBridge {
+		markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
+	}
+
 	if strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()) == "minimal" {
 		markPatchSet("reasoning.effort", "none")
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
@@ -573,8 +574,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	if account.Type == AccountTypeOAuth && isCompactRequest {
 		// 指纹 ID 已在上方从原始 Body/Header 派生；发送前再按旧 /responses/compact
-		// 白名单收口请求体，避免 client_metadata、prompt_cache_key 等普通
-		// Responses 字段泄漏到不支持这些字段的 compact schema。
+		// 白名单收口请求体，保留显式缓存键，避免 client_metadata、stream 等
+		// 普通 Responses 字段泄漏到不支持这些字段的 compact schema。
 		compactBody, compactChanged, compactErr := normalizeOpenAICompactRequestBody(body)
 		if compactErr != nil {
 			return nil, compactErr

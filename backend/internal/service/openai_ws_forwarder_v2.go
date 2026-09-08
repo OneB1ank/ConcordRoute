@@ -570,7 +570,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if isTerminalEvent {
 			terminalEventCount++
 		}
-		if firstTokenMs == nil && isTokenEvent {
+		// 首内容统计独立于协议进度分类，空 delta 不应提前触发 TTFT。
+		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(string(message), eventType) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
@@ -764,7 +765,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			}
 			// 在首个 token 前先缓冲事件（如 response.created），
 			// 以便上游早期断连时仍可安全回退到 HTTP，不给下游发送半截流。
-			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
+			// 缓冲沿用原有协议进度条件，不让 TTFT 统计口径影响事件释放时机。
+			shouldBuffer := tokenEventCount == 0 && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
 				buffered := make([]byte, len(message))
 				copy(buffered, message)

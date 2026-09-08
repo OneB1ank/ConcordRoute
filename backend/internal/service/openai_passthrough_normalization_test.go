@@ -28,7 +28,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_CompactRemovesUnsupportedUser(t *te
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(normalized, "user").Exists())
 	require.False(t, gjson.GetBytes(normalized, "metadata").Exists())
-	require.False(t, gjson.GetBytes(normalized, "prompt_cache_key").Exists())
+	require.Equal(t, "cache", gjson.GetBytes(normalized, "prompt_cache_key").String())
 	require.False(t, gjson.GetBytes(normalized, "client_metadata").Exists())
 	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
 	require.False(t, gjson.GetBytes(normalized, "store").Exists())

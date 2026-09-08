@@ -128,6 +128,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			nil,
 			drop,
 			nil,
 			nil,
@@ -155,6 +156,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			time.Now(),
 			time.Now,
 			&relayState{},
+			nil,
 			nil,
 			nil,
 			nil,
@@ -199,6 +201,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
+			nil,
 			drop,
 			nil,
 			dropped,
@@ -232,6 +235,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			time.Now(),
 			time.Now,
 			&relayState{},
+			nil,
 			nil,
 			nil,
 			nil,
@@ -411,14 +415,15 @@ func TestEmitTurnCompleteCoverage(t *testing.T) {
 	})
 	require.Equal(t, 0, called)
 
-	// 缺少 response_id 时不应触发。
+	// 缺少 response_id 仍结算文本终态，但不得补造响应 ID。
 	emitTurnComplete(func(turn RelayTurnResult) {
 		called++
+		require.Empty(t, turn.RequestID)
 	}, &relayState{requestModel: "gpt-5"}, observedUpstreamEvent{
 		terminal:  true,
 		eventType: "response.completed",
 	})
-	require.Equal(t, 0, called)
+	require.Equal(t, 1, called)
 
 	// terminal 且 response_id 存在，应该触发；state=nil 时 model 为空串。
 	var got RelayTurnResult
@@ -431,7 +436,7 @@ func TestEmitTurnCompleteCoverage(t *testing.T) {
 		responseID: "resp_emit",
 		usage:      Usage{InputTokens: 2, OutputTokens: 3},
 	})
-	require.Equal(t, 1, called)
+	require.Equal(t, 2, called)
 	require.Equal(t, "resp_emit", got.RequestID)
 	require.Equal(t, "response.completed", got.TerminalEventType)
 	require.Equal(t, 2, got.Usage.InputTokens)
@@ -552,7 +557,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	require.False(t, observed.terminal)
 	require.Equal(t, "", observed.responseID)
 
-	// terminal：顶层 event ID 不应进入 response_id，因此也不应产生绑定回调输入。
+	// terminal：允许回调用量，但顶层 event ID 不得冒充 response_id。
 	observed = observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.completed","id":"evt_completed_123","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`),
@@ -567,9 +572,9 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	called := 0
 	emitTurnComplete(func(turn RelayTurnResult) {
 		called++
-		require.NotEqual(t, "evt_completed_123", turn.RequestID)
+		require.Empty(t, turn.RequestID)
 	}, state, observed)
-	require.Zero(t, called)
+	require.Equal(t, 1, called)
 
 	// terminal：允许兜底用 resp_ 开头的顶层 id（用于兼容少数字段变体）。
 	observed = observeUpstreamMessage(

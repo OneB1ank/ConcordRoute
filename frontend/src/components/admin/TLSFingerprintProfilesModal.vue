@@ -256,6 +256,9 @@
             <tr v-for="profile in profiles" :key="profile.id" class="hover:bg-gray-50 dark:hover:bg-dark-700">
               <td class="px-3 py-2">
                 <div class="font-medium text-gray-900 dark:text-white text-sm">{{ profile.name }}</div>
+                <span v-if="profile.rustls_native_order" class="text-xs text-primary-600 dark:text-primary-400">
+                  {{ t('admin.tlsFingerprintProfiles.form.rustlsNativeOrder') }}
+                </span>
               </td>
               <td class="px-3 py-2">
                 <div v-if="profile.description" class="text-sm text-gray-500 dark:text-gray-400 max-w-xs truncate">
@@ -404,6 +407,35 @@
             </span>
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.tlsFingerprintProfiles.form.enableGreaseHint') }}
+            </p>
+          </div>
+        </div>
+
+        <!-- 排序策略独立开关，旧模板及单次采集结果均不自动启用。 -->
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="form.rustls_native_order"
+            :aria-label="t('admin.tlsFingerprintProfiles.form.rustlsNativeOrder')"
+            aria-describedby="rustls-native-order-hint"
+            @click="form.rustls_native_order = !form.rustls_native_order"
+            :class="[
+              'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              form.rustls_native_order ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span :class="[
+              'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform',
+              form.rustls_native_order ? 'translate-x-4' : 'translate-x-0'
+            ]" />
+          </button>
+          <div>
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t('admin.tlsFingerprintProfiles.form.rustlsNativeOrder') }}
+            </span>
+            <p id="rustls-native-order-hint" class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.tlsFingerprintProfiles.form.rustlsNativeOrderHint') }}
             </p>
           </div>
         </div>
@@ -595,7 +627,8 @@ const fieldInputs = reactive({
 const form = reactive({
   name: '',
   description: null as string | null,
-  enable_grease: false
+  enable_grease: false,
+  rustls_native_order: false
 })
 
 const isCollectorRunning = computed(() => Boolean(collectorStatus.value?.running))
@@ -656,6 +689,7 @@ const resetForm = () => {
   form.name = ''
   form.description = null
   form.enable_grease = false
+  form.rustls_native_order = false
   fieldInputs.cipher_suites = ''
   fieldInputs.curves = ''
   fieldInputs.point_formats = ''
@@ -755,6 +789,7 @@ const fillFormFromProfile = (profile: TLSFingerprintProfile) => {
   form.name = profile.name
   form.description = profile.description
   form.enable_grease = profile.enable_grease
+  form.rustls_native_order = profile.rustls_native_order ?? false
   fieldInputs.cipher_suites = formatNumericArray(profile.cipher_suites)
   fieldInputs.curves = formatPlainNumericArray(profile.curves)
   fieldInputs.point_formats = formatPlainNumericArray(profile.point_formats)
@@ -828,6 +863,8 @@ const parseYamlInput = () => {
 
   // 简单解析扁平 key-value 结构，支持数字数组和字符串数组。
   const lines = text.split('\n')
+  // 导入旧 YAML 时不能继承上一个模板的原生排序开关。
+  form.rustls_native_order = false
 
   let foundName = false
 
@@ -858,6 +895,9 @@ const parseYamlInput = () => {
         break
       case 'enable_grease':
         form.enable_grease = value === 'true'
+        break
+      case 'rustls_native_order':
+        form.rustls_native_order = value === 'true'
         break
       case 'cipher_suites':
       case 'curves':
@@ -1062,6 +1102,7 @@ const buildProfileYaml = (profile: TLSFingerprintProfile): string => {
     `  name: ${formatYamlString(profile.name)}`,
     `  description: ${formatYamlString(profile.description || '')}`,
     `  enable_grease: ${profile.enable_grease ? 'true' : 'false'}`,
+    `  rustls_native_order: ${profile.rustls_native_order ? 'true' : 'false'}`,
     `  cipher_suites: ${formatYamlNumericArray(profile.cipher_suites)}`,
     `  curves: ${formatYamlNumericArray(profile.curves, formatDecimal)}`,
     `  point_formats: ${formatYamlNumericArray(profile.point_formats, formatDecimal)}`,
@@ -1094,6 +1135,7 @@ const buildValidatedProfileData = () => {
     name: form.name.trim(),
     description: form.description?.trim() || null,
     enable_grease: form.enable_grease,
+    rustls_native_order: form.rustls_native_order,
     cipher_suites: parseNumericArray(fieldInputs.cipher_suites, 'cipher_suites'),
     curves: parseNumericArray(fieldInputs.curves, 'curves'),
     point_formats: parseNumericArray(fieldInputs.point_formats, 'point_formats', 0xff),
@@ -1103,6 +1145,13 @@ const buildValidatedProfileData = () => {
     key_share_groups: parseNumericArray(fieldInputs.key_share_groups, 'key_share_groups'),
     psk_modes: parseNumericArray(fieldInputs.psk_modes, 'psk_modes', 0xff),
     extensions: parseNumericArray(fieldInputs.extensions, 'extensions')
+  }
+  if (data.rustls_native_order && (
+    data.enable_grease ||
+    data.extensions.some(id => (id & 0x0f0f) === 0x0a0a && (id >> 8) === (id & 0xff)) ||
+    data.extensions.some(id => [41, 44, 64768].includes(id))
+  )) {
+    throw new Error(t('admin.tlsFingerprintProfiles.form.rustlsNativeOrderConflict'))
   }
   validateTLSProfileRelations(data)
   return data

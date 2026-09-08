@@ -13,6 +13,12 @@
 ## 身份与传输一致性
 
 - [ConcordRoute 与上游差异：指纹、身份与出口一致性](fingerprint-consistency.md)
+- [TLS 模板的 rustls 原生排序开关](rustls-native-order.md)
+
+## Codex 兼容与性能
+
+- [Codex 实验上下文管理与中转兼容边界](codex-experimental-context.md)
+- [首字延迟：统计口径与热路径排查](first-token-latency.md)
 
 ## 支付
 
