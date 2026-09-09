@@ -30,6 +30,9 @@ export default {
       loadingText: 'loading',
       ready: 'ready',
       systemLogs: {
+        retentionDaysHint: 'Applied by scheduled cleanup to system logs and cleanup audits.',
+        persistAccessLogs: 'Store access logs in database',
+        persistAccessLogsHint: 'Disabled by default to reduce per-request database writes. Warning, error, and audit logs are retained. Usage records and billing are unaffected.',
         host: 'Host',
         empty: 'No system logs',
         cleanupFilterRequired: 'Cleanup requires at least one filter condition (start/end time or another field)',

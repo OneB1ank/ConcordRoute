@@ -1521,7 +1521,7 @@ type OpsCleanupConfig struct {
 	BatchSize    int    `mapstructure:"batch_size"`
 	BatchPauseMS int    `mapstructure:"batch_pause_ms"`
 
-	// 保留天数：0 表示清空目标表，正数表示保留最近对应天数的数据。
+	// 错误日志与指标保留天数为 0 时清空目标表；启用清理时系统日志保留天数须为正数。
 	// vNext 默认所有运维数据集保留 30 天。
 	ErrorLogRetentionDays      int `mapstructure:"error_log_retention_days"`
 	SystemLogRetentionDays     int `mapstructure:"system_log_retention_days"`
@@ -3581,6 +3581,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Ops.Cleanup.ErrorLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.error_log_retention_days must be non-negative")
+	}
+	if c.Ops.Cleanup.Enabled && c.Ops.Cleanup.SystemLogRetentionDays == 0 {
+		return fmt.Errorf("ops.cleanup.system_log_retention_days must be positive when ops cleanup is enabled")
 	}
 	if c.Ops.Cleanup.SystemLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.system_log_retention_days must be non-negative")

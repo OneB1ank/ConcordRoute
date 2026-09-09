@@ -15,13 +15,14 @@ import (
 
 func defaultOpsRuntimeLogConfig(cfg *config.Config) *OpsRuntimeLogConfig {
 	out := &OpsRuntimeLogConfig{
-		Level:           "info",
-		EnableSampling:  false,
-		SamplingInitial: 100,
-		SamplingNext:    100,
-		Caller:          true,
-		StacktraceLevel: "error",
-		RetentionDays:   30,
+		Level:             "info",
+		PersistAccessLogs: false,
+		EnableSampling:    false,
+		SamplingInitial:   100,
+		SamplingNext:      100,
+		Caller:            true,
+		StacktraceLevel:   "error",
+		RetentionDays:     30,
 	}
 	if cfg == nil {
 		return out
@@ -133,6 +134,10 @@ func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntime
 		return nil, errors.New("invalid operator id")
 	}
 
+	// 与后台刷新共用锁，保证落库和本实例策略变更作为一个完整操作。
+	s.runtimeSettingsMu.Lock()
+	defer s.runtimeSettingsMu.Unlock()
+
 	oldCfg, err := s.GetRuntimeLogConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -144,7 +149,7 @@ func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntime
 		return nil, err
 	}
 
-	if err := applyOpsRuntimeLogConfig(&next); err != nil {
+	if err := s.applyRuntimeLogConfig(&next); err != nil {
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "apply_failed: "+err.Error())
 		return nil, err
 	}
@@ -159,7 +164,7 @@ func (s *OpsService) UpdateRuntimeLogConfig(ctx context.Context, req *OpsRuntime
 	}
 	if err := s.settingRepo.Set(ctx, SettingKeyOpsRuntimeLogConfig, string(encoded)); err != nil {
 		// 存储失败时回滚到旧配置，避免内存状态与持久化状态不一致。
-		_ = applyOpsRuntimeLogConfig(oldCfg)
+		_ = s.applyRuntimeLogConfig(oldCfg)
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, &next, "persist_failed: "+err.Error())
 		return nil, err
 	}
@@ -187,6 +192,10 @@ func (s *OpsService) ResetRuntimeLogConfig(ctx context.Context, operatorID int64
 		return nil, errors.New("invalid operator id")
 	}
 
+	// 与后台刷新共用锁，保证落库和本实例策略变更作为一个完整操作。
+	s.runtimeSettingsMu.Lock()
+	defer s.runtimeSettingsMu.Unlock()
+
 	oldCfg, err := s.GetRuntimeLogConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -198,14 +207,14 @@ func (s *OpsService) ResetRuntimeLogConfig(ctx context.Context, operatorID int64
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_validation_failed: "+err.Error())
 		return nil, err
 	}
-	if err := applyOpsRuntimeLogConfig(resetCfg); err != nil {
+	if err := s.applyRuntimeLogConfig(resetCfg); err != nil {
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_apply_failed: "+err.Error())
 		return nil, err
 	}
 
 	// 清理 runtime 覆盖配置，回退到 env/yaml baseline。
 	if err := s.settingRepo.Delete(ctx, SettingKeyOpsRuntimeLogConfig); err != nil && !errors.Is(err, ErrSettingNotFound) {
-		_ = applyOpsRuntimeLogConfig(oldCfg)
+		_ = s.applyRuntimeLogConfig(oldCfg)
 		s.auditRuntimeLogConfigFailure(operatorID, oldCfg, resetCfg, "reset_persist_failed: "+err.Error())
 		return nil, err
 	}
@@ -224,6 +233,17 @@ func (s *OpsService) ResetRuntimeLogConfig(ctx context.Context, operatorID int64
 		}
 	}
 	return resetCfg, nil
+}
+
+// applyRuntimeLogConfig 同时更新日志器与数据库落库策略，供保存、启动及失败回滚复用。
+func (s *OpsService) applyRuntimeLogConfig(cfg *OpsRuntimeLogConfig) error {
+	if err := applyOpsRuntimeLogConfig(cfg); err != nil {
+		return err
+	}
+	if s != nil && s.systemLogSink != nil {
+		s.systemLogSink.SetPersistAccessLogs(cfg.PersistAccessLogs)
+	}
+	return nil
 }
 
 func applyOpsRuntimeLogConfig(cfg *OpsRuntimeLogConfig) error {
@@ -252,7 +272,7 @@ func (s *OpsService) applyRuntimeLogConfigOnStartup(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	_ = applyOpsRuntimeLogConfig(cfg)
+	_ = s.applyRuntimeLogConfig(cfg)
 }
 
 func (s *OpsService) auditRuntimeLogConfigChange(operatorID int64, oldCfg *OpsRuntimeLogConfig, newCfg *OpsRuntimeLogConfig, action string) {

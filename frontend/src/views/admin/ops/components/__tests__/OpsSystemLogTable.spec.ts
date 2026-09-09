@@ -9,6 +9,8 @@ const mockListSystemLogs = vi.fn()
 const mockCleanupSystemLogs = vi.fn()
 const mockGetSystemLogSinkHealth = vi.fn()
 const mockGetRuntimeLogConfig = vi.fn()
+const mockUpdateRuntimeLogConfig = vi.fn()
+const mockResetRuntimeLogConfig = vi.fn()
 const mockShowError = vi.fn()
 const mockShowSuccess = vi.fn()
 
@@ -18,6 +20,8 @@ vi.mock('@/api/admin/ops', () => ({
     cleanupSystemLogs: (...args: any[]) => mockCleanupSystemLogs(...args),
     getSystemLogSinkHealth: (...args: any[]) => mockGetSystemLogSinkHealth(...args),
     getRuntimeLogConfig: (...args: any[]) => mockGetRuntimeLogConfig(...args),
+    updateRuntimeLogConfig: (...args: any[]) => mockUpdateRuntimeLogConfig(...args),
+    resetRuntimeLogConfig: (...args: any[]) => mockResetRuntimeLogConfig(...args),
   },
 }))
 
@@ -55,6 +59,7 @@ const PaginationStub = defineComponent({
 
 const runtimeConfig = {
   level: 'info',
+  persist_access_logs: false,
   enable_sampling: false,
   sampling_initial: 100,
   sampling_thereafter: 100,
@@ -94,6 +99,8 @@ describe('OpsSystemLogTable host support', () => {
     mockCleanupSystemLogs.mockResolvedValue({ deleted: 1 })
     mockGetSystemLogSinkHealth.mockResolvedValue(sinkHealth)
     mockGetRuntimeLogConfig.mockResolvedValue(runtimeConfig)
+    mockUpdateRuntimeLogConfig.mockImplementation(async (cfg) => cfg)
+    mockResetRuntimeLogConfig.mockResolvedValue(runtimeConfig)
   })
 
   it('renders the host and sends it with list and cleanup filters', async () => {
@@ -151,10 +158,41 @@ describe('OpsSystemLogTable host support', () => {
     expect(mockShowError).toHaveBeenCalledWith('admin.ops.systemLogs.cleanupFilterRequired')
   })
 
+  it('keeps access-log persistence opt-in and applies save and reset', async () => {
+    const wrapper = mount(OpsSystemLogTable, { global: { stubs: { Select: SelectStub, Pagination: PaginationStub } } })
+    await flushPromises()
+    const label = wrapper.findAll('label').find((item) => item.text().includes('admin.ops.systemLogs.persistAccessLogs'))!
+    const checkbox = label.find('input')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+    await checkbox.setValue(true)
+    await wrapper.findAll('button').find((item) => item.text() === '保存并生效')!.trigger('click')
+    await flushPromises()
+    expect(mockUpdateRuntimeLogConfig).toHaveBeenCalledWith(expect.objectContaining({ persist_access_logs: true }))
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+    await wrapper.findAll('button').find((item) => item.text() === '回滚默认值')!.trigger('click')
+    await flushPromises()
+    expect(mockResetRuntimeLogConfig).toHaveBeenCalledOnce()
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the access-log default disabled for legacy responses', async () => {
+    mockGetRuntimeLogConfig.mockResolvedValueOnce({ ...runtimeConfig, persist_access_logs: undefined })
+    const wrapper = mount(OpsSystemLogTable, { global: { stubs: { Select: SelectStub, Pagination: PaginationStub } } })
+    await flushPromises()
+    await wrapper.findAll('button').find((item) => item.text() === '保存并生效')!.trigger('click')
+    await flushPromises()
+    expect(mockUpdateRuntimeLogConfig).toHaveBeenCalledWith(expect.objectContaining({ persist_access_logs: false }))
+    wrapper.unmount()
+  })
+
   it.each([
     ['zh', zhLocale],
     ['en', enLocale],
   ])('defines the Host translation for %s', (_name, locale) => {
     expect(locale.admin.ops.systemLogs.host).toBe('Host')
+    expect(locale.admin.ops.systemLogs.persistAccessLogs).toBeTruthy()
+    expect(locale.admin.ops.systemLogs.persistAccessLogsHint).toBeTruthy()
+    expect(locale.admin.ops.systemLogs.retentionDaysHint).toBeTruthy()
   })
 })

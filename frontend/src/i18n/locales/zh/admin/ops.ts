@@ -30,6 +30,9 @@ export default {
       loadingText: '加载中...',
       ready: '就绪',
       systemLogs: {
+        retentionDaysHint: '由定时数据清理任务执行，同时用于系统日志与清理审计。',
+        persistAccessLogs: '将访问日志写入数据库',
+        persistAccessLogsHint: '默认关闭，以减少每个请求产生的数据库写入。警告、错误和审计日志仍会保留；此开关不影响用量记录与计费。',
         host: 'Host',
         empty: '暂无系统日志',
         cleanupFilterRequired: '清理需要至少一个筛选条件（起止时间或其他字段）',

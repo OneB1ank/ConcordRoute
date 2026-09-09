@@ -201,12 +201,13 @@ func (s *OpsCleanupService) Reload(ctx context.Context) error {
 //   - Schedule：settings 非空时覆盖，否则保留 cfg
 //   - *RetentionDays：settings >=0 时覆盖（包括 0=TRUNCATE），<0 沿用 cfg
 //
-// 若 settings 表无该 key（ErrSettingNotFound）或解析失败，整体 fallback 到 cfg.Ops.Cleanup。
+// 高级设置与运行时日志保留期分别回退到部署默认值，单项解析失败不影响另一项。
 func (s *OpsCleanupService) computeEffectiveLocked(ctx context.Context) {
 	base := config.OpsCleanupConfig{}
 	if s.cfg != nil {
 		base = s.cfg.Ops.Cleanup
 	}
+	base.SystemLogRetentionDays = defaultOpsRuntimeLogConfig(s.cfg).RetentionDays
 	if base.BatchSize <= 0 {
 		base.BatchSize = opsCleanupDefaultBatchSize
 	}
@@ -228,8 +229,9 @@ func (s *OpsCleanupService) computeEffectiveLocked(ctx context.Context) {
 				"[OpsCleanup] read advanced settings failed, using cfg: %v", err)
 		}
 	} else if strings.TrimSpace(raw) != "" {
-		var adv OpsAdvancedSettings
-		if err := json.Unmarshal([]byte(raw), &adv); err != nil {
+		// 旧设置缺少字段时采用默认值，显式 false 和 0 仍按原值处理。
+		adv := defaultOpsAdvancedSettingsForConfig(s.cfg)
+		if err := json.Unmarshal([]byte(raw), adv); err != nil {
 			logger.LegacyPrintf("service.ops_cleanup",
 				"[OpsCleanup] parse advanced settings failed, using cfg: %v", err)
 		} else {
@@ -351,7 +353,7 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 		{effective.ErrorLogRetentionDays, "ops_ingress_reject_aggregates", "bucket_start", false, &out.ingressRejects},
 		{effective.ErrorLogRetentionDays, "ops_alert_events", "fired_at", false, &out.alertEvents},
 		{effective.SystemLogRetentionDays, "ops_system_logs", "created_at", false, &out.systemLogs},
-		{effective.ErrorLogRetentionDays, "ops_system_log_cleanup_audits", "created_at", false, &out.logAudits},
+		{effective.SystemLogRetentionDays, "ops_system_log_cleanup_audits", "created_at", false, &out.logAudits},
 		{effective.MinuteMetricsRetentionDays, "ops_system_metrics", "created_at", false, &out.systemMetrics},
 		{effective.HourlyMetricsRetentionDays, "ops_metrics_hourly", "bucket_start", false, &out.hourlyPreagg},
 		{effective.HourlyMetricsRetentionDays, "ops_metrics_daily", "bucket_date", true, &out.dailyPreagg},

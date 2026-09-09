@@ -69,12 +69,14 @@ type OpsMetricThresholds struct {
 }
 
 type OpsRuntimeLogConfig struct {
-	Level           string         `json:"level"`
-	EnableSampling  bool           `json:"enable_sampling"`
-	SamplingInitial int            `json:"sampling_initial"`
-	SamplingNext    int            `json:"sampling_thereafter"`
-	Caller          bool           `json:"caller"`
-	StacktraceLevel string         `json:"stacktrace_level"`
+	Level             string `json:"level"`
+	PersistAccessLogs bool   `json:"persist_access_logs"`
+	EnableSampling    bool   `json:"enable_sampling"`
+	SamplingInitial   int    `json:"sampling_initial"`
+	SamplingNext      int    `json:"sampling_thereafter"`
+	Caller            bool   `json:"caller"`
+	StacktraceLevel   string `json:"stacktrace_level"`
+	// RetentionDays 统一控制系统日志及其清理审计的保留天数。
 	RetentionDays   int            `json:"retention_days"`
 	Source          string         `json:"source,omitempty"`
 	UpdatedAt       string         `json:"updated_at,omitempty"`

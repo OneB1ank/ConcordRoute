@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
 )
 
 const (
@@ -361,7 +363,8 @@ func (s *OpsService) UpdateOpsAlertRuntimeSettings(ctx context.Context, cfg *Ops
 func defaultOpsAdvancedSettings() *OpsAdvancedSettings {
 	return &OpsAdvancedSettings{
 		DataRetention: OpsDataRetentionSettings{
-			CleanupEnabled:             false,
+			// 与部署清理默认值对齐；已保存的显式关闭设置仍优先。
+			CleanupEnabled:             true,
 			CleanupSchedule:            opsCleanupDefaultSchedule,
 			CleanupBatchSize:           opsCleanupDefaultBatchSize,
 			CleanupPauseMS:             int(opsCleanupDefaultBatchPause / time.Millisecond),
@@ -381,6 +384,14 @@ func defaultOpsAdvancedSettings() *OpsAdvancedSettings {
 		AutoRefreshEnabled:              false,
 		AutoRefreshIntervalSec:          30,
 	}
+}
+
+func defaultOpsAdvancedSettingsForConfig(cfg *config.Config) *OpsAdvancedSettings {
+	defaults := defaultOpsAdvancedSettings()
+	if cfg != nil {
+		defaults.DataRetention.CleanupEnabled = cfg.Ops.Cleanup.Enabled
+	}
+	return defaults
 }
 
 func normalizeOpsAdvancedSettings(cfg *OpsAdvancedSettings) {
@@ -529,6 +540,7 @@ func (s *OpsService) OpsAdvancedSettingsSnapshot() OpsAdvancedSettings {
 		if snapshot := s.runtimeSettings.Load(); snapshot != nil {
 			return snapshot.advanced
 		}
+		return *defaultOpsAdvancedSettingsForConfig(s.cfg)
 	}
 	return *defaultOpsAdvancedSettings()
 }

@@ -128,7 +128,8 @@ type ResponsesEventToChatState struct {
 	Finalized              bool        // true after finish chunk has been emitted
 	NextToolCallIndex      int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
-	OutputIndexToArguments map[int]string
+	// 缓冲区按指针保存，避免逐片复制完整参数，也避免复制已使用的 strings.Builder。
+	OutputIndexToArguments map[int]*strings.Builder
 	IncludeUsage           bool
 	Usage                  *ChatUsage
 }
@@ -139,7 +140,7 @@ func NewResponsesEventToChatState() *ResponsesEventToChatState {
 		ID:                     generateChatCmplID(),
 		Created:                time.Now().Unix(),
 		OutputIndexToToolIndex: make(map[int]int),
-		OutputIndexToArguments: make(map[int]string),
+		OutputIndexToArguments: make(map[int]*strings.Builder),
 	}
 }
 
@@ -270,6 +271,19 @@ func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	})}
 }
 
+// 工具缓冲区惰性创建，delta 与 done 共用同一份已发送参数。
+func (state *ResponsesEventToChatState) argumentsForOutput(outputIndex int) *strings.Builder {
+	if state.OutputIndexToArguments == nil {
+		state.OutputIndexToArguments = make(map[int]*strings.Builder)
+	}
+	arguments := state.OutputIndexToArguments[outputIndex]
+	if arguments == nil {
+		arguments = &strings.Builder{}
+		state.OutputIndexToArguments[outputIndex] = arguments
+	}
+	return arguments
+}
+
 func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if evt.Delta == "" {
 		return nil
@@ -279,10 +293,7 @@ func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	if !ok {
 		return nil
 	}
-	if state.OutputIndexToArguments == nil {
-		state.OutputIndexToArguments = make(map[int]string)
-	}
-	state.OutputIndexToArguments[evt.OutputIndex] += evt.Delta
+	_, _ = state.argumentsForOutput(evt.OutputIndex).WriteString(evt.Delta)
 
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
@@ -305,16 +316,15 @@ func resToChatHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 	if evt.Type == "response.custom_tool_call_input.done" {
 		completed = evt.Input
 	}
-	current := state.OutputIndexToArguments[evt.OutputIndex]
+	arguments := state.argumentsForOutput(evt.OutputIndex)
+	current := arguments.String()
 	if completed == "" || !strings.HasPrefix(completed, current) || completed == current {
 		return nil
 	}
 
 	remainder := completed[len(current):]
-	if state.OutputIndexToArguments == nil {
-		state.OutputIndexToArguments = make(map[int]string)
-	}
-	state.OutputIndexToArguments[evt.OutputIndex] = completed
+	// 只追加新后缀，避免 done 再次复制已累积的完整前缀。
+	_, _ = arguments.WriteString(remainder)
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
 			Index: &idx,
