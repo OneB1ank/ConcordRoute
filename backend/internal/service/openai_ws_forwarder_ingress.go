@@ -378,6 +378,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if err := json.Unmarshal(normalized, &payloadMap); err != nil {
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", err)
 			}
+			// 与 HTTP 生图桥保持一致：只调整工具协议，不追加行为提示。
 			bridgeModified := false
 			if ensureOpenAIResponsesImageGenerationTool(payloadMap) {
 				bridgeModified = true
@@ -389,10 +390,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if normalizeOpenAIResponsesImageGenerationTools(payloadMap) {
 				bridgeModified = true
-			}
-			if applyCodexImageGenerationBridgeInstructions(payloadMap) {
-				bridgeModified = true
-				logOpenAIWSModeInfo("ingress_ws_codex_image_bridge_instructions_added account_id=%d", account.ID)
 			}
 			if bridgeModified {
 				rebuilt, marshalErr := json.Marshal(payloadMap)

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import zhSettings from '@/i18n/locales/zh/admin/settings'
+import enSettings from '@/i18n/locales/en/admin/settings'
 
 const clipboardWriteTextMock = vi.fn()
 
@@ -141,6 +143,12 @@ async function openCreateForm(wrapper: ReturnType<typeof mountModal>) {
 }
 
 describe('TLSFingerprintProfilesModal', () => {
+  it.each([zhSettings, enSettings])('ALPN 修复提示在实际模板语言包中完整定义', (locale) => {
+    for (const key of ['yamlAlpnInvalid', 'alpnExtensionConflict', 'addAlpnExtension', 'clearAlpnProtocols']) {
+      expect(locale.tlsFingerprintProfiles.form).toHaveProperty(key, expect.any(String))
+    }
+  })
+
   it('原生排序默认关闭，可显式启用并随保存请求提交', async () => {
     const wrapper = mountModal()
     await flushPromises()
@@ -403,6 +411,175 @@ describe('TLSFingerprintProfilesModal', () => {
       alpn_protocols: ['h2', 'http/1.1'],
       extensions: [16]
     }))
+  })
+
+  it.each(['', 'alpn_protocols: null', 'alpn_protocols:', 'alpn_protocols: []'])(
+    '重新导入无 ALPN 的 YAML 不残留上一模板的协议：%s',
+    async (alpnLine) => {
+      const wrapper = mountModal()
+      await flushPromises()
+      await openCreateForm(wrapper)
+      const yaml = wrapper.find('textarea')
+      const parse = wrapper.findAll('button').find(button =>
+        button.text().includes('admin.tlsFingerprintProfiles.form.parseYaml')
+      )!
+      await yaml.setValue('name: previous\nalpn_protocols: ["h2", "http/1.1"]\nextensions: [0, 16]')
+      await parse.trigger('click')
+      await yaml.setValue(`name: captured-no-alpn\n${alpnLine}\nextensions: [0, 10, 11, 13, 43, 45, 51]`)
+      await parse.trigger('click')
+      await wrapper.findAll('button').find(button => button.text().includes('common.create'))!.trigger('click')
+      await flushPromises()
+
+      expect(showErrorMock).not.toHaveBeenCalled()
+      expect(createProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'captured-no-alpn',
+        alpn_protocols: [],
+        extensions: [0, 10, 11, 13, 43, 45, 51]
+      }))
+      wrapper.unmount()
+    }
+  )
+
+  it('ALPN 缺少扩展时显式补齐 16，保留原扩展顺序且不自动保存', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    const extensions = wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]')
+    await wrapper.find('textarea[placeholder="h2, http/1.1"]').setValue('h2, http/1.1')
+    await extensions.setValue('0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45')
+
+    const repair = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.addAlpnExtension')
+    )
+    expect(repair).toBeTruthy()
+    expect(createProfileMock).not.toHaveBeenCalled()
+    expect(extensions.element.value).toBe('0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45')
+    await repair!.trigger('click')
+    expect(createProfileMock).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="alpn-extension-conflict"]').exists()).toBe(false)
+    await wrapper.findAll('button').find(button => button.text().includes('common.create'))!.trigger('click')
+    await flushPromises()
+    expect(createProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+      alpn_protocols: ['h2', 'http/1.1'],
+      extensions: [0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45, 16]
+    }))
+    wrapper.unmount()
+  })
+
+  it('ALPN 冲突时可明确清空协议，保存无 ALPN 实采而不增添扩展', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    const alpn = wrapper.find('textarea[placeholder="h2, http/1.1"]')
+    const extensions = wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]')
+    await alpn.setValue('http/1.1')
+    await extensions.setValue('0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45')
+    const clear = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.clearAlpnProtocols')
+    )
+    expect(clear).toBeTruthy()
+    await clear!.trigger('click')
+    expect(alpn.element.value).toBe('')
+    expect(extensions.element.value).toBe('0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45')
+    expect(createProfileMock).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find(button => button.text().includes('common.create'))!.trigger('click')
+    await flushPromises()
+    expect(createProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+      alpn_protocols: [],
+      extensions: [0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45]
+    }))
+    wrapper.unmount()
+  })
+
+  it('ALPN 导入格式错误时报告错误，不清空已有协议', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    const alpn = wrapper.find('textarea[placeholder="h2, http/1.1"]')
+    await alpn.setValue('h2')
+    await wrapper.find('textarea').setValue('name: malformed\nalpn_protocols: [h2')
+    await wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.parseYaml')
+    )!.trigger('click')
+    expect(showErrorMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.form.yamlAlpnInvalid')
+    expect(alpn.element.value).toBe('h2')
+    expect(createProfileMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['h2', ''],
+    ['h2', '0, 16'],
+    ['', '0, 13'],
+    ['h2', '0, invalid'],
+    ['h2, h2', '0, 13']
+  ])('默认、合法或格式错误的字段不显示 ALPN 缺扩展修复：%s / %s', async (alpn, extensions) => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    await wrapper.find('textarea[placeholder="h2, http/1.1"]').setValue(alpn)
+    await wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]').setValue(extensions)
+    expect(wrapper.find('[data-testid="alpn-extension-conflict"]').exists()).toBe(false)
+    expect(createProfileMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('补齐 ALPN 扩展时保留末尾 PSK 的位置约束', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    await wrapper.find('textarea[placeholder="h2, http/1.1"]').setValue('http/1.1')
+    await wrapper.find('textarea[placeholder="0x0000, 0x0005, 0x000a"]').setValue('0, 13, 43, 51, 41')
+    await wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.addAlpnExtension')
+    )!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('common.create'))!.trigger('click')
+    await flushPromises()
+    expect(createProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+      alpn_protocols: ['http/1.1'],
+      extensions: [0, 13, 43, 51, 16, 41]
+    }))
+    wrapper.unmount()
+  })
+
+  it('编辑旧模板时选择清空 ALPN 仅更新原模板，不创建或应用新模板', async () => {
+    listProfilesMock.mockResolvedValue([{
+      ...captureRecord.profile,
+      id: 19,
+      name: '本机代理',
+      enable_grease: false,
+      extensions: [0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45]
+    }])
+    const wrapper = mountModal()
+    await flushPromises()
+    await wrapper.find('button[title="common.edit"]').trigger('click')
+    await wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.clearAlpnProtocols')
+    )!.trigger('click')
+    expect(updateProfileMock).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find(button => button.text().includes('common.update'))!.trigger('click')
+    await flushPromises()
+    expect(updateProfileMock).toHaveBeenCalledWith(19, expect.objectContaining({
+      alpn_protocols: [],
+      extensions: [0, 43, 13, 35, 10, 11, 51, 49, 23, 65281, 45]
+    }))
+    expect(createProfileMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('没有模板名称的失败导入不清空正在编辑的 ALPN', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await openCreateForm(wrapper)
+    const alpn = wrapper.find('textarea[placeholder="h2, http/1.1"]')
+    await alpn.setValue('h2')
+    await wrapper.find('textarea').setValue('description: incomplete')
+    await wrapper.findAll('button').find(button =>
+      button.text().includes('admin.tlsFingerprintProfiles.form.parseYaml')
+    )!.trigger('click')
+    expect(showErrorMock).toHaveBeenCalledWith('admin.tlsFingerprintProfiles.form.yamlParseFailed')
+    expect(alpn.element.value).toBe('h2')
+    wrapper.unmount()
   })
 
   it('使用默认 TLS 1.3 版本时拒绝缺少 key_share 的自定义扩展', async () => {

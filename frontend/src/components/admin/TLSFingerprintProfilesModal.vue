@@ -527,13 +527,37 @@
 
         <!-- ALPN 协议 -->
         <div>
-          <label class="input-label text-xs">{{ t('admin.tlsFingerprintProfiles.form.alpnProtocols') }}</label>
+          <label for="tls-profile-alpn" class="input-label text-xs">{{ t('admin.tlsFingerprintProfiles.form.alpnProtocols') }}</label>
           <textarea
+            id="tls-profile-alpn"
             v-model="fieldInputs.alpn_protocols"
             rows="2"
             class="input font-mono text-xs"
             :placeholder="'h2, http/1.1'"
+            :aria-invalid="missingALPNExtension ? 'true' : undefined"
+            :aria-describedby="missingALPNExtension ? 'tls-profile-alpn-hint tls-profile-alpn-conflict' : 'tls-profile-alpn-hint'"
           />
+          <p id="tls-profile-alpn-hint" class="input-hint text-xs">
+            {{ t('admin.tlsFingerprintProfiles.form.alpnProtocolsHint') }}
+          </p>
+          <!-- 明确由用户选择修复方式，不在保存时悄悄改写实采握手。 -->
+          <div
+            v-if="missingALPNExtension"
+            id="tls-profile-alpn-conflict"
+            data-testid="alpn-extension-conflict"
+            role="alert"
+            class="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
+          >
+            <p>{{ t('admin.tlsFingerprintProfiles.form.alpnExtensionConflict') }}</p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <button type="button" class="btn btn-secondary btn-sm" @click="addALPNExtension">
+                {{ t('admin.tlsFingerprintProfiles.form.addAlpnExtension') }}
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" @click="fieldInputs.alpn_protocols = ''">
+                {{ t('admin.tlsFingerprintProfiles.form.clearAlpnProtocols') }}
+              </button>
+            </div>
+          </div>
         </div>
       </form>
 
@@ -867,6 +891,8 @@ const parseYamlInput = () => {
   form.rustls_native_order = false
 
   let foundName = false
+  // 每次导入都是新的模板；缺省、null 或空列表均不继承上一模板的 ALPN。
+  let importedALPNProtocols = ''
 
   for (const line of lines) {
     const trimmed = line.trim()
@@ -924,11 +950,15 @@ const parseYamlInput = () => {
         const arrMatch = value.match(/^\[(.*)?\]$/)
         if (arrMatch) {
           const inner = arrMatch[1] || ''
-          fieldInputs.alpn_protocols = inner
+          importedALPNProtocols = inner
             .split(',')
             .map(s => s.trim().replace(/^["']|["']$/g, ''))
             .filter(s => s.length > 0)
             .join(', ')
+        } else if (value !== 'null' && value !== '~') {
+          // 非数组值应明确报错，避免把格式错误的协议配置悄悄清空。
+          appStore.showError(t('admin.tlsFingerprintProfiles.form.yamlAlpnInvalid'))
+          return
         }
         break
       }
@@ -936,6 +966,7 @@ const parseYamlInput = () => {
   }
 
   if (foundName) {
+    fieldInputs.alpn_protocols = importedALPNProtocols
     appStore.showSuccess(t('admin.tlsFingerprintProfiles.form.yamlParsed'))
   } else {
     appStore.showError(t('admin.tlsFingerprintProfiles.form.yamlParseFailed'))
@@ -1006,6 +1037,26 @@ const parseStringArray = (input: string): string[] => {
     protocols.push(protocol)
   }
   return protocols
+}
+
+// 仅为可解析的显式扩展配置提供修复入口；其他格式错误仍由原有校验报告。
+const missingALPNExtension = computed(() => {
+  try {
+    if (parseStringArray(fieldInputs.alpn_protocols).length === 0) return false
+    const extensions = parseNumericArray(fieldInputs.extensions, 'extensions')
+    return extensions.length > 0 && !extensions.includes(16)
+  } catch {
+    return false
+  }
+})
+
+const addALPNExtension = () => {
+  if (!missingALPNExtension.value) return
+  const extensions = parseNumericArray(fieldInputs.extensions, 'extensions')
+  // 保留原扩展的相对顺序；若显式声明 PSK，则仍让 PSK 位于末尾。
+  const pskIndex = extensions.indexOf(41)
+  extensions.splice(pskIndex < 0 ? extensions.length : pskIndex, 0, 16)
+  fieldInputs.extensions = formatNumericArray(extensions)
 }
 
 const validateTLSProfileRelations = (data: {

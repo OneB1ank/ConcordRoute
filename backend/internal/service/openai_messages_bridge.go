@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -9,6 +10,9 @@ import (
 )
 
 const openAICompatMessagesBridgeContextKey = "openai_compat_messages_bridge"
+
+// 仅识别历史请求中的桥接标签，当前网关不再生成或追加对应的 developer 提示。
+const openAICompatClaudeCodeTodoGuardMarker = "<sub2api-claude-code-todo-guard>"
 
 func isOpenAICompatMessagesBridgeBody(body []byte) bool {
 	if len(body) == 0 {
@@ -54,4 +58,19 @@ func isOpenAICompatMessagesBridgeContext(c *gin.Context) bool {
 	}
 	enabled, ok := value.(bool)
 	return ok && enabled
+}
+
+// inputContainsText 保留旧请求的只读识别逻辑，不修改客户端正文。
+func inputContainsText(input []any, needle string) bool {
+	needle = strings.TrimSpace(needle)
+	if needle == "" {
+		return false
+	}
+	for _, item := range input {
+		b, err := json.Marshal(item)
+		if err == nil && strings.Contains(string(b), needle) {
+			return true
+		}
+	}
+	return false
 }

@@ -192,9 +192,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesReq.PreviousResponseID = previousResponseID
 		trimAnthropicCompatResponsesInputToLatestTurn(responsesReq)
 	}
-	if compatReplayGuardEnabled && account.Type != AccountTypeOAuth {
-		appendOpenAICompatClaudeCodeTodoGuard(responsesReq)
-	}
 
 	logFields := []zap.Field{
 		zap.Int64("account_id", account.ID),
@@ -264,9 +261,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			return nil, err
 		}
 		ensureCodexOAuthInstructionsField(reqBody)
-		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
-			appendOpenAICompatClaudeCodeTodoGuardToRequestBody(reqBody)
-		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
@@ -359,9 +353,8 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// 6. Build upstream request
 	if account.Type == AccountTypeOAuth && account.Platform != PlatformGrok {
-		// Messages 兼容桥即使 body 未带 todo-guard/prompt_cache_key 标记（如映射到非
-		// gpt-5/codex 模型），也必须让 buildUpstreamRequest 走 bridge 分支，以保留
-		// 既有 body/session/conversation 行为。身份头在 post-build 阶段统一恢复。
+		// Messages 兼容桥通过请求上下文标记来源，不依赖注入提示词。
+		// 保留既有 body/session/conversation 行为，身份头在 post-build 阶段统一恢复。
 		setOpenAICompatMessagesBridgeContext(c, true)
 	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)

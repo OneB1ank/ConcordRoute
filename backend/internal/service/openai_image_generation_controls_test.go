@@ -160,7 +160,7 @@ func TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability(
 			}
 			account := newOpenAIImageGenerationControlTestAccount()
 
-			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.4","input":"write code","stream":false}`))
+			result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.4","instructions":"client instructions \n\t","input":"write code","stream":false}`))
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -178,7 +178,8 @@ func TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability(
 			}
 			require.Equal(t, expectedLiteHeader, upstream.lastReq.Header.Get(responsesLiteHeader))
 			instructions := gjson.GetBytes(upstream.lastBody, "instructions").String()
-			require.Equal(t, tt.wantInjected, strings.Contains(instructions, "image_generation"))
+			// 生图桥只处理工具协议，开启或关闭都保留客户端提示及末尾空白。
+			require.Equal(t, "client instructions \n\t", instructions)
 		})
 	}
 }
@@ -358,7 +359,8 @@ func TestOpenAIGatewayServiceForward_ChannelBridgeOverrideEnablesCodexInjection(
 	require.NotNil(t, upstream.lastReq)
 	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
 	instructions := gjson.GetBytes(upstream.lastBody, "instructions").String()
-	require.Contains(t, instructions, "image_generation")
+	// 渠道覆盖仍开启工具桥接，但不追加生图行为提示。
+	require.Equal(t, defaultCodexSynthInstructions("gpt-5.4"), instructions)
 }
 
 func TestOpenAIGatewayServiceForward_CodexBridgeDoesNotInjectHostedToolAlongsideImageGenNamespace(t *testing.T) {

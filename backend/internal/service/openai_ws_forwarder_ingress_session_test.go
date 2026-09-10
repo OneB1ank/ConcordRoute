@@ -1014,7 +1014,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 	}()
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","stream":false,"parallel_tool_calls":true,"input":"draw a cat"}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","instructions":"client instructions \n\t","stream":false,"parallel_tool_calls":true,"input":"draw a cat"}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -1085,7 +1085,8 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_CodexImageBridge
 	require.True(t, gjson.Get(nonLitePayload, `tools.#(type=="image_generation")`).Exists())
 	require.Equal(t, "png", gjson.Get(nonLitePayload, `tools.#(type=="image_generation").output_format`).String())
 	require.Equal(t, "auto", gjson.Get(nonLitePayload, "tool_choice").String())
-	require.Contains(t, gjson.Get(nonLitePayload, "instructions").String(), "image_generation")
+	// WS 与 HTTP 一致：保留生图工具，不追加行为提示。
+	require.Equal(t, "client instructions \n\t", gjson.Get(nonLitePayload, "instructions").String())
 	require.False(t, gjson.Get(nonLitePayload, "reasoning.context").Exists())
 
 	litePayload := requestToJSONString(captureConn.writes[1])
