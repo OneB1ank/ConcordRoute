@@ -87,6 +87,54 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 			expectedModel:               "gpt-5.6-sol",
 		},
 		{
+			name: "account mapping cannot switch explicit Sol request to Luna",
+			account: &Account{
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{
+						"gpt-5.6-sol": "gpt-5.6-luna",
+					},
+				},
+			},
+			requestedModel: "gpt-5.6-sol",
+			expectedModel:  "gpt-5.6-sol",
+		},
+		{
+			name: "account mapping cannot switch explicit Luna request to Sol",
+			account: &Account{
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{
+						"gpt-5.6-luna": "gpt-5.6-sol",
+					},
+				},
+			},
+			requestedModel: "gpt-5.6-luna",
+			expectedModel:  "gpt-5.6-luna",
+		},
+		{
+			name: "explicit auto review alias may still target Luna",
+			account: &Account{
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{
+						"codex-auto-review": "gpt-5.6-luna",
+					},
+				},
+			},
+			requestedModel: "codex-auto-review",
+			expectedModel:  "gpt-5.6-luna",
+		},
+		{
+			name: "explicit Sol request may still target another generation",
+			account: &Account{
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{
+						"gpt-5.6-sol": "gpt-5.5",
+					},
+				},
+			},
+			requestedModel: "gpt-5.6-sol",
+			expectedModel:  "gpt-5.5",
+		},
+		{
 			name: "ordinary codex spark request keeps requested model",
 			account: &Account{
 				Credentials: map[string]any{},
@@ -151,6 +199,49 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 				t.Fatalf("resolveOpenAIForwardModel(...) = %q, want %q", got, tt.expectedModel)
 			}
 		})
+	}
+}
+
+func TestOpenAIAccountModelMappingCompatibility(t *testing.T) {
+	tests := []struct {
+		name           string
+		requestedModel string
+		mappedModel    string
+		wantCompatible bool
+	}{
+		{name: "Sol to Luna is rejected", requestedModel: "gpt-5.6-sol", mappedModel: "gpt-5.6-luna", wantCompatible: false},
+		{name: "Luna to Terra is rejected", requestedModel: "gpt-5.6-luna", mappedModel: "gpt-5.6-terra", wantCompatible: false},
+		{name: "generic GPT 5.6 remains Sol", requestedModel: "gpt-5.6", mappedModel: "gpt-5.6-sol", wantCompatible: true},
+		{name: "review alias may target Luna", requestedModel: "codex-auto-review", mappedModel: "gpt-5.6-luna", wantCompatible: true},
+		{name: "Sol to GPT 5.5 remains allowed", requestedModel: "gpt-5.6-sol", mappedModel: "gpt-5.5", wantCompatible: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isOpenAIAccountModelMappingCompatible(tt.requestedModel, tt.mappedModel); got != tt.wantCompatible {
+				t.Fatalf("isOpenAIAccountModelMappingCompatible(%q, %q) = %v, want %v", tt.requestedModel, tt.mappedModel, got, tt.wantCompatible)
+			}
+		})
+	}
+}
+
+func TestOpenAIAccountModelMappingRejectsCrossVariantScheduling(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.6-sol":       "gpt-5.6-luna",
+				"codex-auto-review": "gpt-5.6-luna",
+			},
+		},
+	}
+
+	if account.IsModelSupported("gpt-5.6-sol") {
+		t.Fatal("explicit gpt-5.6-sol must not select an account mapped to gpt-5.6-luna")
+	}
+	if !account.IsModelSupported("codex-auto-review") {
+		t.Fatal("explicit codex-auto-review alias must retain its configured Luna mapping")
 	}
 }
 
@@ -249,6 +340,18 @@ func TestResolveOpenAIAccountUpstreamModelForRequestMatchesForwardModes(t *testi
 			},
 			model: "client-alias",
 			want:  "gpt-5.4",
+		},
+		{
+			name: "OAuth explicit Sol does not drift to Luna through account mapping",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"model_mapping": map[string]any{"gpt-5.6-sol": "gpt-5.6-luna"},
+				},
+			},
+			model: "gpt-5.6-sol",
+			want:  "gpt-5.6-sol",
 		},
 		{
 			name: "compact 专属映射优先于 OAuth 归一化",

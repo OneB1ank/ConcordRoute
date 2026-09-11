@@ -14,7 +14,37 @@ func resolveOpenAIForwardModel(account *Account, requestedModel, messagesDispatc
 	if account == nil {
 		return accountLayerModel
 	}
-	return account.GetMappedModel(accountLayerModel)
+	mappedModel, matched := account.ResolveMappedModel(accountLayerModel)
+	if matched && !isOpenAIAccountModelMappingCompatible(accountLayerModel, mappedModel) {
+		// 显式请求的 GPT-5.6 变体不能因切换账号或账号映射漂移到另一变体。
+		// 其它代际/自定义别名仍保留既有一跳映射语义。
+		return accountLayerModel
+	}
+	return mappedModel
+}
+
+// openAIAccountModelVariant 返回需要保持一致的 OpenAI 模型变体。
+// 仅对 GPT-5.6 的 Sol/Terra/Luna 族做严格隔离，避免把显式模型误改成另一计价/能力族；
+// 自定义别名和其它代际模型仍由既有 model_mapping 规则处理。
+func openAIAccountModelVariant(model string) string {
+	normalized := normalizeKnownOpenAICodexModel(lastOpenAIModelSegment(model))
+	switch normalized {
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+		return normalized
+	default:
+		return ""
+	}
+}
+
+// isOpenAIAccountModelMappingCompatible 判断账号级映射是否保持显式 GPT-5.6 变体。
+// 空值表示普通别名/未知模型，不增加新的白名单限制；只有两端都属于该族时才比较变体。
+func isOpenAIAccountModelMappingCompatible(requestedModel, mappedModel string) bool {
+	requestedVariant := openAIAccountModelVariant(requestedModel)
+	mappedVariant := openAIAccountModelVariant(mappedModel)
+	if requestedVariant == "" || mappedVariant == "" {
+		return true
+	}
+	return requestedVariant == mappedVariant
 }
 
 // openAIOAuthForeignModelPrefixes 列出明确属于其他厂商家族的模型名前缀。

@@ -190,7 +190,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 		}
 		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
-		mappedModel := account.GetMappedModel(reqModel)
+		mappedModel := reqModel
+		if !passthroughEnabled {
+			mappedModel = resolveOpenAIForwardModel(account, reqModel, "")
+		}
 		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, mappedModel)
 		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)
 		return s.forwardOpenAIPassthrough(
@@ -293,7 +296,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("image generation disabled for group")
 	}
 
-	billingModel := account.GetMappedModel(reqModel)
+	billingModel := resolveOpenAIForwardModel(account, reqModel, "")
 	if billingModel != reqModel {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", reqModel, billingModel, account.Name, isCodexCLI)
 		reqModel = billingModel

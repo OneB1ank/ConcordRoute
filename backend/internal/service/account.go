@@ -950,6 +950,10 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	}
 	mappedModel, matched := a.ResolveMappedModel(requestedModel)
 	if matched {
+		if a.Platform == PlatformOpenAI && !isOpenAIAccountModelMappingCompatible(requestedModel, mappedModel) {
+			// 调度阶段先排除跨 GPT-5.6 变体映射，避免故障转移后显式 Sol/Luna 请求漂移。
+			return false
+		}
 		return isModelInFinalWhitelist(a.Platform, mappedModel, whitelist)
 	}
 	return isModelInFinalWhitelist(a.Platform, requestedModel, whitelist)

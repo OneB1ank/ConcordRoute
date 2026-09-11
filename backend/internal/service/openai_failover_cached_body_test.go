@@ -55,6 +55,14 @@ func TestOpenAIGatewayService_Forward_FailoverReparsesCachedBodyForNextAccount(t
 			wantSecond:    "base-model-b",
 		},
 		{
+			name:          "explicit Sol request never drifts to Luna on failover",
+			requestModel:  "gpt-5.6-sol",
+			firstMapping:  map[string]any{"gpt-5.6-sol": "gpt-5.6-luna"},
+			secondMapping: map[string]any{"gpt-5.6-sol": "gpt-5.6-luna"},
+			wantFirst:     "gpt-5.6-sol",
+			wantSecond:    "gpt-5.6-sol",
+		},
+		{
 			name:          "legacy context cache is ignored when mappings differ",
 			firstMapping:  map[string]any{"alias-model": "base-model-a"},
 			secondMapping: map[string]any{"alias-model": "base-model-b"},

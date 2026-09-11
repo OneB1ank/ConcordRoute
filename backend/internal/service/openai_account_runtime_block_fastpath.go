@@ -429,7 +429,7 @@ func canonicalOpenAIAccountSchedulingModel(account *Account, requestedModel stri
 	if account == nil || model == "" {
 		return model
 	}
-	if mapped := strings.TrimSpace(account.GetMappedModel(model)); mapped != "" {
+	if mapped := strings.TrimSpace(resolveOpenAIForwardModel(account, model, "")); mapped != "" {
 		model = mapped
 	}
 	if account.IsOpenAICompatible() {

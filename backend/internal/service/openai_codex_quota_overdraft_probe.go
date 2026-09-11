@@ -494,7 +494,7 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		return c.probeAttemptForTest(ctx, account, model)
 	}
 	result := codexQuotaOverdraftProbeResult{Model: model}
-	upstreamModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(model))
+	upstreamModel := normalizeOpenAIModelForUpstream(account, resolveOpenAIForwardModel(account, model, ""))
 	payload := map[string]any{
 		"model": upstreamModel,
 		"input": []map[string]any{{

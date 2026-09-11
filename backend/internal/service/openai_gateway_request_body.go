@@ -333,7 +333,7 @@ func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, accoun
 	}
 
 	requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-	effectiveModel := account.GetMappedModel(requestedModel)
+	effectiveModel := resolveOpenAIForwardModel(account, requestedModel, "")
 	return normalizeOpenAICodexCompactReasoningEffort(body, effectiveModel)
 }
 

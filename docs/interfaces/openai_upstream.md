@@ -99,7 +99,7 @@ OpenAI API Key 账号以 `force_chat_completions` 承接 `/v1/messages` 时，Ch
 
 ## 模型与能力
 
-客户端模型先经过 Key、渠道和账号层映射。OpenAI 内置别名、reasoning effort 归一化、旧版 Compact 端点支持、图像/embedding 能力和传输能力会影响候选账号；模型列表只公开当前分组可请求的结果。
+客户端模型先经过 Key、渠道和账号层映射。OpenAI 内置别名、reasoning effort 归一化、旧版 Compact 端点支持、图像/embedding 能力和传输能力会影响候选账号；模型列表只公开当前分组可请求的结果。账号级映射对显式 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 以及会归一到这些变体的 `gpt-5.6` 请求保持变体隔离：同一请求不能在账号切换或故障转移时跨 Sol/Terra/Luna 漂移。`codex-auto-review` 等显式业务别名仍可按配置映射到目标变体；其它代际或自定义模型继续使用原有一跳映射语义。
 
 API Key endpoint capability 可通过探测或配置表达 `responses`、`chat_completions`、`embeddings` 等能力。OAuth/Codex 账号还可能包含 Realtime、WebSocket、旧版 Compact 端点状态和客户端身份限制。未知模型可以在管理员明确配置的兼容上游中透传，但没有定价或能力证据时不能虚构价格与功能。
 
