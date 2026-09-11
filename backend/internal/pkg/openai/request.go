@@ -3,6 +3,8 @@ package openai
 import (
 	"regexp"
 	"strings"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // CodexCLIUserAgentPrefixes 定义历史 Codex CLI User-Agent 前缀。
@@ -185,6 +187,10 @@ func matchCodexClientHeaderStrictPrefixes(value string, prefixes []string) bool 
 //     UA 首段后配对，保留真实版本/OS/终端指纹；
 //  3. 均不命中 → ok=false，调用方应整体回退为默认官方身份。
 func PairCodexClientIdentity(userAgent string) (originator string, pairedUA string, ok bool) {
+	// 先校验原始 Header 值，避免 TrimSpace 把非法控制字节带入出站身份。
+	if !validCodexUserAgentValue(userAgent) {
+		return "", "", false
+	}
 	ua := strings.TrimSpace(userAgent)
 	slash := strings.IndexByte(ua, '/')
 	if slash <= 0 {
@@ -202,6 +208,15 @@ func PairCodexClientIdentity(userAgent string) (originator string, pairedUA stri
 		return trailer, trailer + ua[slash:], true
 	}
 	return "", "", false
+}
+
+// validCodexUserAgentValue 校验客户端 UA 是否可安全作为 HTTP Header 值。
+// httpguts 遵循 Header field-value 语法；UA 不接受折行，因此额外拒绝 CR/LF。
+func validCodexUserAgentValue(value string) bool {
+	if !httpguts.ValidHeaderFieldValue(value) {
+		return false
+	}
+	return !strings.ContainsAny(value, "\r\n")
 }
 
 // codexOriginatorMaxLen 官方 clientInfo.name 均为短 ASCII 标识，远低于此上限。

@@ -42,11 +42,10 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 		}
 	}
 
-	buf := bytes.NewBuffer(make([]byte, 0, capHint))
-	if _, err := io.Copy(buf, req.Body); err != nil {
+	raw, err := readRequestBodyChunks(req.Body, capHint, req.ContentLength)
+	if err != nil {
 		return nil, err
 	}
-	raw := buf.Bytes()
 
 	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
 	if enc == "" || enc == "identity" {
@@ -63,6 +62,59 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	req.ContentLength = int64(len(decoded))
 
 	return decoded, nil
+}
+
+// readRequestBodyChunks 按到达顺序分块读取请求体，再只组装一次最终结果。
+// 这样可以避免 bytes.Buffer 在大型工具参数、图片或 input 请求上反复扩容复制，
+// 也不会因为不可信的 Content-Length 直接预分配过大的连续内存。
+func readRequestBodyChunks(reader io.Reader, initialCapacity int, contentLength int64) ([]byte, error) {
+	capacity := initialCapacity
+	var chunks [][]byte
+	total := 0
+
+	for {
+		chunkCapacity := capacity
+		if remaining := contentLength - int64(total); remaining >= 0 && remaining < int64(chunkCapacity) {
+			chunkCapacity = int(remaining) + 1
+		}
+		chunk := make([]byte, chunkCapacity)
+		readTotal := 0
+		var readErr error
+		for readTotal < len(chunk) && readErr == nil {
+			readN, err := reader.Read(chunk[readTotal:])
+			readTotal += readN
+			readErr = err
+		}
+
+		if readErr != nil && readErr != io.EOF {
+			return nil, readErr
+		}
+		if readTotal > 0 {
+			chunks = append(chunks, chunk[:readTotal])
+			total += readTotal
+		}
+		if readErr != nil {
+			switch len(chunks) {
+			case 0:
+				return chunk[:0], nil
+			case 1:
+				return chunks[0], nil
+			}
+			body := make([]byte, total)
+			offset := 0
+			for _, part := range chunks {
+				offset += copy(body[offset:], part)
+			}
+			return body, nil
+		}
+
+		if capacity < requestBodyReadMaxInitCap {
+			capacity *= 2
+			if capacity > requestBodyReadMaxInitCap {
+				capacity = requestBodyReadMaxInitCap
+			}
+		}
+	}
 }
 
 // ReadLenientJSONRequestBodyWithPrealloc 读取请求体，并在严格 JSON
