@@ -387,12 +387,18 @@ describe('plan_type helpers', () => {
   describe('planTypeDisplayLabel', () => {
     it('maps canonical + alias values to friendly labels', () => {
       expect(planTypeDisplayLabel('plus')).toBe('Plus')
-      expect(planTypeDisplayLabel('pro')).toBe('Pro')
-      expect(planTypeDisplayLabel('chatgptpro')).toBe('Pro')
+      expect(planTypeDisplayLabel('pro')).toBe('Pro 20x')
+      expect(planTypeDisplayLabel('chatgptpro')).toBe('Pro 20x')
+      expect(planTypeDisplayLabel('prolite')).toBe('Pro 5x')
       expect(planTypeDisplayLabel('free')).toBe('Free')
-      expect(planTypeDisplayLabel('team')).toBe('Team')
+      expect(planTypeDisplayLabel('team')).toBe('Business Standard')
       expect(planTypeDisplayLabel('self_serve_business_prolite')).toBe('Team 5x')
-      expect(planTypeDisplayLabel('CHATGPTPRO')).toBe('Pro')
+      expect(planTypeDisplayLabel('CHATGPTPRO')).toBe('Pro 20x')
+    })
+    it('normalizes case, separators and surrounding blanks', () => {
+      expect(planTypeDisplayLabel('PROLITE')).toBe('Pro 5x')
+      expect(planTypeDisplayLabel('  Pro Lite  ')).toBe('Pro 5x')
+      expect(planTypeDisplayLabel('self-serve-business-prolite')).toBe('Team 5x')
     })
     it('returns unknown values verbatim', () => {
       expect(planTypeDisplayLabel('self_serve_business')).toBe('self_serve_business')
@@ -419,26 +425,43 @@ describe('plan_type helpers', () => {
       expect(buildPlanTypeOptions('', clear)).toEqual([
         { value: '', label: clear },
         { value: 'plus', label: 'Plus' },
-        { value: 'pro', label: 'Pro' },
+        { value: 'pro', label: 'Pro 20x' },
+        { value: 'prolite', label: 'Pro 5x' },
+        { value: 'self_serve_business_prolite', label: 'Team 5x' },
         { value: 'free', label: 'Free' }
       ])
     })
-    it('keeps canonical chatgptpro under a single friendly "Pro" option (no duplicate)', () => {
+    it('keeps canonical chatgptpro under a single friendly "Pro 20x" option (no duplicate)', () => {
       const opts = buildPlanTypeOptions('chatgptpro', clear)
-      const pros = opts.filter(o => o.label === 'Pro')
+      const pros = opts.filter(o => o.label === 'Pro 20x')
       expect(pros).toHaveLength(1)
       expect(pros[0].value).toBe('chatgptpro')
-      expect(opts.map(o => o.value)).toEqual(['', 'plus', 'chatgptpro', 'free'])
+      expect(opts.map(o => o.value)).toEqual([
+        '',
+        'plus',
+        'chatgptpro',
+        'prolite',
+        'self_serve_business_prolite',
+        'free'
+      ])
     })
     it('appends an unknown-but-labeled value (team) as its own option', () => {
       const opts = buildPlanTypeOptions('team', clear)
-      expect(opts.find(o => o.value === 'team')).toEqual({ value: 'team', label: 'Team' })
+      expect(opts.find(o => o.value === 'team')).toEqual({ value: 'team', label: 'Business Standard' })
       // 预设项保持不变。
-      expect(opts.map(o => o.value)).toEqual(['', 'plus', 'pro', 'free', 'team'])
+      expect(opts.map(o => o.value)).toEqual([
+        '',
+        'plus',
+        'pro',
+        'prolite',
+        'self_serve_business_prolite',
+        'free',
+        'team'
+      ])
     })
     it('preserves the Team 5x canonical value while showing its internal label', () => {
       const opts = buildPlanTypeOptions('self_serve_business_prolite', clear)
-      expect(opts.at(-1)).toEqual({
+      expect(opts.find(o => o.value === 'self_serve_business_prolite')).toEqual({
         value: 'self_serve_business_prolite',
         label: 'Team 5x'
       })
@@ -450,12 +473,26 @@ describe('plan_type helpers', () => {
     it('does not duplicate an exact preset value', () => {
       const opts = buildPlanTypeOptions('pro', clear)
       expect(opts.filter(o => o.value === 'pro')).toHaveLength(1)
-      expect(opts.map(o => o.value)).toEqual(['', 'plus', 'pro', 'free'])
+      expect(opts.map(o => o.value)).toEqual([
+        '',
+        'plus',
+        'pro',
+        'prolite',
+        'self_serve_business_prolite',
+        'free'
+      ])
     })
     it('preserves the exact value for case variants so Select can match it', () => {
       const opts = buildPlanTypeOptions('PLUS', clear)
       expect(opts.filter(o => o.label === 'Plus')).toEqual([{ value: 'PLUS', label: 'Plus' }])
-      expect(opts.map(o => o.value)).toEqual(['', 'PLUS', 'pro', 'free'])
+      expect(opts.map(o => o.value)).toEqual([
+        '',
+        'PLUS',
+        'pro',
+        'prolite',
+        'self_serve_business_prolite',
+        'free'
+      ])
     })
   })
 

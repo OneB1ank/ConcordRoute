@@ -1,3 +1,5 @@
+import { openAIPlanTypeLabel } from '@/utils/planType'
+
 export function applyInterceptWarmup(
   credentials: Record<string, unknown>,
   enabled: boolean,
@@ -274,26 +276,11 @@ export interface PlanTypeOption {
 }
 
 /**
- * plan_type 值的友好显示标签，镜像 PlatformTypeBadge 的映射
- * （canonical 值 chatgptpro 显示为 Pro，self_serve_business_prolite 显示为 Team 5x）。
- * 未知值原样返回。
+ * plan_type 值的友好显示标签，与 PlatformTypeBadge 共用 OpenAI 档位映射。
+ * 未知值原样返回；self_serve_business_prolite 保留 Team 5x 兼容标签。
  */
 export function planTypeDisplayLabel(value: string): string {
-  switch (value.trim().toLowerCase()) {
-    case 'plus':
-      return 'Plus'
-    case 'pro':
-    case 'chatgptpro':
-      return 'Pro'
-    case 'free':
-      return 'Free'
-    case 'team':
-      return 'Team'
-    case 'self_serve_business_prolite':
-      return 'Team 5x'
-    default:
-      return value
-  }
+  return openAIPlanTypeLabel(value) || value
 }
 
 /**
@@ -306,8 +293,8 @@ export function readPlanType(credentials: Record<string, unknown> | undefined | 
 }
 
 /**
- * 构建 plan_type 下拉选项：清空 + Plus/Pro/Free 预设。
- * 若当前值是某预设的别名（如 chatgptpro↔Pro），用当前的 canonical 值占据该
+ * 构建 plan_type 下拉选项：清空 + Plus/Pro 20x/Pro 5x/Team 5x/Free 预设。
+ * 若当前值是某预设的别名（如 chatgptpro↔Pro 20x），用当前的 canonical 值占据该
  * 标签位（保留 canonical，显示友好标签，避免重复项）；若是完全预设外的值
  * （如 team 或异常值），追加为一项，避免编辑时下拉丢失原值。
  */
@@ -316,7 +303,9 @@ export function buildPlanTypeOptions(current: string, clearLabel: string): PlanT
   const curLabel = cur ? planTypeDisplayLabel(cur) : ''
   const presets: PlanTypeOption[] = [
     { value: 'plus', label: 'Plus' },
-    { value: 'pro', label: 'Pro' },
+    { value: 'pro', label: 'Pro 20x' },
+    { value: 'prolite', label: 'Pro 5x' },
+    { value: 'self_serve_business_prolite', label: 'Team 5x' },
     { value: 'free', label: 'Free' }
   ]
   const opts: PlanTypeOption[] = [{ value: '', label: clearLabel }]
