@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net/http"
 )
 
 // codexWebSocketFingerprintState 记录原始帧的会话边界，不用可能不同的握手别名作比较。
@@ -13,8 +14,8 @@ type codexWebSocketFingerprintState struct {
 	clientThreadID  string
 }
 
-func newCodexWebSocketFingerprintState(account *Account, ids *codexFingerprintIDs, firstBody []byte) *codexWebSocketFingerprintState {
-	source := extractCockpitFingerprintSourceRaw(nil, firstBody)
+func newCodexWebSocketFingerprintState(account *Account, ids *codexFingerprintIDs, handshake http.Header, firstBody []byte) *codexWebSocketFingerprintState {
+	source := extractCockpitFingerprintSourceRaw(handshake, firstBody)
 	return &codexWebSocketFingerprintState{
 		account: account, current: ids,
 		clientSessionID: source.originalSessionID, clientThreadID: source.threadID,
@@ -83,11 +84,14 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 		current.originalWindowID = source.windowID
 	}
 	if current.mode == codexFingerprintCockpit {
-		if source.promptCacheKey != "" {
+		current.promptCacheKeyPresent = source.promptCacheKeyPresent
+		if source.promptCacheKeyPresent {
 			current.originalPromptCacheKey = source.promptCacheKey
 			current.promptCacheKey = source.promptCacheKey
 			current.promptCacheKeyInBody = source.promptCacheKeyInBody
-			rememberCodexPromptCacheKey(account, &current, current.promptCacheKey, current.promptCacheKeyInBody)
+			if current.promptCacheKey != "" {
+				rememberCodexPromptCacheKey(account, &current, current.promptCacheKey, current.promptCacheKeyInBody)
+			}
 		} else if current.windowID != previous.windowID {
 			// 与 HTTP 共用窗口绑定：当前窗口优先，缺省时仅继承直接前一窗口。
 			current.originalPromptCacheKey = ""

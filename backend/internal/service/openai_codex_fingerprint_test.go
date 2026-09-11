@@ -22,10 +22,14 @@ type codexIdentityPersistenceRepo struct {
 	AccountRepository
 	account *Account
 	latest  *Account
+	getErr  error
 	updates []map[string]any
 }
 
 func (r *codexIdentityPersistenceRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	if r.account == nil || r.account.ID != id {
 		return nil, nil
 	}
@@ -113,6 +117,18 @@ func TestPersistCodexIdentityBindings_WritesEmptyMapAfterExpiry(t *testing.T) {
 	require.True(t, ok)
 	assert.Empty(t, stored)
 	assert.Empty(t, readCodexIdentityBindings(account))
+}
+
+func TestPersistCodexIdentityBindings_ReturnsLatestReadError(t *testing.T) {
+	account := newTestOAuthAccount(9061, map[string]any{
+		CodexIdentityBindingsExtraKey: map[string]any{
+			"active": codexIdentityBinding{UUID: newCodexUUIDv7().String(), CreatedAtMS: time.Now().UnixMilli(), LastUsedAtMS: time.Now().UnixMilli()},
+		},
+	})
+	repo := &codexIdentityPersistenceRepo{account: account, getErr: fmt.Errorf("database unavailable")}
+	err := persistCodexIdentityBindings(context.Background(), repo, account)
+	require.ErrorContains(t, err, "load latest account")
+	assert.Empty(t, repo.updates, "latest snapshot read failure must stop before UpdateExtra")
 }
 
 func TestPersistCodexIdentityBindings_MergeUsesNewestLastUsed(t *testing.T) {
@@ -1561,6 +1577,39 @@ func TestCockpitMode_MissingPromptCacheKeyCarriesPreviousBodyKey(t *testing.T) {
 	})
 	require.NotNil(t, rotated)
 	assert.Equal(t, "cache-B", rotated.promptCacheKey)
+}
+
+func TestCockpitMode_ExplicitEmptyPromptCacheKeyDoesNotCarry(t *testing.T) {
+	account := newTestOAuthAccount(1202, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	base := map[string]any{"session_id": "empty-key-session", "thread_id": "empty-key-thread", "window_id": "empty-key-thread:0"}
+	firstBody := map[string]any{}
+	for key, value := range base {
+		firstBody[key] = value
+	}
+	firstBody["prompt_cache_key"] = "cache-before-empty"
+	first := resolveCodexFingerprintIDsFromRequest(account, nil, firstBody)
+	require.NotNil(t, first)
+
+	emptyBody := map[string]any{}
+	for key, value := range base {
+		emptyBody[key] = value
+	}
+	emptyBody["prompt_cache_key"] = ""
+	empty := resolveCodexFingerprintIDsFromRequest(account, nil, emptyBody)
+	require.NotNil(t, empty)
+	assert.True(t, empty.promptCacheKeyPresent)
+	assert.True(t, empty.promptCacheKeyInBody)
+	assert.Empty(t, empty.promptCacheKey, "explicit empty cache key must not inherit carry")
+
+	whitespace := map[string]any{}
+	for key, value := range base {
+		whitespace[key] = value
+	}
+	whitespace["prompt_cache_key"] = "   "
+	spaces := resolveCodexFingerprintIDsFromRequest(account, nil, whitespace)
+	require.NotNil(t, spaces)
+	assert.True(t, spaces.promptCacheKeyPresent)
+	assert.Equal(t, "   ", spaces.promptCacheKey, "pure whitespace remains an explicit outbound value")
 }
 
 func TestCockpitMode_HeaderOnlyPromptCacheKeyDoesNotReinsertBodyField(t *testing.T) {

@@ -139,7 +139,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, firstClientMessage),
 			account,
 		)
-		_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
+		if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
+			return fmt.Errorf("persist websocket Codex fingerprint bindings: %w", err)
+		}
 		stageCodexFingerprintIDs(c, firstFingerprintIDs)
 	}
 
@@ -264,7 +266,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	currentFingerprintIDs := firstFingerprintIDs
-	fingerprintState := newCodexWebSocketFingerprintState(fingerprintAccount, firstFingerprintIDs, firstClientMessage)
+	var handshakeHeaders http.Header
+	if c != nil && c.Request != nil {
+		handshakeHeaders = c.Request.Header
+	}
+	fingerprintState := newCodexWebSocketFingerprintState(fingerprintAccount, firstFingerprintIDs, handshakeHeaders, firstClientMessage)
 	parseClientPayload := func(raw []byte, applyUserPromptReplacement bool, turn int) (openAIWSClientPayload, error) {
 		trimmed := bytes.TrimSpace(raw)
 		if len(trimmed) == 0 {
@@ -487,7 +493,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, identityErr.Error(), identityErr)
 				}
 				if currentFingerprintIDs.windowID != previousWindow {
-					_ = persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount)
+					if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
+						return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
+							coderws.StatusInternalError,
+							"persist websocket Codex fingerprint bindings failed",
+							err,
+						)
+					}
 				}
 			}
 			fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(normalized, currentFingerprintIDs)

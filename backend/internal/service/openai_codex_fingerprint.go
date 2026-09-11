@@ -718,7 +718,10 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	}
 
 	// 写入前只读取一次最新账号行，两类存储分别合并并按各自策略裁剪。
-	latest, _ := repo.GetByID(ctx, account.ID)
+	latest, err := repo.GetByID(ctx, account.ID)
+	if err != nil {
+		return fmt.Errorf("load latest account for codex identity bindings: %w", err)
+	}
 	nowMS := time.Now().UnixMilli()
 	updates := make(map[string]any, len(codexUUIDv7BindingStores))
 	for _, store := range codexUUIDv7BindingStores {
@@ -1203,24 +1206,26 @@ func resolveCockpitThreadSeed(source codexFingerprintSource) string {
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
 type codexFingerprintSource struct {
-	clientVersion         string
-	installationID        string
-	clientSessionID       string
-	originalSessionID     string
-	threadID              string
-	parentThreadID        string
-	turnID                string
-	parentTurnID          string
-	rootTurnID            string
-	turnStartedAtUnixMS   int64
-	turnStartedAtPresent  bool
-	windowID              string
-	windowNumber          uint64
-	windowNumberPresent   bool
-	firstWindowID         string
-	previousWindowID      string
-	contextWindowID       string
-	promptCacheKey        string
+	clientVersion        string
+	installationID       string
+	clientSessionID      string
+	originalSessionID    string
+	threadID             string
+	parentThreadID       string
+	turnID               string
+	parentTurnID         string
+	rootTurnID           string
+	turnStartedAtUnixMS  int64
+	turnStartedAtPresent bool
+	windowID             string
+	windowNumber         uint64
+	windowNumberPresent  bool
+	firstWindowID        string
+	previousWindowID     string
+	contextWindowID      string
+	promptCacheKey       string
+	// promptCacheKeyPresent 区分客户端明确发送空字符串与字段缺失。
+	promptCacheKeyPresent bool
 	promptCacheKeyInBody  bool
 	allowPromptCacheCarry bool
 }
@@ -1265,6 +1270,8 @@ type codexFingerprintIDs struct {
 	previousWindowID         string
 	originalPromptCacheKey   string
 	promptCacheKey           string
+	// promptCacheKeyPresent 保留当前请求是否明确携带缓存键，避免空值误走 carry。
+	promptCacheKeyPresent bool
 	// promptCacheKeyInBody 区分原请求体字段与仅用于 Header 的兼容缓存键。
 	promptCacheKeyInBody bool
 }
@@ -1293,6 +1300,10 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 	if mode == codexFingerprintOff {
 		return nil
 	}
+	// 兼容内部测试和历史调用方直接填充非空缓存键的来源结构。
+	if !source.promptCacheKeyPresent && source.promptCacheKey != "" {
+		source.promptCacheKeyPresent = true
+	}
 
 	ids := &codexFingerprintIDs{
 		mode:                     mode,
@@ -1311,6 +1322,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		originalFirstWindowID:    strings.TrimSpace(source.firstWindowID),
 		originalPreviousWindowID: strings.TrimSpace(source.previousWindowID),
 		originalPromptCacheKey:   source.promptCacheKey,
+		promptCacheKeyPresent:    source.promptCacheKeyPresent,
 	}
 	if ids.originalSessionID == "" {
 		ids.originalSessionID = strings.TrimSpace(source.clientSessionID)
@@ -1368,11 +1380,11 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 
 		resolveCockpitTurnLineage(account, ids)
 		resolveCodexFingerprintWindow(account, source, ids)
-		if source.promptCacheKey != "" {
+		if source.promptCacheKeyPresent {
 			ids.promptCacheKey = source.promptCacheKey
 			// 旧 compact 的 Header-only 临时键不属于普通 Responses 缓存绑定。
 			// 禁止其覆盖此前明确的 Body 键及载体，读写遵守同一入口门控。
-			if source.allowPromptCacheCarry {
+			if source.allowPromptCacheCarry && source.promptCacheKey != "" {
 				rememberCodexPromptCacheKey(account, ids, ids.promptCacheKey, source.promptCacheKeyInBody)
 			}
 		} else if source.allowPromptCacheCarry {
@@ -1389,7 +1401,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			ids.turnStartedAtUnixMS = resolveCodexTurnStartedAt(account, ids.mode, ids.sessionID, ids.originalTurnID, ids.turnID, source.turnStartedAtUnixMS, source.turnStartedAtPresent)
 		}
 		// 显式键保持原载体；短暂复用时沿用上一次键的载体形态。
-		if source.promptCacheKey != "" || !source.allowPromptCacheCarry {
+		if source.promptCacheKeyPresent || !source.allowPromptCacheCarry {
 			ids.promptCacheKeyInBody = source.promptCacheKeyInBody
 		}
 		return ids
@@ -1572,15 +1584,6 @@ func firstNonEmptyCodexValue(values ...string) string {
 	return ""
 }
 
-func firstPresentCodexRawValue(values ...string) (string, bool) {
-	for _, value := range values {
-		if value != "" {
-			return value, true
-		}
-	}
-	return "", false
-}
-
 // extractCockpitFingerprintSource 按 Cockpit 的兼容顺序从头和请求体提取身份来源。
 func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) codexFingerprintSource {
 	source := codexFingerprintSource{
@@ -1710,18 +1713,15 @@ func extractCockpitFingerprintSource(h http.Header, reqBody map[string]any) code
 		h.Get("x-codex-context-window-id"),
 	)
 	source.promptCacheKey, source.promptCacheKeyInBody = extractCodexRawStringField(reqBody, "prompt_cache_key")
-	if !source.promptCacheKeyInBody {
-		source.promptCacheKey, _ = firstPresentCodexRawValue(
-			h.Get("conversation_id"),
-			func() string {
-				value, _ := extractCodexTurnMetadataRawStringField(embeddedTurnMetadata, "prompt_cache_key")
-				return value
-			}(),
-			func() string {
-				value, _ := extractCodexTurnMetadataRawStringField(headerTurnMetadata, "prompt_cache_key")
-				return value
-			}(),
-		)
+	source.promptCacheKeyPresent = source.promptCacheKeyInBody
+	if !source.promptCacheKeyPresent {
+		if value, ok := extractCodexTurnMetadataRawStringField(embeddedTurnMetadata, "prompt_cache_key"); ok {
+			source.promptCacheKey, source.promptCacheKeyPresent = value, true
+		} else if value, ok := extractCodexTurnMetadataRawStringField(headerTurnMetadata, "prompt_cache_key"); ok {
+			source.promptCacheKey, source.promptCacheKeyPresent = value, true
+		} else if value, ok := codexHeaderRawValue(h, "conversation_id"); ok && value != "" {
+			source.promptCacheKey, source.promptCacheKeyPresent = value, true
+		}
 	}
 	// x-client-request-id is often a per-request UUID. Keep it as the final
 	// fallback so it cannot override a stable thread/session/cache identity.
@@ -1874,18 +1874,15 @@ func extractCockpitFingerprintSourceRaw(h http.Header, body []byte) codexFingerp
 		h.Get("x-codex-context-window-id"),
 	)
 	source.promptCacheKey, source.promptCacheKeyInBody = readRaw("prompt_cache_key")
-	if !source.promptCacheKeyInBody {
-		source.promptCacheKey, _ = firstPresentCodexRawValue(
-			h.Get("conversation_id"),
-			func() string {
-				value, _ := extractCodexTurnMetadataRawStringField(embeddedTurnMetadata, "prompt_cache_key")
-				return value
-			}(),
-			func() string {
-				value, _ := extractCodexTurnMetadataRawStringField(headerTurnMetadata, "prompt_cache_key")
-				return value
-			}(),
-		)
+	source.promptCacheKeyPresent = source.promptCacheKeyInBody
+	if !source.promptCacheKeyPresent {
+		if value, ok := extractCodexTurnMetadataRawStringField(embeddedTurnMetadata, "prompt_cache_key"); ok {
+			source.promptCacheKey, source.promptCacheKeyPresent = value, true
+		} else if value, ok := extractCodexTurnMetadataRawStringField(headerTurnMetadata, "prompt_cache_key"); ok {
+			source.promptCacheKey, source.promptCacheKeyPresent = value, true
+		} else if value, ok := codexHeaderRawValue(h, "conversation_id"); ok && value != "" {
+			source.promptCacheKey, source.promptCacheKeyPresent = value, true
+		}
 	}
 	if source.threadID == "" && source.promptCacheKey == "" && source.originalSessionID == "" {
 		source.threadID = strings.TrimSpace(h.Get("x-client-request-id"))
@@ -1901,6 +1898,22 @@ func extractClientSessionID(h http.Header) string {
 		return v
 	}
 	return strings.TrimSpace(h.Get("session_id"))
+}
+
+// codexHeaderRawValue 返回 Header 中是否真正存在该键，保留空字符串的存在性。
+func codexHeaderRawValue(h http.Header, key string) (string, bool) {
+	if h == nil {
+		return "", false
+	}
+	for headerKey, values := range h {
+		if strings.EqualFold(headerKey, key) {
+			if len(values) == 0 {
+				return "", true
+			}
+			return values[0], true
+		}
+	}
+	return "", false
 }
 
 // resolveCodexFingerprintIDsFromRequest 从客户端原始请求头中提取 session-id，

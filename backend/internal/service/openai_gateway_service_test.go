@@ -108,6 +108,11 @@ func (r stubOpenAIAccountRepo) GetByIDs(ctx context.Context, ids []int64) ([]*Ac
 	return out, nil
 }
 
+// UpdateExtra 为网关测试替身提供最小持久化实现，匹配真实 AccountRepository 契约。
+func (r stubOpenAIAccountRepo) UpdateExtra(_ context.Context, _ int64, _ map[string]any) error {
+	return nil
+}
+
 func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {

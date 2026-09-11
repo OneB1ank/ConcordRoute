@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,7 +75,7 @@ func TestCodexWebSocketFingerprintStateRejectsCrossConversation(t *testing.T) {
 	firstBody := []byte(`{"prompt_cache_key":"isolated-cache","client_metadata":{"session_id":"source-session","thread_id":"source-thread"}}`)
 	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, firstBody)
 	require.NotNil(t, first)
-	state := newCodexWebSocketFingerprintState(account, first, firstBody)
+	state := newCodexWebSocketFingerprintState(account, first, nil, firstBody)
 	for _, raw := range []string{
 		`{"client_metadata":{"session_id":"other-session"}}`,
 		`{"client_metadata":{"thread_id":"other-thread"}}`,
@@ -86,6 +87,20 @@ func TestCodexWebSocketFingerprintStateRejectsCrossConversation(t *testing.T) {
 	carried, err := state.advance([]byte(`{"model":"gpt-6-astra"}`))
 	require.NoError(t, err)
 	assert.Equal(t, first.promptCacheKey, carried.promptCacheKey)
+}
+
+func TestCodexWebSocketFingerprintStateUsesHandshakeConversationHeaders(t *testing.T) {
+	account := newTestOAuthAccount(1216, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	handshake := http.Header{}
+	handshake.Set("session-id", "header-session")
+	handshake.Set("thread-id", "header-thread")
+	handshake.Set("User-Agent", "Codex CLI/0.153.4")
+	firstBody := []byte(`{"model":"gpt-6-astra"}`)
+	first := resolveCodexFingerprintIDsFromRawRequest(account, handshake, firstBody)
+	require.NotNil(t, first)
+	state := newCodexWebSocketFingerprintState(account, first, handshake, firstBody)
+	_, err := state.advance([]byte(`{"client_metadata":{"session_id":"other-session"}}`))
+	require.ErrorContains(t, err, "reconnect")
 }
 
 // 后续 WS 帧省略回合和窗口号时，不得把握手快照中的字段回灌到该帧。

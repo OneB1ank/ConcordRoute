@@ -152,7 +152,7 @@ func TestCodexCompactCacheRegressionWS(t *testing.T) {
 	account := newTestOAuthAccount(18202, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	body := []byte(`{"prompt_cache_key":"ws-before-compact","client_metadata":{"session_id":"compact-regression-ws","window_number":"0"}}`)
 	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, body)
-	state := newCodexWebSocketFingerprintState(account, first, body)
+	state := newCodexWebSocketFingerprintState(account, first, nil, body)
 	next, err := state.advance([]byte(`{"client_metadata":{"window_number":"1"}}`))
 	require.NoError(t, err)
 	require.Equal(t, first.contextWindowID, next.previousWindowID)
