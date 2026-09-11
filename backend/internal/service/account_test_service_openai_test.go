@@ -168,7 +168,8 @@ func TestAccountTestService_OpenAIOAuthUsesFullCockpitProbeIdentity(t *testing.T
 	require.Equal(t, req.Header.Get("thread-id"), gjson.GetBytes(body, "client_metadata.thread_id").String())
 	require.Equal(t, req.Header.Get("x-codex-window-id"), gjson.GetBytes(body, "client_metadata.x-codex-window-id").String())
 	require.Equal(t, req.Header.Get("conversation_id"), gjson.GetBytes(body, "prompt_cache_key").String())
-	require.NotEmpty(t, gjson.GetBytes(body, "client_metadata.turn_id").String())
+	// 探针请求没有客户端回合 ID 时，Cockpit 不主动合成 turn_id。
+	require.Empty(t, gjson.GetBytes(body, "client_metadata.turn_id").String())
 }
 
 func TestAccountTestService_OpenAIOAuthTestNormalizesGPT56Alias(t *testing.T) {

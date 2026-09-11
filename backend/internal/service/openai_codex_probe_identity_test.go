@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveCodexProbeFingerprintIDsStableConversationRotatingTurn(t *testing.T) {
+func TestResolveCodexProbeFingerprintIDsStableConversationKeepsOptionalTurnAbsent(t *testing.T) {
 	account := newTestOAuthAccount(701, map[string]any{
 		codexFingerprintModeExtraKey: string(codexFingerprintCockpit),
 	})
@@ -27,7 +27,9 @@ func TestResolveCodexProbeFingerprintIDsStableConversationRotatingTurn(t *testin
 	require.Equal(t, first.threadID, second.threadID)
 	require.Equal(t, first.windowID, second.windowID)
 	require.Equal(t, first.promptCacheKey, second.promptCacheKey)
-	require.NotEqual(t, first.turnID, second.turnID)
+	// 探针请求没有客户端 turn_id，Cockpit 保持该可选字段缺省。
+	require.Empty(t, first.turnID)
+	require.Empty(t, second.turnID)
 	require.NotEqual(t, first.threadID, other.threadID)
 	require.NotEqual(t, first.promptCacheKey, other.promptCacheKey)
 }
@@ -53,7 +55,8 @@ func TestApplyCodexProbeFingerprintUsesSameIDsInHeaderAndBody(t *testing.T) {
 	require.Equal(t, ids.installationID, metadata["x-codex-installation-id"])
 	require.Equal(t, ids.sessionID, metadata["session_id"])
 	require.Equal(t, ids.threadID, metadata["thread_id"])
-	require.Equal(t, ids.turnID, metadata["turn_id"])
+	_, hasTurnID := metadata["turn_id"]
+	require.False(t, hasTurnID)
 	require.Equal(t, ids.windowID, metadata["x-codex-window-id"])
 	require.Equal(t, ids.promptCacheKey, payload["prompt_cache_key"])
 
@@ -62,9 +65,11 @@ func TestApplyCodexProbeFingerprintUsesSameIDsInHeaderAndBody(t *testing.T) {
 	require.Equal(t, ids.installationID, turnMetadata["installation_id"])
 	require.Equal(t, ids.sessionID, turnMetadata["session_id"])
 	require.Equal(t, ids.threadID, turnMetadata["thread_id"])
-	require.Equal(t, ids.turnID, turnMetadata["turn_id"])
 	require.Equal(t, ids.windowID, turnMetadata["window_id"])
-	require.Equal(t, ids.promptCacheKey, turnMetadata["prompt_cache_key"])
+	_, hasTurnMetadataID := turnMetadata["turn_id"]
+	require.False(t, hasTurnMetadataID)
+	_, hasPromptCacheKey := turnMetadata["prompt_cache_key"]
+	require.False(t, hasPromptCacheKey)
 }
 
 func TestResolveCodexProbeFingerprintIDsRespectsModes(t *testing.T) {

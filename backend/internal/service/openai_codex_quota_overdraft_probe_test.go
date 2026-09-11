@@ -906,7 +906,7 @@ func TestCodexQuotaOverdraftProbeReusesNormalRequestIdentityTLSAndProxy(t *testi
 	require.Equal(t, body["prompt_cache_key"], upstream.req.Header.Get("conversation_id"))
 }
 
-func TestCodexQuotaOverdraftProbeKeepsStableConversationAndRotatesTurn(t *testing.T) {
+func TestCodexQuotaOverdraftProbeKeepsStableConversationAndOptionalTurnAbsent(t *testing.T) {
 	account := &Account{
 		ID:          911,
 		Platform:    PlatformOpenAI,
@@ -942,7 +942,10 @@ func TestCodexQuotaOverdraftProbeKeepsStableConversationAndRotatesTurn(t *testin
 	}
 	require.Equal(t, firstMetadata["session_id"], secondMetadata["session_id"])
 	require.Equal(t, firstMetadata["thread_id"], secondMetadata["thread_id"])
-	require.NotEqual(t, firstMetadata["turn_id"], secondMetadata["turn_id"])
+	_, firstHasTurnID := firstMetadata["turn_id"]
+	_, secondHasTurnID := secondMetadata["turn_id"]
+	require.False(t, firstHasTurnID)
+	require.False(t, secondHasTurnID)
 
 	normalConversation := resolveCodexFingerprintIDs(account, "real-client-session", codexFingerprintCockpit)
 	require.NotNil(t, normalConversation)
