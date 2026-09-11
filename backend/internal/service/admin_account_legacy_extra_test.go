@@ -83,6 +83,8 @@ func TestBulkUpdateAccountsDiscardsDeprecatedBillingProbeExtra(t *testing.T) {
 func TestUpdateAccountPreservesCodexFingerprintSeed(t *testing.T) {
 	accountID := int64(113)
 	seed := uuid.NewString()
+	identityBindings := map[string]any{"identity": "persisted"}
+	lineageBindings := map[string]any{"turn": "persisted"}
 	repo := &accountServiceTestRepo{accounts: map[int64]*Account{
 		accountID: {
 			ID:       accountID,
@@ -90,20 +92,26 @@ func TestUpdateAccountPreservesCodexFingerprintSeed(t *testing.T) {
 			Type:     AccountTypeOAuth,
 			Status:   StatusActive,
 			Extra: map[string]any{
-				CodexFingerprintSeedExtraKey: seed,
+				CodexFingerprintSeedExtraKey:     seed,
+				CodexIdentityBindingsExtraKey:    identityBindings,
+				CodexTurnLineageBindingsExtraKey: lineageBindings,
 			},
 		},
 	}}
 
 	updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
 		Extra: map[string]any{
-			CodexFingerprintSeedExtraKey: "forged-seed",
-			"custom":                     "value",
+			CodexFingerprintSeedExtraKey:     "forged-seed",
+			CodexIdentityBindingsExtraKey:    map[string]any{"forged": true},
+			CodexTurnLineageBindingsExtraKey: map[string]any{"forged": true},
+			"custom":                         "value",
 		},
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, seed, updated.Extra[CodexFingerprintSeedExtraKey])
+	require.Equal(t, identityBindings, updated.Extra[CodexIdentityBindingsExtraKey])
+	require.Equal(t, lineageBindings, updated.Extra[CodexTurnLineageBindingsExtraKey])
 	require.Equal(t, "value", updated.Extra["custom"])
 }
 
@@ -121,13 +129,17 @@ func TestUpdateAccountDiscardsIncomingCodexFingerprintSeedWhenLegacyAccountHasNo
 
 	updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
 		Extra: map[string]any{
-			CodexFingerprintSeedExtraKey: "forged-seed",
-			"custom":                     "value",
+			CodexFingerprintSeedExtraKey:     "forged-seed",
+			CodexIdentityBindingsExtraKey:    map[string]any{"forged": true},
+			CodexTurnLineageBindingsExtraKey: map[string]any{"forged": true},
+			"custom":                         "value",
 		},
 	})
 
 	require.NoError(t, err)
 	require.NotContains(t, updated.Extra, CodexFingerprintSeedExtraKey)
+	require.NotContains(t, updated.Extra, CodexIdentityBindingsExtraKey)
+	require.NotContains(t, updated.Extra, CodexTurnLineageBindingsExtraKey)
 	require.Equal(t, "value", updated.Extra["custom"])
 }
 
@@ -242,8 +254,10 @@ func TestBulkUpdateAccountsDiscardsCodexFingerprintSeed(t *testing.T) {
 	result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
 		AccountIDs: []int64{1},
 		Extra: map[string]any{
-			CodexFingerprintSeedExtraKey: "forged-seed",
-			"custom":                     "value",
+			CodexFingerprintSeedExtraKey:     "forged-seed",
+			CodexIdentityBindingsExtraKey:    map[string]any{"forged": true},
+			CodexTurnLineageBindingsExtraKey: map[string]any{"forged": true},
+			"custom":                         "value",
 		},
 	})
 
@@ -251,6 +265,8 @@ func TestBulkUpdateAccountsDiscardsCodexFingerprintSeed(t *testing.T) {
 	require.Equal(t, 1, result.Success)
 	require.Len(t, repo.bulkUpdates, 1)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, CodexFingerprintSeedExtraKey)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, CodexIdentityBindingsExtraKey)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, CodexTurnLineageBindingsExtraKey)
 	require.Equal(t, "value", repo.bulkUpdates[0].Extra["custom"])
 }
 

@@ -109,6 +109,8 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 			"nested":  map[string]any{"token": "source-token"},
 		},
 		Extra: map[string]any{
+			CodexIdentityBindingsExtraKey:             map[string]any{"identity": "source-only"},
+			CodexTurnLineageBindingsExtraKey:          map[string]any{"turn": "source-only"},
 			"config":                                  map[string]any{"region": "us-east-1"},
 			"items":                                   []any{map[string]any{"enabled": true}},
 			CodexQuotaOverdraftEnabledExtraKey:        true,

@@ -291,7 +291,7 @@ func runLocalCockpitWebSocketIngressIdentityTest(t *testing.T, ingressMode strin
 				embedded := gjson.Get(frame, "client_metadata.x-codex-turn-metadata").String()
 				require.False(t, gjson.Get(embedded, "root_turn_id").Exists())
 			} else {
-				require.Equal(t, "client-parent", gjson.Get(frame, "client_metadata.parent_turn_id").String())
+				require.Equal(t, expectedIDs.parentTurnID, gjson.Get(frame, "client_metadata.parent_turn_id").String())
 			}
 			var wire struct {
 				Metadata map[string]string `json:"client_metadata"`

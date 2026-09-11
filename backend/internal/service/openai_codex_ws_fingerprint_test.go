@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // 验证 A → 缺省 → B，以及相邻压缩窗口继承最近的明确键；输入帧不被原地修改。
@@ -85,4 +86,39 @@ func TestCodexWebSocketFingerprintStateRejectsCrossConversation(t *testing.T) {
 	carried, err := state.advance([]byte(`{"model":"gpt-6-astra"}`))
 	require.NoError(t, err)
 	assert.Equal(t, first.promptCacheKey, carried.promptCacheKey)
+}
+
+// 后续 WS 帧省略回合和窗口号时，不得把握手快照中的字段回灌到该帧。
+func TestAdvanceCodexWebSocketFingerprintPreservesAbsentTurnAndWindowNumber(t *testing.T) {
+	account := newTestOAuthAccount(1214, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, []byte(`{"prompt_cache_key":"ws-cache","client_metadata":{"session_id":"ws-session","thread_id":"ws-thread","turn_id":"ws-turn","window_number":"0"}}`))
+	require.NotNil(t, first)
+	nextBody := []byte(`{"prompt_cache_key":"ws-cache","client_metadata":{"session_id":"ws-session","thread_id":"ws-thread"}}`)
+	next := advanceCodexWebSocketFingerprint(account, first, nextBody)
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(nextBody, next)
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.turn_id").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.window_number").Exists())
+	assert.Equal(t, "ws-cache", gjson.GetBytes(updated, "prompt_cache_key").String())
+}
+
+// Cockpit 的可选窗口字段按帧门控；握手帧存在、后续帧省略时不得残留。
+func TestAdvanceCodexWebSocketFingerprintClearsAbsentOptionalWindowFields(t *testing.T) {
+	account := newTestOAuthAccount(1215, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	firstBody := []byte(`{"client_metadata":{"session_id":"ws-session","thread_id":"ws-thread","x-codex-window-id":"ws-thread:1","window_number":"1","context_window_id":"client-context","first_window_id":"client-first","previous_window_id":"client-previous"}}`)
+	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, firstBody)
+	require.NotNil(t, first)
+	require.NotEmpty(t, first.originalContextWindowID)
+	require.NotEmpty(t, first.originalFirstWindowID)
+	require.NotEmpty(t, first.originalPreviousWindowID)
+
+	nextBody := []byte(`{"client_metadata":{"session_id":"ws-session","thread_id":"ws-thread"}}`)
+	next := advanceCodexWebSocketFingerprint(account, first, nextBody)
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(nextBody, next)
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.context_window_id").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.first_window_id").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.previous_window_id").Exists())
 }

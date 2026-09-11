@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type codexIdentityPersistenceRepo struct {
@@ -304,6 +305,88 @@ func TestCockpitIdentityGraph_RootAndChildTopology(t *testing.T) {
 	assert.Equal(t, childIDs.sessionID, childIDs.promptCacheKey)
 }
 
+func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
+	account := newTestOAuthAccount(121, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	childOriginal := uuid.Must(uuid.NewV7()).String()
+	base := codexFingerprintSource{
+		clientSessionID:   "lineage-session",
+		originalSessionID: "lineage-session",
+		threadID:          "lineage-thread",
+	}
+
+	rootSource := base
+	rootSource.turnID = rootOriginal
+	rootSource.rootTurnID = rootOriginal
+	rootIDs := resolveCodexFingerprintIDsWithSource(account, rootSource, codexFingerprintCockpit)
+	require.NotNil(t, rootIDs)
+	requireCodexUUIDv7(t, rootIDs.turnID)
+	assert.Equal(t, rootIDs.turnID, rootIDs.rootTurnID)
+	assert.Empty(t, rootIDs.parentTurnID)
+
+	childSource := base
+	childSource.threadID = "lineage-child-thread"
+	childSource.turnID = childOriginal
+	childSource.parentTurnID = rootOriginal
+	childSource.rootTurnID = rootOriginal
+	childIDs := resolveCodexFingerprintIDsWithSource(account, childSource, codexFingerprintCockpit)
+	require.NotNil(t, childIDs)
+	assert.Equal(t, rootIDs.sessionID, childIDs.sessionID, "父子线程必须共享根 session")
+	assert.NotEqual(t, rootIDs.threadID, childIDs.threadID, "父子线程必须保留各自 thread")
+	requireCodexUUIDv7(t, childIDs.turnID)
+	assert.NotEqual(t, rootIDs.turnID, childIDs.turnID)
+	rootParsed := uuid.MustParse(rootIDs.turnID)
+	childParsed := uuid.MustParse(childIDs.turnID)
+	rootOriginalParsed := uuid.MustParse(rootOriginal)
+	childOriginalParsed := uuid.MustParse(childOriginal)
+	assert.Equal(t, rootOriginalParsed[:6], rootParsed[:6])
+	assert.Equal(t, childOriginalParsed[:6], childParsed[:6])
+	assert.LessOrEqual(t, bytes.Compare(rootParsed[:6], childParsed[:6]), 0)
+	assert.Equal(t, rootIDs.turnID, childIDs.parentTurnID)
+	assert.Equal(t, rootIDs.turnID, childIDs.rootTurnID)
+	restored := restoreCodexFingerprintResponsePayload([]byte(fmt.Sprintf(
+		`{"turn_id":%q,"parent_turn_id":%q,"root_turn_id":%q}`,
+		childIDs.turnID, childIDs.parentTurnID, childIDs.rootTurnID,
+	)), childIDs)
+	assert.JSONEq(t, fmt.Sprintf(
+		`{"turn_id":%q,"parent_turn_id":%q,"root_turn_id":%q}`,
+		childOriginal, rootOriginal, rootOriginal,
+	), string(restored))
+	assert.NotEmpty(t, readCodexIdentityBindings(account))
+	assert.Empty(t, readCodexTurnLineageBindings(account), "官方 UUIDv7 回合不得触发逐 turn 持久化")
+	// 非 UUIDv7 的旧客户端标识使用独立持久映射，不挤占账号身份库。
+	requireCodexUUIDv7(t, resolveConvergedCockpitTurnID(account, childIDs.sessionID, "legacy-turn"))
+	assert.NotEmpty(t, readCodexTurnLineageBindings(account))
+
+	codexIdentityPersistedHashes = sync.Map{}
+	repo := &codexIdentityPersistenceRepo{account: account}
+	require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account))
+	require.Len(t, repo.updates, 1)
+	assert.Contains(t, repo.updates[0], CodexIdentityBindingsExtraKey)
+	assert.Contains(t, repo.updates[0], CodexTurnLineageBindingsExtraKey)
+
+	encoded, err := json.Marshal(account.Extra)
+	require.NoError(t, err)
+	var restoredExtra map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &restoredExtra))
+	fresh := &Account{ID: account.ID, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: restoredExtra}
+	codexIdentityHotCache = sync.Map{}
+	codexIdentityPersistedHashes = sync.Map{}
+	restarted := resolveCodexFingerprintIDsWithSource(fresh, childSource, codexFingerprintCockpit)
+	require.NotNil(t, restarted)
+	assert.Equal(t, childIDs.turnID, restarted.turnID)
+	assert.Equal(t, childIDs.parentTurnID, restarted.parentTurnID)
+	assert.Equal(t, childIDs.rootTurnID, restarted.rootTurnID)
+}
+
+func requireCodexUUIDv7(t *testing.T, value string) {
+	t.Helper()
+	parsed, err := uuid.Parse(value)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(7), parsed.Version())
+	require.Equal(t, uuid.RFC4122, parsed.Variant())
+}
+
 func TestCockpitIdentityGraph_HeaderOnlyCacheKeyPreservesBodyShape(t *testing.T) {
 	account := newTestOAuthAccount(101, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	ids := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
@@ -337,7 +420,7 @@ func TestCockpitRootTurnID_RewritesOfficialMetadataCarriers(t *testing.T) {
 	assert.Equal(t, uuid.Version(7), parsed.Version())
 	assert.Equal(t, uuid.RFC4122, parsed.Variant())
 	assert.NotEqual(t, root, ids.rootTurnID)
-	assert.Equal(t, ids.turnID, ids.rootTurnID)
+	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 
 	headers := make(http.Header)
 	headers.Set("x-codex-turn-metadata", fmt.Sprintf(`{"root_turn_id":%q}`, root))
@@ -365,7 +448,10 @@ func TestCockpitRootTurnID_ChildInheritsClientRoot(t *testing.T) {
 		"root_turn_id":   root,
 	})
 	require.NotNil(t, ids)
-	assert.Equal(t, root, ids.rootTurnID)
+	requireCodexUUIDv7(t, ids.parentTurnID)
+	requireCodexUUIDv7(t, ids.rootTurnID)
+	assert.NotEqual(t, parent, ids.parentTurnID)
+	assert.NotEqual(t, root, ids.rootTurnID)
 	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 }
 
@@ -409,7 +495,8 @@ func TestCockpitRootTurnID_MissingChildRootRemainsUnset(t *testing.T) {
 		"prompt_cache_key": "cache-child",
 	})
 	require.NotNil(t, ids)
-	assert.Equal(t, parent, ids.parentTurnID)
+	requireCodexUUIDv7(t, ids.parentTurnID)
+	assert.NotEqual(t, parent, ids.parentTurnID)
 	assert.Empty(t, ids.rootTurnID)
 	body := map[string]any{"parent_turn_id": parent}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
@@ -516,7 +603,7 @@ func TestCockpitContextWindowID_PersistsAcrossRestart(t *testing.T) {
 	assert.Equal(t, first.contextWindowID, second.contextWindowID)
 }
 
-func TestCockpitContextWindowID_MissingIsGenerated(t *testing.T) {
+func TestCockpitContextWindowID_MissingIsInternalOnly(t *testing.T) {
 	account := newTestOAuthAccount(109, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil, map[string]any{
 		"session_id": uuid.Must(uuid.NewV7()).String(),
@@ -532,7 +619,7 @@ func TestCockpitContextWindowID_MissingIsGenerated(t *testing.T) {
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, ids.contextWindowID, metadata["context_window_id"])
+	assert.NotContains(t, metadata, "context_window_id", "Cockpit 不得替缺失该字段的客户端扩充上游元数据")
 }
 
 func TestCockpitWindowLineage_TracksCompactionChain(t *testing.T) {
@@ -733,7 +820,7 @@ func TestCodexFingerprintPre151OmitsExtendedTurnIdentity(t *testing.T) {
 	assert.NotContains(t, headerMetadata, "context_window_id")
 }
 
-func TestCodexFingerprint151PreservesParentTurnIdentity(t *testing.T) {
+func TestCodexFingerprint151ConvergesParentTurnIdentity(t *testing.T) {
 	account := newTestOAuthAccount(111, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	parent := uuid.Must(uuid.NewV7()).String()
 	source := codexFingerprintSource{
@@ -748,14 +835,15 @@ func TestCodexFingerprint151PreservesParentTurnIdentity(t *testing.T) {
 	ids := resolveCodexFingerprintIDsWithSource(account, source, codexFingerprintCockpit)
 	require.NotNil(t, ids)
 	assert.True(t, ids.extendedTurnIdentity)
-	assert.Equal(t, parent, ids.parentTurnID)
+	requireCodexUUIDv7(t, ids.parentTurnID)
+	assert.NotEqual(t, parent, ids.parentTurnID)
 
 	body := map[string]any{"prompt_cache_key": "cache-parent"}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
 	assert.NotContains(t, body, "parent_turn_id", "子回合 ID 只进入元数据，不写入 Responses 顶层")
 	metadata, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, parent, metadata["parent_turn_id"])
+	assert.Equal(t, ids.parentTurnID, metadata["parent_turn_id"])
 }
 
 func TestCodexFingerprintPre151RawBodyRemovesExtendedTurnIdentity(t *testing.T) {
@@ -886,7 +974,6 @@ func TestCockpitIdentityGraph_LocalSimulation(t *testing.T) {
 	for name, value := range map[string]string{
 		"session_id": root.sessionID,
 		"thread_id":  root.threadID,
-		"turn_id":    root.turnID,
 		"cache_key":  root.promptCacheKey,
 	} {
 		parsed, parseErr := uuid.Parse(value)
@@ -894,6 +981,7 @@ func TestCockpitIdentityGraph_LocalSimulation(t *testing.T) {
 		assert.Equal(t, uuid.Version(7), parsed.Version(), name)
 		assert.Equal(t, uuid.RFC4122, parsed.Variant(), name)
 	}
+	assert.Empty(t, root.turnID, "客户端缺失 turn_id 时 Cockpit 不补全")
 	assert.Equal(t, root.threadID+":0", root.windowID)
 	assert.NotEqual(t, "", root.threadID)
 	assert.Equal(t, root.sessionID, root.promptCacheKey)
@@ -1037,8 +1125,10 @@ func TestPrepareCodexFingerprintSeedForCreate_RootRotatesIncomingShadowPreserves
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra: map[string]any{
-			codexFingerprintModeExtraKey: "session",
-			CodexFingerprintSeedExtraKey: incoming,
+			codexFingerprintModeExtraKey:     "session",
+			CodexFingerprintSeedExtraKey:     incoming,
+			CodexIdentityBindingsExtraKey:    map[string]any{"identity": "foreign"},
+			CodexTurnLineageBindingsExtraKey: map[string]any{"turn": "foreign"},
 		},
 	}
 	parentID := int64(7)
@@ -1054,6 +1144,8 @@ func TestPrepareCodexFingerprintSeedForCreate_RootRotatesIncomingShadowPreserves
 
 	require.NoError(t, uuid.Validate(rootSeed))
 	assert.NotEqual(t, incoming, rootSeed, "新建根账号不得接受外部复用的种子")
+	assert.NotContains(t, root.Extra, CodexIdentityBindingsExtraKey)
+	assert.NotContains(t, root.Extra, CodexTurnLineageBindingsExtraKey)
 	assert.Equal(t, incoming, shadowSeed, "影子账号必须继承父账号种子")
 }
 
@@ -1395,7 +1487,8 @@ func TestCockpitMode_PromptCacheFallbackKeepsConversationStable(t *testing.T) {
 	assert.Equal(t, idsA.sessionID, idsB.sessionID, "相同缓存键应派生同一 session")
 	assert.Equal(t, idsA.threadID, idsB.threadID, "相同缓存键应派生同一 thread")
 	assert.Equal(t, idsA.promptCacheKey, idsB.promptCacheKey, "相同缓存键应稳定")
-	assert.NotEqual(t, idsA.turnID, idsB.turnID, "不同请求仍应生成独立 turn")
+	assert.Empty(t, idsA.turnID, "客户端缺失 turn_id 时不得生成")
+	assert.Empty(t, idsB.turnID, "客户端缺失 turn_id 时不得生成")
 }
 
 func TestCockpitMode_ThreadSeedPrefersSessionAndThreadThenPromptCache(t *testing.T) {
@@ -1904,4 +1997,78 @@ func TestRestoreStagedCodexFingerprintResponsePayload_UsesCurrentFailoverAttempt
 	restored := restoreStagedCodexFingerprintResponsePayload(c, []byte(`{"session_id":"upstream-second","other":"upstream-first"}`))
 
 	assert.JSONEq(t, `{"session_id":"client-second","other":"upstream-first"}`, string(restored))
+}
+
+func TestCockpitExplicitPromptCacheKeyPreservesWhitespace(t *testing.T) {
+	account := newTestOAuthAccount(993002, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	key := " cache-key "
+	raw := []byte(`{"prompt_cache_key":" cache-key ","client_metadata":{"session_id":"review-whitespace"}}`)
+
+	ids := resolveCodexFingerprintIDsFromRawRequest(account, nil, raw)
+	require.NotNil(t, ids)
+	require.Equal(t, key, ids.promptCacheKey)
+	wire, _, err := applyCodexFingerprintClientMetadataRaw(raw, ids)
+	require.NoError(t, err)
+	assert.Equal(t, key, gjson.GetBytes(wire, "prompt_cache_key").String())
+
+	headers := http.Header{}
+	headers.Set("conversation_id", "client-conversation")
+	headers.Set("x-codex-turn-metadata", `{}`)
+	applyCodexFingerprintHeaders(headers, ids)
+	assert.Equal(t, key, headers.Get("conversation_id"))
+}
+
+func TestCodexTurnStartedAtPreservesAndCarriesLogicalTurnTime(t *testing.T) {
+	account := newTestOAuthAccount(993003, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	firstRaw := []byte(`{"client_metadata":{"session_id":"review-time","turn_id":"019f1891-3400-7001-8000-000000000001","x-codex-turn-metadata":"{\"turn_started_at_unix_ms\":1789100000000}"}}`)
+	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, firstRaw)
+	require.NotNil(t, first)
+	assert.Equal(t, int64(1789100000000), first.turnStartedAtUnixMS)
+	wire, _, err := applyCodexFingerprintClientMetadataRaw(firstRaw, first)
+	require.NoError(t, err)
+	nested := gjson.GetBytes(wire, "client_metadata.x-codex-turn-metadata").String()
+	assert.Equal(t, int64(1789100000000), gjson.Get(nested, "turn_started_at_unix_ms").Int())
+
+	secondRaw := []byte(`{"client_metadata":{"session_id":"review-time","turn_id":"019f1891-3400-7001-8000-000000000001","x-codex-turn-metadata":"{}"}}`)
+	second := resolveCodexFingerprintIDsFromRawRequest(account, nil, secondRaw)
+	require.NotNil(t, second)
+	assert.Equal(t, first.turnStartedAtUnixMS, second.turnStartedAtUnixMS)
+}
+
+func TestCodexParentThreadMappingIsConsistentAcrossMetadataAndHeader(t *testing.T) {
+	account := newTestOAuthAccount(993004, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	parentOriginal := "019f189a-2400-7001-8000-aabcdef12340"
+	childOriginal := "019f189a-2400-7001-8000-aabcdef12341"
+	parent := resolveCodexFingerprintIDsFromRawRequest(account, nil, []byte(`{"client_metadata":{"thread_id":"`+parentOriginal+`"}}`))
+	childRaw := []byte(`{"client_metadata":{"thread_id":"` + childOriginal + `","parent_thread_id":"` + parentOriginal + `","x-codex-parent-thread-id":"` + parentOriginal + `","x-codex-turn-metadata":"{\"parent_thread_id\":\"` + parentOriginal + `\"}"}}`)
+	child := resolveCodexFingerprintIDsFromRawRequest(account, nil, childRaw)
+	require.NotNil(t, parent)
+	require.NotNil(t, child)
+	assert.Equal(t, parent.threadID, child.parentThreadID)
+
+	wire, _, err := applyCodexFingerprintClientMetadataRaw(childRaw, child)
+	require.NoError(t, err)
+	nested := gjson.GetBytes(wire, "client_metadata.x-codex-turn-metadata").String()
+	assert.Equal(t, parent.threadID, gjson.Get(nested, "parent_thread_id").String())
+	assert.Equal(t, parent.threadID, gjson.GetBytes(wire, "client_metadata.parent_thread_id").String())
+
+	headers := http.Header{}
+	headers.Set("x-codex-parent-thread-id", parentOriginal)
+	headers.Set("x-codex-turn-metadata", `{"parent_thread_id":"`+parentOriginal+`"}`)
+	applyCodexFingerprintHeaders(headers, child)
+	assert.Equal(t, parent.threadID, headers.Get("x-codex-parent-thread-id"))
+	assert.Equal(t, parent.threadID, gjson.Get(headers.Get("x-codex-turn-metadata"), "parent_thread_id").String())
+}
+
+func TestCodexMalformedIdentityTypesMatchMapAndRawParsing(t *testing.T) {
+	for _, value := range []string{"123", "true", "{}"} {
+		t.Run(value, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{"client_metadata":{"session_id":"audit-session","turn_id":%s}}`, value))
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(raw, &decoded))
+			mapSource := extractCockpitFingerprintSource(nil, decoded)
+			rawSource := extractCockpitFingerprintSourceRaw(nil, raw)
+			assert.Equal(t, mapSource.turnID, rawSource.turnID)
+		})
+	}
 }

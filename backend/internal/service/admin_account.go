@@ -156,6 +156,9 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	duplicateAccountOperationIDExtraKey: {},
 	// 复制账号必须获得独立随机指纹种子，不能继承源账号的设备和会话身份。
 	CodexFingerprintSeedExtraKey: {},
+	// 持久化 UUIDv7 绑定属于源账号运行态，复制件必须从空图开始。
+	CodexIdentityBindingsExtraKey:    {},
+	CodexTurnLineageBindingsExtraKey: {},
 	// 外部同步标识只属于一个本地账号。
 	"crs_account_id": {},
 	"crs_kind":       {},
@@ -466,6 +469,7 @@ func normalizeGrokMediaEligibilityUpdateExtra(account *Account, input *UpdateAcc
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
 	// 受管会话状态由系统维护，废弃字段不得通过通用账号接口写入。
 	DiscardDeprecatedAccountExtra(accountExtra)
+	DiscardCodexFingerprintRuntimeBindings(accountExtra)
 	delete(accountExtra, OllamaCloudUsageSessionExtraKey)
 	delete(accountExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -686,8 +690,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库；只有废弃键时则不替换。
 	if shouldReplaceExtra {
 		DiscardDeprecatedAccountExtra(normalizedExtra)
-		// 客户端提交的系统种子一律丢弃；若账号已有种子，下方再从持久化值恢复。
+		// 客户端提交的系统身份状态一律丢弃；下方再从持久化值恢复。
 		delete(normalizedExtra, CodexFingerprintSeedExtraKey)
+		DiscardCodexFingerprintRuntimeBindings(normalizedExtra)
 		delete(normalizedExtra, OllamaCloudUsageSessionExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -703,6 +708,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OllamaCloudUsageAutoRefreshExtraKey,
 			OllamaCloudUsageSnapshotExtraKey,
 			CodexFingerprintSeedExtraKey,
+			CodexIdentityBindingsExtraKey,
+			CodexTurnLineageBindingsExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -856,6 +863,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	DiscardDeprecatedAccountExtra(updates)
 	// 指纹种子是系统生成的持久化身份，普通增量编辑不得覆盖或删除。
 	delete(updates, CodexFingerprintSeedExtraKey)
+	DiscardCodexFingerprintRuntimeBindings(updates)
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
@@ -892,6 +900,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 受管会话状态只能通过专用类型接口更新，废弃账号扩展字段直接丢弃。
 	DiscardDeprecatedAccountExtra(input.Extra)
 	delete(input.Extra, CodexFingerprintSeedExtraKey)
+	DiscardCodexFingerprintRuntimeBindings(input.Extra)
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)

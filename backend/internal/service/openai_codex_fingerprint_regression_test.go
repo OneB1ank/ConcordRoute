@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // 子回合标识属于元数据；不得提升为 Responses 不支持的顶层生成参数。
@@ -42,7 +43,15 @@ func TestCodexFingerprintParentTurnMetadataContract(t *testing.T) {
 				ids := resolveCodexFingerprintIDsFromRequest(account, headers, body)
 				require.NotNil(t, ids)
 				require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-				assertParentTurnMetadataContract(t, body, parent, root)
+				expectedParent, expectedRoot := parent, root
+				if mode == "cockpit" {
+					expectedParent, expectedRoot = ids.parentTurnID, ids.rootTurnID
+					requireCodexUUIDv7(t, expectedParent)
+					requireCodexUUIDv7(t, expectedRoot)
+					assert.NotEqual(t, parent, expectedParent)
+					assert.NotEqual(t, root, expectedRoot)
+				}
+				assertParentTurnMetadataContract(t, body, expectedParent, expectedRoot)
 
 				rawIDs := resolveCodexFingerprintIDsFromRawRequest(account, headers, raw)
 				require.NotNil(t, rawIDs)
@@ -51,7 +60,11 @@ func TestCodexFingerprintParentTurnMetadataContract(t *testing.T) {
 				require.True(t, changed)
 				var decoded map[string]any
 				require.NoError(t, json.Unmarshal(updated, &decoded))
-				assertParentTurnMetadataContract(t, decoded, parent, root)
+				expectedRawParent, expectedRawRoot := parent, root
+				if mode == "cockpit" {
+					expectedRawParent, expectedRawRoot = rawIDs.parentTurnID, rawIDs.rootTurnID
+				}
+				assertParentTurnMetadataContract(t, decoded, expectedRawParent, expectedRawRoot)
 			})
 		}
 	}
@@ -204,6 +217,55 @@ func TestCodexFingerprintPre151WindowNumberDoesNotChangeGeneration(t *testing.T)
 			assert.Equal(t, ids.threadID+":0", ids.windowID, "已剥离的扩展字段不应继续改变旧客户端的窗口与缓存绑定")
 		})
 	}
+}
+
+// Cockpit 只收敛客户端实际携带的回合字段；内部窗口派生不得扩充上游协议形状。
+func TestCockpitFingerprintDoesNotSynthesizeAbsentTurnOrWindowNumber(t *testing.T) {
+	account := newTestOAuthAccount(1207, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	raw := []byte(`{"prompt_cache_key":"client-cache","client_metadata":{"session_id":"client-session","thread_id":"client-thread","x-codex-window-id":"client-thread:2","x-codex-turn-metadata":"{\"extra\":\"keep\"}"}}`)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil, decoded)
+	require.NotNil(t, ids)
+	require.Empty(t, ids.turnID)
+	require.Equal(t, "client-cache", ids.promptCacheKey)
+	require.True(t, applyCodexFingerprintClientMetadata(decoded, ids))
+	metadata := decoded["client_metadata"].(map[string]any)
+	assert.NotContains(t, metadata, "turn_id")
+	assert.NotContains(t, metadata, "window_number")
+	assert.NotContains(t, metadata, "context_window_id")
+	assert.NotContains(t, metadata, "first_window_id")
+	assert.NotContains(t, metadata, "previous_window_id")
+	assert.Equal(t, "client-cache", decoded["prompt_cache_key"])
+	nested := gjson.Parse(metadata["x-codex-turn-metadata"].(string))
+	assert.False(t, nested.Get("turn_id").Exists())
+	assert.False(t, nested.Get("window_number").Exists())
+	assert.False(t, nested.Get("context_window_id").Exists())
+	assert.False(t, nested.Get("first_window_id").Exists())
+	assert.False(t, nested.Get("previous_window_id").Exists())
+	assert.False(t, nested.Get("prompt_cache_key").Exists(), "官方 Codex 仅在 Responses 顶层发送 prompt_cache_key")
+	assert.Equal(t, "keep", nested.Get("extra").String())
+
+	rawIDs := resolveCodexFingerprintIDsFromRawRequest(account, nil, raw)
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(raw, rawIDs)
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.turn_id").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.window_number").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.context_window_id").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.first_window_id").Exists())
+	assert.False(t, gjson.GetBytes(updated, "client_metadata.previous_window_id").Exists())
+	assert.Equal(t, "client-cache", gjson.GetBytes(updated, "prompt_cache_key").String())
+
+	headers := make(http.Header)
+	headers.Set("x-codex-turn-metadata", `{"extra":"keep"}`)
+	applyCodexFingerprintHeaders(headers, ids)
+	assert.False(t, gjson.Get(headers.Get("x-codex-turn-metadata"), "turn_id").Exists())
+	assert.False(t, gjson.Get(headers.Get("x-codex-turn-metadata"), "window_number").Exists())
+	assert.False(t, gjson.Get(headers.Get("x-codex-turn-metadata"), "context_window_id").Exists())
+	assert.False(t, gjson.Get(headers.Get("x-codex-turn-metadata"), "first_window_id").Exists())
+	assert.False(t, gjson.Get(headers.Get("x-codex-turn-metadata"), "previous_window_id").Exists())
+	assert.False(t, gjson.Get(headers.Get("x-codex-turn-metadata"), "prompt_cache_key").Exists())
 }
 
 func assertParentTurnMetadataContract(t *testing.T, body map[string]any, parent, root string) {

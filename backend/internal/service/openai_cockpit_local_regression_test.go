@@ -119,12 +119,12 @@ func TestLocalCockpitIdentityTopologyAndFailover(t *testing.T) {
 		requireLocalCockpitCarriersMatch(t, snapshot)
 	}
 
-	// New turns in one conversation keep the stable topology and cache key.
+	// 同一客户端 turn 的重复请求保持稳定拓扑和缓存键；内部重试另行复用完整快照。
 	require.Equal(t, conversationA1.ids.installationID, conversationA2.ids.installationID)
 	require.Equal(t, conversationA1.ids.sessionID, conversationA2.ids.sessionID)
 	require.Equal(t, conversationA1.ids.threadID, conversationA2.ids.threadID)
 	require.Equal(t, conversationA1.ids.promptCacheKey, conversationA2.ids.promptCacheKey)
-	require.NotEqual(t, conversationA1.ids.turnID, conversationA2.ids.turnID)
+	require.Equal(t, conversationA1.ids.turnID, conversationA2.ids.turnID)
 
 	// An internal retry reuses the exact snapshot, including its turn identity.
 	require.Equal(t, conversationA1.headers, retryA1.headers)

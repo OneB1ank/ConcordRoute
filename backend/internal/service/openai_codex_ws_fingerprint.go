@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"time"
 )
 
 // codexWebSocketFingerprintState 记录原始帧的会话边界，不用可能不同的握手别名作比较。
@@ -49,22 +48,39 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 	}
 	source := extractCockpitFingerprintSourceRaw(nil, body)
 	current := *previous
+	current.turnIDPresent = source.turnID != ""
+	turnChanged := source.turnID != "" && source.turnID != previous.originalTurnID
 	if source.turnID != "" && source.turnID != previous.originalTurnID {
 		current.originalTurnID = source.turnID
-		current.turnID = newCodexUUIDv7().String()
-		current.turnStartedAtUnixMS = time.Now().UnixMilli()
+		if current.mode == codexFingerprintCockpit {
+			current.turnID = ""
+		} else {
+			current.turnID = newCodexUUIDv7().String()
+		}
 	}
 	// root/parent 以当前帧为准，即使 turn_id 省略或未变也不回灌上一帧的根。
+	current.originalParentThreadID = source.parentThreadID
 	current.originalParentTurnID = source.parentTurnID
 	current.originalRootTurnID = source.rootTurnID
-	current.parentTurnID = source.parentTurnID
-	current.rootTurnID = resolveCodexRootTurnID(source.rootTurnID, source.parentTurnID, current.turnID)
+	if current.mode == codexFingerprintCockpit {
+		resolveCockpitTurnLineage(account, &current)
+	} else {
+		current.parentThreadID = resolveCodexParentThreadID(account, current.mode, current.originalThreadID, current.threadID, current.originalParentThreadID)
+		current.parentTurnID = source.parentTurnID
+		current.rootTurnID = resolveCodexRootTurnID(source.rootTurnID, source.parentTurnID, current.turnID)
+	}
+	if current.turnID != "" && (turnChanged || current.turnStartedAtUnixMS == 0) {
+		current.turnStartedAtUnixMS = resolveCodexTurnStartedAt(account, current.mode, current.sessionID, current.originalTurnID, current.turnID, source.turnStartedAtUnixMS, source.turnStartedAtPresent)
+	}
+	current.windowNumberPresent = source.windowNumberPresent
+	// 可选窗口字段必须逐帧刷新存在性。若本帧省略而沿用握手快照，
+	// Cockpit 写出门控会把上一帧字段错误回灌到当前帧。
+	current.originalContextWindowID = source.contextWindowID
+	current.originalFirstWindowID = source.firstWindowID
+	current.originalPreviousWindowID = source.previousWindowID
 	if source.windowID != "" || source.windowNumberPresent {
 		resolveCodexFingerprintWindow(account, source, &current)
 		current.originalWindowID = source.windowID
-		current.originalContextWindowID = source.contextWindowID
-		current.originalFirstWindowID = source.firstWindowID
-		current.originalPreviousWindowID = source.previousWindowID
 	}
 	if current.mode == codexFingerprintCockpit {
 		if source.promptCacheKey != "" {
