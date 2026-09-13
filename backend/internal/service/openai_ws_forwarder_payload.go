@@ -144,9 +144,20 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			headers.Set("user-agent", ua)
 		}
 	}
-	reqCtx := context.Background()
-	if c != nil && c.Request != nil {
-		reqCtx = c.Request.Context()
+	reqCtx := ctx
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
+	if boundCtx, bindErr := s.bindCodexAppServerAttestationContext(
+		reqCtx,
+		c,
+		account,
+		sessionResolution.SessionID,
+		sessionResolution.ConversationID,
+	); bindErr != nil {
+		return nil, sessionResolution, fmt.Errorf("bind app-server attestation: %w", bindErr)
+	} else {
+		reqCtx = boundCtx
 	}
 	s.applyOpenAIUpstreamUserAgentHeader(reqCtx, c, account, headers, true, routerMatch...)
 
@@ -170,6 +181,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	// 隔离不兼容握手。
 	applyOpenAICodexBetaFeatures(c, account, headers)
 	setOpenAICodexRoutingHint(headers, account, routingModel, routingServiceTier)
+	// WebSocket 握手同样只使用已完成 app-server 协商的客户端证明；
+	// 未协商时显式删除，避免连接池复用旧握手头。
+	s.applyCodexClientAttestation(reqCtx, account, headers, codexClientAttestationFromRequest(c))
 	logOpenAIRoutingDiagnostics(
 		ctx,
 		account,

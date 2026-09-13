@@ -155,7 +155,7 @@ Qoder 计费定价优先级：
 
 Qoder 有独立的上游月度 Credits 配额。ConcordRoute 只把它作为账号用量和容量信息，它与 ConcordRoute 用户余额、订阅以及用户与平台维度的美元配额相互独立。
 
-账号用量界面会查询所选站点的 Gateway `/api/v2/quota/usage` 端点，并把最近成功快照保存到 `account.extra.qoder_quota_snapshot`。国际站请求始终使用 COSY 签名；中国站的 `qodercn20` 和 PAT 账号同样使用 COSY 签名，旧版或导入的 COSY 会话则按官方客户端行为使用 `security_oauth_token` Bearer 鉴权。中国站请求会在可用时携带缓存的 `orgId`，1.24.2 的常规配额查询不发送 `quota_key`。实时查询失败时，管理界面可以同时显示缓存快照和降级用量错误。完整上游月度 Credit 余额是 `userQuota`、`addOnQuota` 与 `orgResourcePackage` 或 `sharedQuota` 之和，与 qodercli 用量视图一致。对于非个人零配额账号，`isQuotaExceeded=true` 或已耗尽的正数合计配额会把正常账号 `rate_limited_until` 调度信号设置到 Qoder 的 `expiresAt`；仍有附加或组织 Credit 时会阻止或清除过期配额锁。观测到的 `personal_standard` 结构如果 `total=0`、`remaining=0` 且 `expiresAt` 极远，只用于展示，直到真实请求错误确认限制。请求时的错误码 `115`、`agentLimitResetTime` 或 HTTP 429 仍走正常账号限流冷却路径。
+账号管理页挂载、列表刷新和前端缓存失效只读取 `account.extra.qoder_quota_snapshot`、内存快照和本地统计，不代表账号访问 Gateway `/api/v2/quota/usage`。最近成功的真实快照仍保存到该 Extra 字段；对话路径或管理员明确触发的单账号主动查询才访问该端点。国际站请求始终使用 COSY 签名；中国站的 `qodercn20` 和 PAT 账号同样使用 COSY 签名，旧版或导入的 COSY 会话则按官方客户端行为使用 `security_oauth_token` Bearer 鉴权。中国站请求会在可用时携带缓存的 `orgId`，1.24.2 的常规配额查询不发送 `quota_key`。实时查询失败时，管理界面可以同时显示缓存快照和降级用量错误。完整上游月度 Credit 余额是 `userQuota`、`addOnQuota` 与 `orgResourcePackage` 或 `sharedQuota` 之和，与 qodercli 用量视图一致。对于非个人零配额账号，`isQuotaExceeded=true` 或已耗尽的正数合计配额会把正常账号 `rate_limited_until` 调度信号设置到 Qoder 的 `expiresAt`；仍有附加或组织 Credit 时会阻止或清除过期配额锁。观测到的 `personal_standard` 结构如果 `total=0`、`remaining=0` 且 `expiresAt` 极远，只用于展示，直到真实请求错误确认限制。请求时的错误码 `115`、`agentLimitResetTime` 或 HTTP 429 仍走正常账号限流冷却路径。
 
 ## 运维
 

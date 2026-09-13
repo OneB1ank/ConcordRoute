@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ip"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
+	"github.com/TokenFlux/TokenRouter/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -76,6 +77,9 @@ func Logger() gin.HandlerFunc {
 		}
 		if model != "" {
 			fields = append(fields, zap.String("model", model))
+		}
+		if stages := service.TTFTStageTimingSnapshot(c, endTime); len(stages) > 0 {
+			fields = append(fields, zap.Any("ttft_stages_ms", stages))
 		}
 
 		l := logger.FromContext(c.Request.Context()).With(fields...)

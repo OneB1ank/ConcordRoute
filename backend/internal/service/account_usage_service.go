@@ -87,6 +87,14 @@ type accountWindowStatsBatchReader interface {
 	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
 }
 
+// accountWindowStatsRangeReader exposes a bounded window query for callers
+// that need a coherent point-in-time snapshot.  It is intentionally optional
+// so lightweight test doubles and older repository implementations keep the
+// existing unbounded method as a compatibility fallback.
+type accountWindowStatsRangeReader interface {
+	GetAccountWindowStatsRange(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountStats, error)
+}
+
 // apiUsageCache 缓存从 Anthropic API 获取的使用率数据（utilization, resets_at）
 // 同时支持缓存错误响应（负缓存），防止 429 等错误导致的重试风暴
 type apiUsageCache struct {
@@ -575,10 +583,12 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 	return s.getUsageForAccount(ctx, account, forceProbe)
 }
 
-// GetUsageBatch 批量获取账号使用量。
-// Anthropic OAuth/SetupToken 统一走 passive 链路，其他账号复用现有主动查询逻辑。
-// 单个账号失败不会中断整批请求，错误会按账号返回。
+// GetUsageBatch 批量获取账号使用量快照。
+// 管理页批量读取只允许使用本地/账号快照，不能因为页面挂载、刷新或缓存
+// 过期而代表账号访问上游额度接口。主动探测仍由单账号显式操作触发。
+// force 参数保留用于兼容现有 API 契约，但不会把批量快照读取升级为主动探测。
 func (s *AccountUsageService) GetUsageBatch(ctx context.Context, accountIDs []int64, force bool) (map[int64]*UsageInfo, map[int64]string, error) {
+	_ = force
 	uniqueIDs := make([]int64, 0, len(accountIDs))
 	seen := make(map[int64]struct{}, len(accountIDs))
 	for _, accountID := range accountIDs {
@@ -626,11 +636,7 @@ func (s *AccountUsageService) GetUsageBatch(ctx context.Context, accountIDs []in
 		g.Go(func() error {
 			var usage *UsageInfo
 			var usageErr error
-			if supportsAnthropicPassiveUsage(account) {
-				usage, usageErr = s.getPassiveUsageForAccount(gctx, account)
-			} else {
-				usage, usageErr = s.getUsageForAccount(gctx, account, force)
-			}
+			usage, usageErr = s.getPassiveUsageForAccount(gctx, account)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -650,8 +656,8 @@ func (s *AccountUsageService) GetUsageBatch(ctx context.Context, accountIDs []in
 	return usageByAccount, errorsByAccount, nil
 }
 
-// GetPassiveUsage 从 Account.Extra 中的被动采样数据构建 UsageInfo，不调用外部 API。
-// 仅适用于 Anthropic OAuth / SetupToken 账号。
+// GetPassiveUsage 从账号 Extra、内存快照和本地账务构建 UsageInfo，不调用外部 API。
+// 管理页批量读取复用这条被动路径；实时额度探测仍由单账号显式主动查询触发。
 func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int64) (*UsageInfo, error) {
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
@@ -662,9 +668,50 @@ func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int
 }
 
 func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, account *Account) (*UsageInfo, error) {
-	if !supportsAnthropicPassiveUsage(account) {
-		return nil, fmt.Errorf("passive usage only supported for Anthropic OAuth/SetupToken accounts")
+	if account == nil {
+		return nil, fmt.Errorf("account is required")
 	}
+
+	switch account.Platform {
+	case PlatformAnthropic:
+		if !supportsAnthropicPassiveUsage(account) {
+			return nil, fmt.Errorf("passive usage only supported for Anthropic OAuth/SetupToken accounts")
+		}
+		return s.getPassiveAnthropicUsage(ctx, account)
+	case PlatformOpenAI:
+		if account.Type != AccountTypeOAuth {
+			return nil, fmt.Errorf("account type %s does not support usage query", account.Type)
+		}
+		return s.getPassiveOpenAIUsage(ctx, account), nil
+	case PlatformGemini:
+		// GeminiQuotaService 只读取本地策略，窗口统计来自本地账务，不访问上游。
+		usage, err := s.getGeminiUsage(ctx, account)
+		if usage != nil {
+			usage.Source = "passive"
+		}
+		return usage, err
+	case PlatformGrok:
+		if account.Type != AccountTypeOAuth {
+			return nil, fmt.Errorf("passive usage only supported for Grok OAuth accounts")
+		}
+		return s.getPassiveGrokUsage(ctx, account), nil
+	case PlatformAntigravity:
+		if account.Type != AccountTypeOAuth {
+			return nil, fmt.Errorf("passive usage only supported for Antigravity OAuth accounts")
+		}
+		return s.getPassiveAntigravityUsage(account), nil
+	case PlatformQoder:
+		if account.Type != AccountTypeCosy {
+			return nil, fmt.Errorf("passive usage only supported for Qoder COSY accounts")
+		}
+		return s.getPassiveQoderUsage(account), nil
+	default:
+		return nil, fmt.Errorf("passive usage is not supported for platform %s", account.Platform)
+	}
+}
+
+// getPassiveAnthropicUsage 从响应头/本地窗口构建 Anthropic 被动快照。
+func (s *AccountUsageService) getPassiveAnthropicUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
 
 	// 复用 estimateSetupTokenUsage 构建 5h 窗口（OAuth 和 SetupToken 逻辑一致）
 	info := s.estimateSetupTokenUsage(account)
@@ -689,6 +736,123 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 	s.addWindowStats(ctx, account, info)
 
 	return info, nil
+}
+
+// getPassiveOpenAIUsage 只读取网关响应头保存的 Codex 快照和本地账务统计。
+// 这里刻意不调用 OpenAIQuotaService.QueryUsage，避免账号管理页形成周期性
+// /wham/usage 访问特征；真实额度刷新由对话响应或管理员显式主动查询完成。
+func (s *AccountUsageService) getPassiveOpenAIUsage(ctx context.Context, account *Account) *UsageInfo {
+	now := time.Now()
+	info := &UsageInfo{Source: "passive", UpdatedAt: &now}
+	applyExtraToUsage(info, account.Extra, now)
+	if raw, ok := account.Extra["codex_usage_updated_at"]; ok {
+		if updatedAt, err := parseTime(fmt.Sprint(raw)); err == nil {
+			info.UpdatedAt = &updatedAt
+		}
+	}
+	s.applyOpenAIQuotaAutoPauseState(ctx, account, info)
+	s.addOpenAIWindowStats(ctx, account, info, now)
+	return info
+}
+
+// getPassiveGrokUsage 只使用账号中已有的 xAI 观察快照和本地统计。
+func (s *AccountUsageService) getPassiveGrokUsage(ctx context.Context, account *Account) *UsageInfo {
+	fetcher := s.grokQuotaFetcher
+	if fetcher == nil {
+		fetcher = NewGrokQuotaFetcher()
+	}
+	usage := fetcher.BuildUsageInfo(account)
+	if s.usageLogRepo != nil {
+		if stats, err := s.usageLogRepo.GetAccountTodayStats(ctx, account.ID); err == nil && stats != nil {
+			usage.GrokLocalUsage = windowStatsFromAccountStats(stats)
+		}
+		usage.GrokLocalUsage24h, usage.GrokLocalUsage7d, usage.GrokLocalUsageMonthly = grokLocalUsageForQuota(
+			ctx, s.usageLogRepo, account.ID, usage.GrokBilling, time.Now().UTC(),
+		)
+		if usage.SevenDay != nil && usage.GrokLocalUsage7d != nil {
+			usage.SevenDay.WindowStats = usage.GrokLocalUsage7d
+		}
+		if usage.ThirtyDay != nil && usage.GrokLocalUsageMonthly != nil {
+			usage.ThirtyDay.WindowStats = usage.GrokLocalUsageMonthly
+		}
+	}
+	usage.Source = "passive"
+	enrichUsageWithAccountError(usage, account)
+	return usage
+}
+
+// getPassiveAntigravityUsage 仅返回内存中已经采集的快照；没有快照时返回空状态。
+func (s *AccountUsageService) getPassiveAntigravityUsage(account *Account) *UsageInfo {
+	now := time.Now()
+	if s != nil && s.cache != nil {
+		if cached, ok := s.cache.antigravityCache.Load(account.ID); ok {
+			if cache, ok := cached.(*antigravityUsageCache); ok && cache.usageInfo != nil {
+				// 缓存对象还会被主动查询路径复用；被动展示只操作副本，
+				// 避免把 Source/倒计时写回共享对象造成数据竞争或状态污染。
+				usage := cloneUsageInfoForPassiveRead(cache.usageInfo)
+				usage.Source = "passive"
+				recalcAntigravityRemainingSeconds(usage)
+				return usage
+			}
+		}
+	}
+	return &UsageInfo{Source: "passive", UpdatedAt: &now}
+}
+
+// getPassiveQoderUsage 优先返回已缓存结果，其次读取持久化快照，不创建新会话。
+func (s *AccountUsageService) getPassiveQoderUsage(account *Account) *UsageInfo {
+	now := time.Now()
+	if s != nil && s.cache != nil {
+		if cached, ok := s.cache.qoderCache.Load(account.ID); ok {
+			if cache, ok := cached.(*qoderUsageCache); ok && cache.usageInfo != nil {
+				usage := cloneUsageInfoForPassiveRead(cache.usageInfo)
+				usage.Source = "passive"
+				return usage
+			}
+		}
+	}
+	info := &UsageInfo{Source: "passive", UpdatedAt: &now}
+	if snapshot := qoderQuotaSnapshotFromExtra(account); snapshot != nil {
+		snapshot.SnapshotFromAccount = true
+		info.QoderQuota = snapshot
+		if snapshot.LastUpdatedAt != nil {
+			info.UpdatedAt = snapshot.LastUpdatedAt
+		}
+	}
+	return info
+}
+
+// cloneUsageInfoForPassiveRead 隔离管理页被动读路径与主动查询缓存中的可变字段。
+// 目前被动路径会改写 Source 和 Antigravity 窗口倒计时，因此至少复制这些
+// 指针对象；其余字段仅序列化读取，不在这里原地修改。
+func cloneUsageInfoForPassiveRead(src *UsageInfo) *UsageInfo {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	cloneProgress := func(src *UsageProgress) *UsageProgress {
+		if src == nil {
+			return nil
+		}
+		progress := *src
+		if src.ResetsAt != nil {
+			resetAt := *src.ResetsAt
+			progress.ResetsAt = &resetAt
+		}
+		return &progress
+	}
+	dst.FiveHour = cloneProgress(src.FiveHour)
+	dst.SevenDay = cloneProgress(src.SevenDay)
+	dst.SevenDaySonnet = cloneProgress(src.SevenDaySonnet)
+	dst.SevenDayFable = cloneProgress(src.SevenDayFable)
+	dst.GeminiSharedDaily = cloneProgress(src.GeminiSharedDaily)
+	dst.GeminiProDaily = cloneProgress(src.GeminiProDaily)
+	dst.GeminiFlashDaily = cloneProgress(src.GeminiFlashDaily)
+	dst.GeminiSharedMinute = cloneProgress(src.GeminiSharedMinute)
+	dst.GeminiProMinute = cloneProgress(src.GeminiProMinute)
+	dst.GeminiFlashMinute = cloneProgress(src.GeminiFlashMinute)
+	dst.ThirtyDay = cloneProgress(src.ThirtyDay)
+	return &dst
 }
 
 func (s *AccountUsageService) applyOpenAIQuotaAutoPauseState(ctx context.Context, account *Account, usage *UsageInfo) {
@@ -817,23 +981,36 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		return usage, nil
 	}
 
-	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.FiveHour, 5*time.Hour, now)); err == nil {
+	s.addOpenAIWindowStats(ctx, account, usage, now)
+
+	applyCodexQuotaOverdraftUsage(ctx, s.usageLogRepo, account, usage, now)
+
+	return usage, nil
+}
+
+// addOpenAIWindowStats 附加本地账务窗口统计。数据库读取不会访问账号上游，
+// 因此可安全复用于主动查询和管理页被动快照展示。
+func (s *AccountUsageService) addOpenAIWindowStats(ctx context.Context, account *Account, usage *UsageInfo, now time.Time) {
+	if s == nil || s.usageLogRepo == nil || account == nil || usage == nil {
+		return
+	}
+
+	fiveHourStart, sevenDayStart := codexWindowStatsStarts(usage.FiveHour, usage.SevenDay, now)
+	statsEnd := now.UTC()
+
+	if stats, err := s.getAccountWindowStats(ctx, account.ID, fiveHourStart, statsEnd); err == nil {
 		if usage.FiveHour == nil {
 			usage.FiveHour = &UsageProgress{Utilization: 0}
 		}
 		usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
 	}
 
-	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.SevenDay, 7*24*time.Hour, now)); err == nil {
+	if stats, err := s.getAccountWindowStats(ctx, account.ID, sevenDayStart, statsEnd); err == nil {
 		if usage.SevenDay == nil {
 			usage.SevenDay = &UsageProgress{Utilization: 0}
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
-
-	applyCodexQuotaOverdraftUsage(ctx, s.usageLogRepo, account, usage, now)
-
-	return usage, nil
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
@@ -1006,7 +1183,7 @@ func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *
 		if cache, ok := cached.(*antigravityUsageCache); ok {
 			ttl := antigravityCacheTTL(cache.usageInfo)
 			if time.Since(cache.timestamp) < ttl {
-				usage := cache.usageInfo
+				usage := cloneUsageInfoForPassiveRead(cache.usageInfo)
 				if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
 					usage.FiveHour.RemainingSeconds = int(time.Until(*usage.FiveHour.ResetsAt).Seconds())
 				}
@@ -1023,7 +1200,7 @@ func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *
 			if cache, ok := cached.(*antigravityUsageCache); ok {
 				ttl := antigravityCacheTTL(cache.usageInfo)
 				if time.Since(cache.timestamp) < ttl {
-					usage := cache.usageInfo
+					usage := cloneUsageInfoForPassiveRead(cache.usageInfo)
 					// 重新计算 RemainingSeconds，避免返回过时的剩余秒数
 					recalcAntigravityRemainingSeconds(usage)
 					return usage, nil
@@ -1210,7 +1387,7 @@ func (s *AccountUsageService) getQoderUsage(ctx context.Context, account *Accoun
 	if !force {
 		if cached, ok := s.cache.qoderCache.Load(account.ID); ok {
 			if cache, ok := cached.(*qoderUsageCache); ok && qoderUsageCacheUsable(account, cache, time.Now()) {
-				return cache.usageInfo, nil
+				return cloneUsageInfoForPassiveRead(cache.usageInfo), nil
 			}
 		}
 	}
@@ -1220,7 +1397,7 @@ func (s *AccountUsageService) getQoderUsage(ctx context.Context, account *Accoun
 		if !force {
 			if cached, ok := s.cache.qoderCache.Load(account.ID); ok {
 				if cache, ok := cached.(*qoderUsageCache); ok && qoderUsageCacheUsable(account, cache, time.Now()) {
-					return cache.usageInfo, nil
+					return cloneUsageInfoForPassiveRead(cache.usageInfo), nil
 				}
 			}
 		}
@@ -2023,6 +2200,13 @@ func windowStatsFromAccountStats(stats *usagestats.AccountStats) *WindowStats {
 	}
 }
 
+func (s *AccountUsageService) getAccountWindowStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountStats, error) {
+	if reader, ok := s.usageLogRepo.(accountWindowStatsRangeReader); ok {
+		return reader.GetAccountWindowStatsRange(ctx, accountID, startTime, endTime)
+	}
+	return s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+}
+
 func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now time.Time) *UsageProgress {
 	if len(extra) == 0 {
 		return nil
@@ -2088,11 +2272,40 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 }
 
 // codexWindowStatsStart 按 Codex 上游返回的重置时间对齐本地用量统计窗口。
+//
+// 当 reset_at 刚刚过去时，窗口已经在该时间点开启了新周期；回退到
+// now-window 会把上一周期的尾部日志错误地计入当前窗口。对较旧的过期
+// 快照仍使用滚动窗口回退，避免长期无法刷新时把窗口缩成过小区间。
 func codexWindowStatsStart(progress *UsageProgress, fallbackWindow time.Duration, now time.Time) time.Time {
-	if progress != nil && progress.ResetsAt != nil && now.Before(*progress.ResetsAt) {
-		return progress.ResetsAt.Add(-fallbackWindow)
+	if progress != nil && progress.ResetsAt != nil {
+		resetAt := progress.ResetsAt.UTC()
+		if now.Before(resetAt) {
+			start := resetAt.Add(-fallbackWindow)
+			if start.Before(now) {
+				return start
+			}
+			return now.Add(-fallbackWindow)
+		}
+		// A recently elapsed reset is an explicit boundary for the new window.
+		// Use it only within one nominal window; an old stale snapshot falls back
+		// to the rolling interval instead of under-counting current usage.
+		if elapsed := now.Sub(resetAt); elapsed >= 0 && elapsed <= fallbackWindow {
+			return resetAt
+		}
 	}
 	return now.Add(-fallbackWindow)
+}
+
+// codexWindowStatsStarts computes both local aggregation starts from the same
+// timestamp and enforces the nesting invariant: the 7d window must contain the
+// 5h window, even when independently sampled upstream reset metadata is skewed.
+func codexWindowStatsStarts(fiveHour, sevenDay *UsageProgress, now time.Time) (time.Time, time.Time) {
+	fiveHourStart := codexWindowStatsStart(fiveHour, 5*time.Hour, now)
+	sevenDayStart := codexWindowStatsStart(sevenDay, 7*24*time.Hour, now)
+	if sevenDayStart.After(fiveHourStart) {
+		sevenDayStart = fiveHourStart
+	}
+	return fiveHourStart, sevenDayStart
 }
 
 func (s *AccountUsageService) GetAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountUsageStatsResponse, error) {

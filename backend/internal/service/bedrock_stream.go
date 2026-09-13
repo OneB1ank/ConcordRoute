@@ -129,9 +129,8 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 				continue
 			}
 
-			if firstTokenMs == nil {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+			if firstTokenMs == nil && anthropicStreamDataStartsVisibleOutput(string(sseData), "") {
+				recordFirstTokenMs(&firstTokenMs, startTime)
 			}
 
 			// 转换 Bedrock 特有的 amazon-bedrock-invocationMetrics 为标准 Anthropic usage 格式

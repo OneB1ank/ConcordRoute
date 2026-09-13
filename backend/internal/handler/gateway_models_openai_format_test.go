@@ -86,3 +86,37 @@ func TestGatewayModels_OpenAIFormatAcrossCatalogSources(t *testing.T) {
 		})
 	}
 }
+
+func TestGatewayModels_OpenAICodexContextMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(7042)
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{
+		byGroup: map[int64][]service.Account{groupID: {{
+			ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		}}},
+	})
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI},
+	})
+
+	h.Models(c)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		Data []openai.Model `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	var model *openai.Model
+	for i := range got.Data {
+		if got.Data[i].ID == "gpt-5.6-sol" {
+			model = &got.Data[i]
+			break
+		}
+	}
+	require.NotNil(t, model)
+	require.EqualValues(t, 272000, model.ContextWindow)
+	require.EqualValues(t, 872000, model.MaxContextWindow)
+	require.EqualValues(t, 95, model.EffectiveContextWindowPercent)
+}

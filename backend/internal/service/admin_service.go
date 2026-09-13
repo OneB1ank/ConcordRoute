@@ -87,9 +87,9 @@ type AdminService interface {
 	RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error)
 	ClearAccountError(ctx context.Context, id int64) (*Account, error)
 	SetAccountError(ctx context.Context, id int64, errorMsg string) error
-	// EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号 privacy_mode，未设置则尝试关闭训练数据共享并持久化。
+	// EnsureOpenAIPrivacy 保留用于兼容旧调用方；账号生命周期不会自动调用。
 	EnsureOpenAIPrivacy(ctx context.Context, account *Account) string
-	// EnsureAntigravityPrivacy 检查 Antigravity OAuth 账号 privacy_mode，未设置则调用 setUserSettings 并持久化。
+	// EnsureAntigravityPrivacy 保留用于兼容旧调用方；账号生命周期不会自动调用。
 	EnsureAntigravityPrivacy(ctx context.Context, account *Account) string
 	// ForceOpenAIPrivacy 强制重新设置 OpenAI OAuth 账号隐私，无论当前状态。
 	ForceOpenAIPrivacy(ctx context.Context, account *Account) string

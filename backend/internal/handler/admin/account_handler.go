@@ -64,7 +64,6 @@ type AccountHandler struct {
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
-	grokImportProber        grokImportProber
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	advancedSchedulerScores *service.AdvancedSchedulerScoreDiagnosticService
 }
@@ -852,10 +851,6 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
-	// 捕获闭包内创建的账号引用，用于创建成功后触发仍受支持的能力探测。
-	// 幂等重放时闭包不会执行，createdAccount 保持 nil，避免重复调度。
-	var createdAccount *service.Account
-
 	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		account, execErr := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 			Name:                  req.Name,
@@ -877,11 +872,6 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		if execErr != nil {
 			return nil, execErr
 		}
-		createdAccount = account
-		// Antigravity OAuth: 新账号直接设置隐私
-		h.adminService.ForceAntigravityPrivacy(ctx, account)
-		// OpenAI OAuth: 新账号直接设置隐私
-		h.adminService.ForceOpenAIPrivacy(ctx, account)
 		return h.buildAccountResponseWithRuntime(ctx, account), nil
 	})
 	if err != nil {
@@ -906,10 +896,6 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	if result != nil && result.Replayed {
 		c.Header("X-Idempotency-Replayed", "true")
 	}
-	// OpenAI APIKey 账号创建后异步探测上游 /v1/responses 能力。
-	// 探测失败不影响账号创建响应。
-	h.scheduleOpenAIResponsesProbe(createdAccount)
-	h.scheduleGrokImportProbe(createdAccount)
 	response.Success(c, result.Data)
 }
 
@@ -1022,67 +1008,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// OpenAI APIKey: credentials 修改后重新探测上游能力（base_url/api_key 可能变更）。
-	// 异步执行，探测失败不影响账号更新响应。
-	if len(req.Credentials) > 0 {
-		h.scheduleOpenAIResponsesProbe(account)
-	}
-
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
-}
-
-// scheduleOpenAIResponsesProbe 异步触发 OpenAI APIKey 账号的 Responses API 能力探测。
-//
-// 仅对 platform=openai && type=apikey 账号生效；其他账号无操作。
-// 探测本身在 goroutine 中执行（会发一次 HTTP 请求到上游），不会阻塞
-// 当前请求。探测错误仅记录日志，不向上下文传播：探测失败时标记保持缺失，
-// 网关会按"现状即证据"默认走 Responses。
-func (h *AccountHandler) scheduleOpenAIResponsesProbe(account *service.Account) {
-	if account == nil || account.Platform != service.PlatformOpenAI || account.Type != service.AccountTypeAPIKey {
-		return
-	}
-	h.scheduleOpenAIResponsesProbeByID(account.ID)
-}
-
-func (h *AccountHandler) scheduleOpenAIResponsesProbeByID(accountID int64) {
-	if accountID <= 0 {
-		return
-	}
-	if h.accountTestService == nil {
-		return
-	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("openai_responses_probe_panic", "account_id", accountID, "recover", r)
-			}
-		}()
-		h.accountTestService.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), accountID)
-	}()
-}
-
-func (h *AccountHandler) scheduleOpenAIResponsesProbeByIDs(accountIDs []int64) {
-	seen := make(map[int64]struct{}, len(accountIDs))
-	for _, accountID := range accountIDs {
-		if _, ok := seen[accountID]; ok {
-			continue
-		}
-		seen[accountID] = struct{}{}
-		h.scheduleOpenAIResponsesProbeByID(accountID)
-	}
-}
-
-func shouldProbeOpenAIResponsesAfterCredentialUpdate(credentials map[string]any) bool {
-	if len(credentials) == 0 {
-		return false
-	}
-	if _, ok := credentials["api_key"]; ok {
-		return true
-	}
-	if _, ok := credentials["base_url"]; ok {
-		return true
-	}
-	return false
 }
 
 // Delete handles deleting an account
@@ -1258,8 +1184,6 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	} else if account.IsOpenAI() {
 		tokenInfo, err := h.openaiOAuthService.RefreshAccountToken(ctx, account)
 		if err != nil {
-			// 刷新失败但 access_token 可能仍有效，尝试设置隐私
-			h.adminService.EnsureOpenAIPrivacy(ctx, account)
 			return nil, "", err
 		}
 
@@ -1311,7 +1235,6 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			if updateErr != nil {
 				return nil, "", fmt.Errorf("failed to update credentials: %w", updateErr)
 			}
-			h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
 			return updatedAccount, "missing_project_id_temporary", nil
 		}
 
@@ -1373,11 +1296,6 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			log.Printf("[WARN] Failed to invalidate token cache for account %d: %v", updatedAccount.ID, invalidateErr)
 		}
 	}
-
-	// OpenAI OAuth: 刷新成功后检查并设置 privacy_mode
-	h.adminService.EnsureOpenAIPrivacy(ctx, updatedAccount)
-	// Antigravity OAuth: 刷新成功后检查并设置 privacy_mode
-	h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
 
 	return updatedAccount, "", nil
 }
@@ -1898,10 +1816,6 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 		success := 0
 		failed := 0
 		results := make([]gin.H, 0, len(req.Accounts))
-		// 收集需要异步设置隐私的 OAuth 账号
-		var antigravityPrivacyAccounts []*service.Account
-		var openaiPrivacyAccounts []*service.Account
-
 		for _, item := range req.Accounts {
 			if item.RateMultiplier != nil && *item.RateMultiplier < 0 {
 				failed++
@@ -1944,55 +1858,12 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 				})
 				continue
 			}
-			// 收集需要异步设置隐私的 OAuth 账号
-			if account.Type == service.AccountTypeOAuth {
-				switch account.Platform {
-				case service.PlatformAntigravity:
-					antigravityPrivacyAccounts = append(antigravityPrivacyAccounts, account)
-				case service.PlatformOpenAI:
-					openaiPrivacyAccounts = append(openaiPrivacyAccounts, account)
-				}
-			}
-			// OpenAI APIKey 账号异步探测 /v1/responses 能力。
-			h.scheduleOpenAIResponsesProbe(account)
-			h.scheduleGrokImportProbe(account)
 			success++
 			results = append(results, gin.H{
 				"name":    item.Name,
 				"id":      account.ID,
 				"success": true,
 			})
-		}
-
-		// 异步设置隐私，避免批量创建时阻塞请求
-		adminSvc := h.adminService
-		if len(antigravityPrivacyAccounts) > 0 {
-			accounts := antigravityPrivacyAccounts
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("batch_create_antigravity_privacy_panic", "recover", r)
-					}
-				}()
-				bgCtx := context.Background()
-				for _, acc := range accounts {
-					adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
-				}
-			}()
-		}
-		if len(openaiPrivacyAccounts) > 0 {
-			accounts := openaiPrivacyAccounts
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("batch_create_openai_privacy_panic", "recover", r)
-					}
-				}()
-				bgCtx := context.Background()
-				for _, acc := range accounts {
-					adminSvc.ForceOpenAIPrivacy(bgCtx, acc)
-				}
-			}()
 		}
 
 		return gin.H{
@@ -2165,10 +2036,6 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		}
 		response.ErrorFrom(c, err)
 		return
-	}
-
-	if shouldProbeOpenAIResponsesAfterCredentialUpdate(req.Credentials) {
-		h.scheduleOpenAIResponsesProbeByIDs(result.SuccessIDs)
 	}
 
 	response.Success(c, result)
@@ -2522,8 +2389,8 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
-// GetBatchUsage 批量获取多个账号的 current usage。
-// POST /api/v1/admin/accounts/usage/batch 批量查询账号用量。
+// GetBatchUsage 批量读取多个账号的本地/账号用量快照。
+// POST /api/v1/admin/accounts/usage/batch；force 字段仅为兼容，不触发上游额度探测。
 func (h *AccountHandler) GetBatchUsage(c *gin.Context) {
 	var req BatchUsageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

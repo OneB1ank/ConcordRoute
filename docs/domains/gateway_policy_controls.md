@@ -59,7 +59,7 @@ Group 的 fallback 包括普通 fallback、invalid-request fallback 和 unavaila
 
 ## 认证与隐私
 
-`require_oauth_only` 排除 API Key 等非 OAuth 账号；`require_privacy_set` 要求上游隐私状态已经确认。OpenAI/Antigravity 的 privacy 检查和设置可在创建、刷新或维护流程触发，但请求热路径只能使用当前已验证状态，不能假定刷新成功。
+`require_oauth_only` 排除 API Key 等非 OAuth 账号；`require_privacy_set` 要求上游隐私状态已经确认。OpenAI/Antigravity 的 privacy 状态只在管理员显式执行账号“设置隐私”操作后更新；创建、导入、刷新和定时维护不会触发隐私设置请求。请求热路径只能使用当前已验证状态，不能假定令牌刷新成功就代表隐私已设置。
 
 会话隔离与粘性约束防止不同账号、团队或用户上下文互相复用。OAuth passthrough、Claude Code-only 和允许客户端策略必须与账号类型共同校验；客户端伪造 User-Agent 不能自动获得额外权限。
 

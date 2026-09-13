@@ -353,6 +353,32 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 	require.Equal(t, "Bearer openai-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
+func TestExtractUpstreamModelDescriptorsPreservesContextWindows(t *testing.T) {
+	t.Parallel()
+
+	descriptors, err := extractUpstreamModelDescriptorsWithSelector([]byte(`{
+		"data":[
+			{"id":"gpt-5.6-sol","context_window":272000,"max_context_window":872000},
+			{"id":"gpt-5.6-sol","effective_context_window_percent":95},
+			{"id":"gpt-5.5","context_window":"272000","max_context_window":"272000"}
+		]
+	}`), upstreamModelEntryID)
+	require.NoError(t, err)
+	require.Len(t, descriptors, 2)
+	byID := make(map[string]UpstreamModelDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		byID[descriptor.ID] = descriptor
+	}
+	sol := byID["gpt-5.6-sol"]
+	require.NotNil(t, sol.ContextWindow)
+	require.EqualValues(t, 272000, *sol.ContextWindow)
+	require.NotNil(t, sol.MaxContextWindow)
+	require.EqualValues(t, 872000, *sol.MaxContextWindow)
+	require.NotNil(t, sol.EffectiveContextWindowPercent)
+	require.EqualValues(t, 95, *sol.EffectiveContextWindowPercent)
+	require.EqualValues(t, 272000, *byID["gpt-5.5"].MaxContextWindow)
+}
+
 func TestFetchUpstreamSupportedModelsParsesGrokAPIKeyResponse(t *testing.T) {
 	t.Parallel()
 

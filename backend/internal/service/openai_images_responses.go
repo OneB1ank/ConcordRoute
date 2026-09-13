@@ -1373,13 +1373,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 		if processDataDone || processDataErr != nil {
 			return
 		}
-		if firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
 		s.parseOpenAIImagesSSEUsageBytes(dataBytes, &usage)
 		if !gjson.ValidBytes(dataBytes) {
 			return
+		}
+		if firstTokenMs == nil && openAIImageStreamDataStartsVisibleOutput(dataBytes) {
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		if meta, eventCreatedAt, ok := extractOpenAIResponsesImageMetaFromLifecycleEvent(dataBytes); ok {
 			mergeOpenAIResponsesImageMeta(&streamMeta, meta)

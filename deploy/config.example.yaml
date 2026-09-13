@@ -206,6 +206,9 @@ gateway:
   openai_first_output_timeout_seconds: 0
   # 可选的 high/xhigh/max 覆盖值（秒，0=使用标准超时）
   openai_high_effort_first_output_timeout_seconds: 0
+  # 首字阶段诊断（默认关闭）。开启后 access log 增加不含请求体/令牌的
+  # request、调度、上游响应头/首字节、SSE、可见输出和下游 Flush 时间点。
+  ttft_diagnostics_enabled: false
   # Max request body size in bytes (default: 256MB)
   # 请求体最大字节数（默认 256MB）
   max_body_size: 268435456
@@ -442,7 +445,7 @@ gateway:
   max_conns_per_host: 1024
   # Idle connection timeout (seconds)
   # 空闲连接超时时间（秒）
-  idle_conn_timeout_seconds: 90
+  idle_conn_timeout_seconds: 300
   # Upstream client cache settings
   # 上游连接池客户端缓存配置
   # max_upstream_clients: Max cached clients, evicts least recently used when exceeded

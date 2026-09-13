@@ -45,17 +45,21 @@ type LiveCallRequest struct {
 
 // LiveCallIdentity 保存创建者身份和 fork 路由所需的入站元数据。
 type LiveCallIdentity struct {
-	APIKeyID        int64
-	ActorUserID     int64
-	UserID          int64
-	TeamID          *int64
-	GroupID         *int64
-	SubscriptionID  *int64
-	UserAgent       string
-	Originator      string
-	IPAddress       string
-	InboundEndpoint string
-	ModelMapping    map[string]string
+	APIKeyID       int64
+	ActorUserID    int64
+	UserID         int64
+	TeamID         *int64
+	GroupID        *int64
+	SubscriptionID *int64
+	UserAgent      string
+	Originator     string
+	// ClientAttestationEnvelope 是 Windows Codex/Claude 客户端生成的
+	// x-oai-attestation 原始 envelope。服务端只做语法校验与加密保存，
+	// 不在 Linux 上伪造或签发设备证明。
+	ClientAttestationEnvelope string
+	IPAddress                 string
+	InboundEndpoint           string
+	ModelMapping              map[string]string
 }
 
 // LiveCallRecord 保存跨实例接管 Live 控制连接所需的会话状态。

@@ -1135,9 +1135,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						}
 					}
 					if data != "" {
-						if firstTokenMs == nil && data != "[DONE]" {
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
+						if firstTokenMs == nil && anthropicStreamDataStartsVisibleOutput(data, "") {
+							recordFirstTokenMs(&firstTokenMs, startTime)
 						}
 						if usagePatch != nil {
 							mergeSSEUsagePatch(usage, usagePatch)

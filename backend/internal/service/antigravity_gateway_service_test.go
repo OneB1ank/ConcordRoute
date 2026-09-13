@@ -1037,6 +1037,7 @@ func TestStreamUpstreamResponse_UsageAndFirstToken(t *testing.T) {
 		defer func() { _ = pw.Close() }()
 		fmt.Fprintln(pw, `data: {"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}`)
 		fmt.Fprintln(pw, `data: {"usage":{"output_tokens":5}}`)
+		fmt.Fprintln(pw, `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`)
 	}()
 
 	start := time.Now().Add(-10 * time.Millisecond)

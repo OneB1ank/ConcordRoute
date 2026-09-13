@@ -23,12 +23,32 @@ type GroupHandler struct {
 	groupCapacityService *service.GroupCapacityService
 }
 
-// GetLiveCapability 返回当前服务端是否具备生成 Live attestation 的运行环境。
+// GetLiveCapability 返回当前服务端与受支持客户端可用的 Live attestation 路径。
 func (h *GroupHandler) GetLiveCapability(c *gin.Context) {
-	err := liveattestation.NewProvider().Check(c.Request.Context())
-	result := gin.H{"supported": err == nil}
-	if err != nil {
-		result["reason"] = err.Error()
+	status := liveattestation.CurrentCapabilityStatus(c.Request.Context())
+	result := gin.H{
+		// supported 表示 Live 至少有一条可用路径：服务端本地生成，或
+		// Windows Codex 客户端提供真实证明后由网关中继。
+		"supported": status.LiveDeviceCheckServer || status.LiveClientSupported,
+		// server_supported 表示网关服务端暴露的 Live 路径可用；Linux
+		// 通过 Windows Codex 客户端中继时也属于服务端可用路径。
+		"server_supported":                 status.LiveDeviceCheckServer || status.LiveClientSupported,
+		"client_attestation_relay":         status.ClientAttestationRelay,
+		"client_attestation_source":        status.ClientAttestationSource,
+		"server_attestation_provider":      status.ServerAttestationProvider,
+		"app_server_attestation_transport": status.AppServerAttestationTransport,
+		"live_client_supported":            status.LiveClientSupported,
+		"live_attestation_mode":            status.LiveAttestationMode,
+		"live_devicecheck_server":          status.LiveDeviceCheckServer,
+		"server_platform":                  status.ServerPlatform,
+		"supported_client_platforms":       status.SupportedClientPlatforms,
+		"tls_profile_platform":             status.TLSProfilePlatform,
+	}
+	if status.LiveDeviceCheckReason != "" {
+		result["server_reason"] = status.LiveDeviceCheckReason
+		if !status.LiveDeviceCheckServer && !status.LiveClientSupported {
+			result["reason"] = status.LiveDeviceCheckReason
+		}
 	}
 	response.Success(c, result)
 }

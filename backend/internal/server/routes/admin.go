@@ -107,6 +107,12 @@ func RegisterAdminRoutes(
 		// TLS 路由器管理
 		registerTLSFingerprintRouterRoutes(admin, h)
 
+		// Codex app-server 设备证明采集；旧测试装配若未提供该可选处理器，
+		// 仍保留其余管理路由。
+		if h != nil && h.Admin != nil && h.Admin.CodexAttestationCollector != nil {
+			registerCodexAttestationCollectorRoutes(admin, h)
+		}
+
 		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
 
@@ -141,6 +147,18 @@ func RegisterAdminRoutes(
 			teams.POST("/:id/force-transfer", gin.HandlerFunc(stepUpAuth), h.Admin.Team.ForceTransfer)
 			teams.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Team.Dissolve)
 		}
+	}
+}
+
+func registerCodexAttestationCollectorRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	collector := admin.Group("/codex-attestation-collector")
+	{
+		collector.GET("/status", h.Admin.CodexAttestationCollector.Status)
+		collector.POST("/start", h.Admin.CodexAttestationCollector.Start)
+		collector.POST("/stop", h.Admin.CodexAttestationCollector.Stop)
+		collector.POST("/sessions", h.Admin.CodexAttestationCollector.CreateSession)
+		collector.GET("/sessions/:token/captures", h.Admin.CodexAttestationCollector.ListCaptures)
+		collector.DELETE("/sessions/:token", h.Admin.CodexAttestationCollector.DeleteSession)
 	}
 }
 

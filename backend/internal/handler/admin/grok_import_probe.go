@@ -178,21 +178,7 @@ func panicType(value any) string {
 	}
 }
 
-func (h *AccountHandler) scheduleGrokImportProbe(account *service.Account) {
-	if h == nil {
-		return
-	}
-	defaultGrokImportProbeScheduler.schedule(h.grokImportProber, account)
-}
-
-func (h *GrokOAuthHandler) scheduleGrokImportProbe(account *service.Account) {
-	if h == nil {
-		return
-	}
-	defaultGrokImportProbeScheduler.schedule(h.importProber, account)
-}
-
-// ProvideAccountHandler 为生产环境注入 Grok 主动探测器，同时保留便于单元测试的构造函数。
+// ProvideAccountHandler 保留与生产装配的构造函数。
 func ProvideAccountHandler(
 	adminService service.AdminService,
 	settingService *service.SettingService,
@@ -230,7 +216,6 @@ func ProvideAccountHandler(
 		tokenCacheInvalidator,
 		grokOAuthService,
 	)
-	handler.grokImportProber = grokQuotaService
 	diagnostics := service.NewAdvancedSchedulerScoreDiagnosticService(adminService, concurrencyService, rateLimitService)
 	diagnostics.SetSchedulingServices(gatewayService, openAIGatewayService)
 	handler.SetAdvancedSchedulerScoreDiagnosticService(diagnostics)

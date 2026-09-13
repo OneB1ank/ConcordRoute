@@ -2188,8 +2188,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				}
 
 				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
+					recordFirstTokenMs(&firstTokenMs, startTime)
 				}
 				writeAnthropicStreamEvent("content_block_delta", map[string]any{
 					"type":  "content_block_delta",
@@ -2730,9 +2729,8 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					}
 					observeGeminiImageOutputs(c, rawBytes)
 
-					if firstTokenMs == nil {
-						ms := int(time.Since(startTime).Milliseconds())
-						firstTokenMs = &ms
+					if firstTokenMs == nil && geminiStreamDataStartsVisibleOutput(rawBytes) {
+						recordFirstTokenMs(&firstTokenMs, startTime)
 					}
 
 					if isOAuth {

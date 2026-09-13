@@ -8,7 +8,7 @@
 
 本轮确认并修正：
 
-1. Responses 转 Chat Completions、Responses 转 Messages 把首个 `data:` 当作首 token；原生 Chat 还会把角色帧、空增量或结束帧算入首 token。
+1. Responses 转 Chat Completions、Responses 转 Messages 以及 Anthropic 透传/桥接路径把首个 `data:` 当作首 token；原生 Chat 还会把角色帧、空增量或结束帧算入首 token。
 2. WS 的部分计时分支仅看事件类型，空 `.delta` / `.done` 也会产生首 token 样本。
 3. OpenAI Fast 策略热路径缺少跨请求缓存，携带相应 `service_tier` 的连续策略评估重复读取设置表。
 
@@ -32,6 +32,8 @@ HTTP 的 `startTime` 在转发方法内建立，WS 按各自转发尝试/轮次�
 
 - HTTP Responses 的已有内容判断抽到 `internal/pkg/openai/stream_output.go`，与 WS 共用。
 - 原生 Chat 按 `delta` 的真实内容判断，角色、空对象、usage 和结束标记不算内容。
+- Anthropic Responses/Chat/透传路径按 `content_block_delta` 的文本、思考或工具参数判断；`message_start`、usage、签名和空增量不算内容。
+- Gemini、Bedrock 与图片流按实际文本、工具参数、图片数据或有效输出 part 判断；生命周期和 usage 事件不产生 TTFT。
 - 不修改流内事件、协议握手、账号选择规则、请求正文、用量提取或计费公式。
 - WS 缓冲仍使用原来的协议进度计数，和新的 TTFT 判断分开。
 - WS 文本终态缺少响应 ID 时保留活动轮次的耗时和首内容样本，响应 ID 仍保持缺失；
@@ -80,6 +82,24 @@ go test -tags unit ./internal/service -run '^$' \
 它衡量被删除的配置读取开销，不代表上游生成、真实数据库、生产网络或整站 p95 的提升。
 
 ## 生产定位建议
+
+### 阶段诊断开关
+
+将 `gateway.ttft_diagnostics_enabled`（或环境变量
+`GATEWAY_TTFT_DIAGNOSTICS_ENABLED`）设为 `true` 后，模型网关 access log
+会附带 `ttft_stages_ms`。这是从入口收到请求开始的阶段时间点（毫秒），不记录
+请求体、令牌或响应内容，默认关闭。常见字段包括：
+
+- `request_received`、`auth_complete`、`routing_complete`、`forward_started`；
+- `request_body_read`、`content_moderation_started`、`content_moderation_done`；
+- `upstream_do_started`、`upstream_headers_received`、`first_upstream_byte`；
+- `first_sse_event`、`first_visible_output`、`first_downstream_flush`、`stream_completed`、`request_completed`。
+
+用相邻时间点相减即可区分鉴权/排队、连接与上游响应头、SSE 解析以及下游写出。
+例如 `first_upstream_byte` 接近 `upstream_headers_received` 而两者都远晚于
+`upstream_do_started`，优先检查代理、DNS、TCP/TLS 或上游排队；若
+`first_visible_output` 明显晚于 `first_sse_event`，则是上游先发生命周期事件，
+不是网关把首字节吞掉。
 
 先把同一个请求的以下时间对齐，再决定调整哪个环节：
 

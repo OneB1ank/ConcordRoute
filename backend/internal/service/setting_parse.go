@@ -209,10 +209,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpsRealtimeMonitoringEnabled: "true",
 		SettingKeyOpsMetricsIntervalSeconds:    "60",
 
-		// Channel monitor defaults. V2 remains opt-in; throughput is hidden by
-		// default to avoid exposing fleet volume to non-admin users.
+		// Channel monitor defaults. V2 使用被动聚合，避免新部署默认产生主动探测流量；
+		// throughput 仍默认隐藏，避免向非管理员暴露集群规模。
 		SettingKeyChannelMonitorEnabled:                "true",
-		SettingKeyChannelMonitorMode:                   ChannelMonitorModeV1,
+		SettingKeyChannelMonitorMode:                   ChannelMonitorModeV2,
 		SettingKeyChannelMonitorDefaultIntervalSeconds: "60",
 		SettingKeyChannelMonitorHideThroughput:         "true",
 

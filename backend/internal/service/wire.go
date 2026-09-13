@@ -127,7 +127,7 @@ func ProvideTokenRefreshService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 ) *TokenRefreshService {
 	svc := NewTokenRefreshServiceWithHTTPUpstream(accountRepo, oauthService, openaiOAuthService, geminiOAuthService, antigravityOAuthService, cacheInvalidator, schedulerCache, cfg, tempUnschedCache, qoderOAuthService, []*GrokOAuthService{grokOAuthService}, httpUpstream, tlsFPProfileService)
-	// 注入 OpenAI privacy opt-out 依赖
+	// 保留旧隐私依赖注入以兼容已有构造签名；后台刷新路径不触发隐私设置。
 	svc.SetPrivacyDeps(privacyClientFactory, proxyRepo)
 	// 注入统一 OAuth 刷新 API（消除 TokenRefreshService 与 TokenProvider 之间的竞争条件）
 	svc.SetRefreshAPI(refreshAPI)
@@ -143,7 +143,7 @@ func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiToke
 	return NewOAuthRefreshAPI(accountRepo, tokenCache)
 }
 
-// ProvideOpenAIOAuthService 构造 OpenAI OAuth 服务，并注入账号补全与隐私设置依赖。
+// ProvideOpenAIOAuthService 构造 OpenAI OAuth 服务，并注入账号元数据补全依赖。
 func ProvideOpenAIOAuthService(
 	proxyRepo ProxyRepository,
 	oauthClient OpenAIOAuthClient,

@@ -65,6 +65,9 @@ func SetupRouter(
 		return nil
 	}))
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
+	// Opt-in phase sampler for diagnosing model TTFT without exposing payloads.
+	// Placed after Logger so the completed access log includes stream_completed.
+	r.Use(middleware2.TTFTDiagnostics(cfg.Gateway.TTFTDiagnosticsEnabled))
 
 	// Serve embedded frontend with settings injection if available
 	registerFrontendMiddleware(r, settingService, refreshFrameOrigins)

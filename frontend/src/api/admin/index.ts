@@ -28,6 +28,7 @@ import apiKeysAPI from './apiKeys'
 import scheduledTestsAPI from './scheduledTests'
 import backupAPI from './backup'
 import tlsFingerprintProfileAPI from './tlsFingerprintProfile'
+import codexAttestationCollectorAPI from './codexAttestationCollector'
 import tlsFingerprintRouterAPI from './tlsFingerprintRouter'
 import channelsAPI from './channels'
 import channelMonitorAPI from './channelMonitor'
@@ -67,6 +68,7 @@ export const adminAPI = {
   scheduledTests: scheduledTestsAPI,
   backup: backupAPI,
   tlsFingerprintProfiles: tlsFingerprintProfileAPI,
+  codexAttestationCollector: codexAttestationCollectorAPI,
   tlsFingerprintRouters: tlsFingerprintRouterAPI,
   channels: channelsAPI,
   channelMonitor: channelMonitorAPI,
@@ -104,6 +106,7 @@ export {
   scheduledTestsAPI,
   backupAPI,
   tlsFingerprintProfileAPI,
+  codexAttestationCollectorAPI,
   tlsFingerprintRouterAPI,
   channelsAPI,
   channelMonitorAPI,
@@ -130,6 +133,11 @@ export type {
   TLSFingerprintCollectorSession,
   TLSFingerprintCaptureRecord
 } from './tlsFingerprintProfile'
+export type {
+  CodexAttestationCollectorStatus,
+  CodexAttestationCollectorSession,
+  CodexAttestationCaptureRecord
+} from './codexAttestationCollector'
 export type {
   TLSFingerprintRouter,
   TLSFingerprintRouterRule,

@@ -97,7 +97,7 @@ func selectResponsesProbeModel(account *Account) string {
 // ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
 // /v1/responses 端点，并将结果持久化到 accounts.extra.openai_responses_supported。
 //
-// 调用时机：账号创建/更新后，且仅当 platform=openai && type=apikey 时。
+// 调用时机：仅供明确的手动测试或其他显式运维流程调用；账号创建、编辑和导入路径不再调度。
 //
 // 探测策略（参见包文档 internal/pkg/openai_compat）：
 //   - 上游 404 / 405 → 端点不存在，写 false

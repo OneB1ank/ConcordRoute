@@ -442,8 +442,6 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 	}
 
-	// 收集需要异步设置隐私的 Antigravity OAuth 账号
-	var privacyAccounts []*service.Account
 	var openAIOAuthImportDefaults *service.OpenAIOAuthImportDefaults
 	if h.settingService != nil {
 		openAIOAuthImportDefaults, err = h.settingService.GetOpenAIOAuthImportDefaults(ctx)
@@ -500,7 +498,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			SkipDefaultGroupBind: skipDefaultGroupBind,
 		}
 
-		created, err := h.adminService.CreateAccount(ctx, accountInput)
+		_, err := h.adminService.CreateAccount(ctx, accountInput)
 		if err != nil {
 			result.AccountFailed++
 			result.Errors = append(result.Errors, DataImportError{
@@ -510,29 +508,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			})
 			continue
 		}
-		// 收集 Antigravity OAuth 账号，稍后异步设置隐私
-		if created.Platform == service.PlatformAntigravity && created.Type == service.AccountTypeOAuth {
-			privacyAccounts = append(privacyAccounts, created)
-		}
-		h.scheduleGrokImportProbe(created)
 		result.AccountCreated++
-	}
-
-	// 异步设置 Antigravity 隐私，避免大量导入时阻塞请求
-	if len(privacyAccounts) > 0 {
-		adminSvc := h.adminService
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("import_antigravity_privacy_panic", "recover", r)
-				}
-			}()
-			bgCtx := context.Background()
-			for _, acc := range privacyAccounts {
-				adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
-			}
-			slog.Info("import_antigravity_privacy_done", "count", len(privacyAccounts))
-		}()
 	}
 
 	return result, nil

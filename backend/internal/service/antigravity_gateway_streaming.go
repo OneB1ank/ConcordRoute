@@ -256,9 +256,8 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 					}
 				}
 
-				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
+				if firstTokenMs == nil && geminiStreamDataStartsVisibleOutput([]byte(payload)) {
+					recordFirstTokenMs(&firstTokenMs, startTime)
 				}
 
 				cw.Fprintf("data: %s\n\n", payload)
@@ -400,10 +399,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 				continue
 			}
 
-			// 记录首 token 时间
-			if firstTokenMs == nil {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+			// 仅内容、工具调用或图片 part 算作首个可见输出。
+			if firstTokenMs == nil && geminiStreamDataStartsVisibleOutput(inner) {
+				recordFirstTokenMs(&firstTokenMs, startTime)
 			}
 
 			last = parsed
@@ -879,9 +877,8 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(resp *http.Respo
 			}
 			if len(parts) > 0 || strings.TrimSpace(extractGeminiFinishReason(parsed)) != "" {
 				meaningfulResponse = true
-				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
+				if firstTokenMs == nil && geminiStreamDataStartsVisibleOutput(inner) {
+					recordFirstTokenMs(&firstTokenMs, startTime)
 				}
 			}
 
@@ -1125,9 +1122,8 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 			// 处理 SSE 行，转换为 Claude 格式
 			claudeEvents := processor.ProcessLine(strings.TrimRight(ev.line, "\r\n"))
 			if len(claudeEvents) > 0 {
-				if firstTokenMs == nil {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
+				if firstTokenMs == nil && anthropicSSEBytesStartsVisibleOutput(claudeEvents) {
+					recordFirstTokenMs(&firstTokenMs, startTime)
 				}
 				cw.Write(claudeEvents)
 			}

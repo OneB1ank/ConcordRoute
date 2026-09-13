@@ -248,10 +248,15 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 			line := ev.line
 
-			// 记录首 token 时间
-			if firstTokenMs == nil && len(line) > 0 {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+			// 记录首个可见内容，而不是 event 行、message_start 或 usage。
+			if firstTokenMs == nil {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "data:") {
+					payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+					if anthropicStreamDataStartsVisibleOutput(payload, "") {
+						recordFirstTokenMs(&firstTokenMs, startTime)
+					}
+				}
 			}
 
 			// 尝试从 message_delta 或 message_stop 事件提取 usage

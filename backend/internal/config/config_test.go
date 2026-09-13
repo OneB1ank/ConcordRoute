@@ -72,6 +72,23 @@ func TestLoadServerTimingConfig(t *testing.T) {
 	})
 }
 
+func TestLoadTTFTDiagnosticsConfig(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.False(t, cfg.Gateway.TTFTDiagnosticsEnabled)
+	})
+
+	t.Run("enabled by environment variable", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("GATEWAY_TTFT_DIAGNOSTICS_ENABLED", "true")
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.True(t, cfg.Gateway.TTFTDiagnosticsEnabled)
+	})
+}
+
 func TestLoadRejectsLegacyAdvancedSchedulerConfig(t *testing.T) {
 	t.Run("legacy YAML key", func(t *testing.T) {
 		resetViperWithJWTSecret(t)

@@ -581,8 +581,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	processDataLine := func(payload string) bool {
 		// 与原生 Responses 使用同一首内容口径，created、空 delta 和 usage 不算首 token。
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(payload, "") {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		if countSearch {
 			searchCount += countGrokNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen)

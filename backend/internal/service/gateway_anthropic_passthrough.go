@@ -583,9 +583,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
-				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
+				if firstTokenMs == nil && anthropicStreamDataStartsVisibleOutput(trimmed, "") {
+					recordFirstTokenMs(&firstTokenMs, startTime)
 				}
 				s.parseSSEUsagePassthrough(data, usage)
 				if bodyPatch := responseAccumulator.ObserveData("", trimmed); len(bodyPatch) > 0 {

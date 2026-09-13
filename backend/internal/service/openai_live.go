@@ -151,10 +151,6 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 	if err != nil {
 		return nil, err
 	}
-	attestation, attestationCiphertext, err := s.prepareLiveAttestation(ctx)
-	if err != nil {
-		return nil, err
-	}
 	model := strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
 	if model == "" {
 		model = "gpt-live"
@@ -228,6 +224,29 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			)
 			continue
 		}
+		// 若存在 app-server bridge，Live 创建也先绑定同一条真实 JSON-RPC
+		// attestation/generate 通道，随后复用其客户端证明。
+		attemptCtx := ctx
+		if boundCtx, bindErr := s.bindCodexAppServerAttestationContextForAPIKey(
+			ctx,
+			identity.APIKeyID,
+			account,
+			strings.TrimSpace(gjson.GetBytes(request.Session, "session_id").String()),
+			strings.TrimSpace(gjson.GetBytes(request.Session, "thread_id").String()),
+		); bindErr != nil {
+			selection.ReleaseFunc()
+			return nil, bindErr
+		} else {
+			attemptCtx = boundCtx
+		}
+		// 优先使用该 OAuth 账号对应客户端/app-server 的真实 envelope。
+		// 支持的 macOS 部署仍可使用平台提供器；Linux 承接 Windows 客户端时
+		// 不在本地合成设备证明。
+		attestation, attestationCiphertext, attestationErr := s.prepareLiveAttestationForRequest(attemptCtx, account, identity)
+		if attestationErr != nil {
+			selection.ReleaseFunc()
+			return nil, attestationErr
+		}
 		leaseID := generateRequestID()
 		acquired, acquireErr := liveCache.AcquireLiveLease(
 			ctx,
@@ -247,7 +266,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			return nil, ErrLiveConcurrencyFull
 		}
 
-		created, createErr := s.createUpstreamLiveCall(ctx, account, upstreamRequest, attestation, tlsRouterMatch)
+		created, createErr := s.createUpstreamLiveCall(attemptCtx, account, upstreamRequest, attestation, tlsRouterMatch)
 		selection.ReleaseFunc()
 		if createErr != nil {
 			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, leaseID)
@@ -261,7 +280,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 
 		now := time.Now()
 		requestedModel := model
-		if trace, ok := APIKeyModelRedirectTraceFromContext(ctx); ok && strings.TrimSpace(trace.ClientModel) != "" {
+		if trace, ok := APIKeyModelRedirectTraceFromContext(attemptCtx); ok && strings.TrimSpace(trace.ClientModel) != "" {
 			requestedModel = trace.ClientModel
 		}
 		channelMapping, _ := s.ResolveChannelMappingAndRestrict(ctx, identity.GroupID, model)

@@ -537,6 +537,9 @@ func RegisterGatewayRoutes(
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic)
 	{
+		// app-server JSON-RPC 使用独立 WebSocket，不能与 Responses 的
+		// response.create 帧混在同一条连接中。
+		codexDirect.GET("/app-server", h.OpenAIGateway.CodexAppServerBridge)
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.POST("/responses", responsesProtocolGate, responsesHandler)
 		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(withGroupClientProtocol(service.GroupClientProtocolOpenAIResponses, groupClientProtocolErrorOpenAI, responsesHandler)))

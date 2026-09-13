@@ -49,6 +49,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
+	defer MarkTTFTStage(c, "stream_completed")
 	firstOutputTimeout := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
@@ -110,6 +111,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	var firstTokenMs *int
+	firstSSEEventObserved := false
 	firstOutputProgressObserved := false
 	bufferedWriter := bufio.NewWriterSize(w, 4*1024)
 	var firstOutputStage *openAIFirstOutputStage
@@ -144,6 +146,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 		flusher.Flush()
+		MarkTTFTStage(c, "first_downstream_flush")
 		return nil
 	}
 
@@ -289,8 +292,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			stopFirstOutputTimer()
 		}
 		if completedVisibleEvent && firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
+			MarkTTFTStage(c, "first_visible_output")
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		eventStartsClientOutput = false
 		eventStartsVisibleOutput = false
@@ -451,6 +454,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			if !firstSSEEventObserved {
+				firstSSEEventObserved = true
+				MarkTTFTStage(c, "first_sse_event")
+			}
 
 			// Replace model in response if needed.
 			// Fast path: most events do not contain model field values.
@@ -655,8 +662,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 			// Record first token time
 			if !guardFirstOutput && firstTokenMs == nil && startsVisibleOutput {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+				MarkTTFTStage(c, "first_visible_output")
+				recordFirstTokenMs(&firstTokenMs, startTime)
 				stopFirstOutputTimer()
 			}
 			if eventType != "response.failed" {

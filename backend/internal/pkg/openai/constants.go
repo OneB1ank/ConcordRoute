@@ -14,21 +14,58 @@ type Model struct {
 	OwnedBy     string `json:"owned_by"`
 	Type        string `json:"type"`
 	DisplayName string `json:"display_name"`
+	// ContextWindow/MaxContextWindow are Codex model-catalog metadata. They
+	// are omitted for models whose upstream descriptor does not expose them.
+	ContextWindow                 int64 `json:"context_window,omitempty"`
+	MaxContextWindow              int64 `json:"max_context_window,omitempty"`
+	EffectiveContextWindowPercent int64 `json:"effective_context_window_percent,omitempty"`
+}
+
+// ModelContextMetadata mirrors the fields consumed by Codex when resolving
+// automatic compaction and model_context_window overrides.
+type ModelContextMetadata struct {
+	ContextWindow                 int64
+	MaxContextWindow              int64
+	EffectiveContextWindowPercent int64
+}
+
+// ModelContextMetadataForID returns the bundled Codex metadata for known
+// OpenAI/Codex models. The long-context threshold used by billing is
+// intentionally not used as max_context_window.
+func ModelContextMetadataForID(modelID string) (ModelContextMetadata, bool) {
+	switch strings.ToLower(strings.TrimSpace(modelID)) {
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review":
+		return ModelContextMetadata{ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95}, true
+	case "gpt-6-astra":
+		// The bundled pricing catalog declares a 1,050,000-token hard input
+		// limit and a 272,000-token long-context threshold.
+		return ModelContextMetadata{ContextWindow: 272000, MaxContextWindow: 1050000, EffectiveContextWindowPercent: 95}, true
+	case "gpt-daybreak-blue-latest":
+		return ModelContextMetadata{ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95}, true
+	case "gpt-daybreak-red-latest":
+		return ModelContextMetadata{ContextWindow: 372000, MaxContextWindow: 372000, EffectiveContextWindowPercent: 95}, true
+	case "gpt-5.5", "gpt-5.4-mini", "gpt-5.2":
+		return ModelContextMetadata{ContextWindow: 272000, MaxContextWindow: 272000, EffectiveContextWindowPercent: 95}, true
+	case "gpt-5.4":
+		return ModelContextMetadata{ContextWindow: 272000, MaxContextWindow: 1000000, EffectiveContextWindowPercent: 95}, true
+	default:
+		return ModelContextMetadata{}, false
+	}
 }
 
 // DefaultModels 是默认 OpenAI 模型列表。
 var DefaultModels = []Model{
-	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol"},
-	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)"},
-	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra"},
-	{ID: "gpt-5.6-luna", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Luna"},
-	{ID: "gpt-6-astra", Object: "model", Created: 1783468800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
-	{ID: "gpt-5.5", Object: "model", Created: 1776873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.5"},
-	{ID: "gpt-5.4", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.4"},
-	{ID: "gpt-5.4-mini", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.4 Mini"},
+	{ID: "gpt-5.6-sol", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Sol", ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.6", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 (Sol)", ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.6-terra", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Terra", ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.6-luna", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Luna", ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-6-astra", Object: "model", Created: 1783468800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra", ContextWindow: 272000, MaxContextWindow: 1050000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.5", Object: "model", Created: 1776873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.5", ContextWindow: 272000, MaxContextWindow: 272000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.4", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.4", ContextWindow: 272000, MaxContextWindow: 1000000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.4-mini", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.4 Mini", ContextWindow: 272000, MaxContextWindow: 272000, EffectiveContextWindowPercent: 95},
 	{ID: "gpt-5.3-codex-spark", Object: "model", Created: 1735689600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.3 Codex Spark"},
-	{ID: "codex-auto-review", Object: "model", Created: 1776902400, OwnedBy: "openai", Type: "model", DisplayName: "Codex Auto Review"},
-	{ID: "gpt-5.2", Object: "model", Created: 1733875200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.2"},
+	{ID: "codex-auto-review", Object: "model", Created: 1776902400, OwnedBy: "openai", Type: "model", DisplayName: "Codex Auto Review", ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95},
+	{ID: "gpt-5.2", Object: "model", Created: 1733875200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.2", ContextWindow: 272000, MaxContextWindow: 272000, EffectiveContextWindowPercent: 95},
 	{ID: "gpt-image-1", Object: "model", Created: 1733875200, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 1"},
 	{ID: "gpt-image-1.5", Object: "model", Created: 1735689600, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 1.5"},
 	{ID: "gpt-image-2", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2"},

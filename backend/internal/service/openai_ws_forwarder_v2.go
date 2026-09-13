@@ -572,8 +572,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 		// 首内容统计独立于协议进度分类，空 delta 不应提前触发 TTFT。
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(string(message), eventType) {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		if debugEnabled && shouldLogOpenAIWSEvent(eventCount, eventType) {
 			logOpenAIWSModeDebug(

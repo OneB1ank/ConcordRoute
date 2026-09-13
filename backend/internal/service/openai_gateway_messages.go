@@ -956,8 +956,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	processDataLine := func(payload string) bool {
 		// 协议转换不改变计时口径，避免把响应创建事件误报成首 token。
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(payload, "") {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		if countSearch {
 			searchCount += countGrokNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen)

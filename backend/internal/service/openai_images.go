@@ -959,6 +959,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 
 	processSSEData := func(dataBytes []byte) {
 		seenSSEData = true
+		if firstTokenMs == nil && openAIImageStreamDataStartsVisibleOutput(dataBytes) {
+			recordFirstTokenMs(&firstTokenMs, startTime)
+		}
 		fallbackBody.Reset()
 		fallbackBytes = 0
 		mergeOpenAIUsage(&usage, dataBytes)
@@ -972,10 +975,6 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	processLine := func(line []byte) {
 		if len(line) == 0 {
 			return
-		}
-		if firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
 		}
 		if !clientDisconnected {
 			if _, writeErr := c.Writer.Write(line); writeErr != nil {

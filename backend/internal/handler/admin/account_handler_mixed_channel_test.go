@@ -287,7 +287,7 @@ func TestBulkUpdateAcceptsFilterTargetRequest(t *testing.T) {
 	require.Equal(t, float64(0), resp["code"])
 }
 
-func TestAccountHandlerBulkUpdateOpenAIAPIKeyCredentialsSchedulesResponsesProbe(t *testing.T) {
+func TestAccountHandlerBulkUpdateOpenAIAPIKeyCredentialsDoesNotProbeUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	account := service.Account{
@@ -338,20 +338,19 @@ func TestAccountHandlerBulkUpdateOpenAIAPIKeyCredentialsSchedulesResponsesProbe(
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+	// 账号凭据更新不应触发后台上游能力探测。
 	select {
 	case probedID := <-repo.done:
-		require.Equal(t, account.ID, probedID)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for OpenAI APIKey responses probe")
+		t.Fatalf("unexpected OpenAI APIKey responses probe for account %d", probedID)
+	case <-time.After(300 * time.Millisecond):
 	}
 
 	upstream.mu.Lock()
-	require.Len(t, upstream.urls, 1)
-	require.True(t, strings.HasSuffix(upstream.urls[0], "/v1/responses"))
+	require.Empty(t, upstream.urls)
 	upstream.mu.Unlock()
 
 	repo.mu.Lock()
-	require.Equal(t, false, repo.accounts[account.ID].Extra[openai_compat.ExtraKeyResponsesSupported])
+	require.Empty(t, repo.accounts[account.ID].Extra)
 	repo.mu.Unlock()
 }
 

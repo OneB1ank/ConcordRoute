@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apicompat"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
+	openai "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -226,7 +228,14 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	proxyURL := resolveAccountProxyURL(account)
+	upstreamReq = upstreamReq.WithContext(httptrace.WithClientTrace(upstreamReq.Context(), &httptrace.ClientTrace{
+		GotFirstResponseByte: func() { MarkTTFTStage(c, "first_upstream_byte") },
+	}))
+	MarkTTFTStage(c, "upstream_do_started")
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
+	if resp != nil {
+		MarkTTFTStage(c, "upstream_headers_received")
+	}
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
@@ -294,9 +303,8 @@ func (s *OpenAIGatewayService) scanCCStream(
 		if tier := normalizeObservedOpenAIServiceTier(chunk.ServiceTier); tier != "" {
 			st.UpstreamResponseServiceTier = tier
 		}
-		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
-			ms := int(time.Since(startTime).Milliseconds())
-			st.FirstTokenMs = &ms
+		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && openai.StreamDataStartsVisibleOutput(payload, "") {
+			recordFirstTokenMs(&st.FirstTokenMs, startTime)
 		}
 		emit(&chunk)
 	}

@@ -1124,8 +1124,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			// 与 HTTP 共用首内容判断，不改变 WS 的事件转发和重试边界。
 			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(string(upstreamMessage), eventType) {
-				ms := int(time.Since(turnStart).Milliseconds())
-				firstTokenMs = &ms
+				recordFirstTokenMs(&firstTokenMs, turnStart)
 			}
 			if openAIWSEventShouldParseUsage(eventType) {
 				parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)

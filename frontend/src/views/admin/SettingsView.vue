@@ -9494,7 +9494,7 @@ const form = reactive<SettingsForm>({
   data_sharing_enabled: true,
   risk_control_enabled: false,
   channel_monitor_enabled: true,
-  channel_monitor_mode: "v1",
+  channel_monitor_mode: "v2",
   channel_monitor_default_interval_seconds: 60,
   channel_monitor_hide_throughput: true,
   cyber_session_block_enabled: false,
@@ -10637,7 +10637,7 @@ async function loadSettings() {
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
     form.channel_monitor_mode =
-      settings.channel_monitor_mode === "v2" ? "v2" : "v1";
+      settings.channel_monitor_mode === "v1" ? "v1" : "v2";
     form.channel_monitor_hide_throughput =
       settings.channel_monitor_hide_throughput !== false;
     form.login_agreement_updated_at =
@@ -11302,7 +11302,7 @@ async function saveSettings() {
       risk_control_enabled: form.risk_control_enabled,
       channel_monitor_enabled: form.channel_monitor_enabled,
       channel_monitor_mode:
-        form.channel_monitor_mode === "v2" ? "v2" : "v1",
+        form.channel_monitor_mode === "v1" ? "v1" : "v2",
       channel_monitor_default_interval_seconds: Math.min(
         3600,
         Math.max(

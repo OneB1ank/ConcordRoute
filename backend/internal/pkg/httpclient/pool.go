@@ -33,7 +33,7 @@ import (
 const (
 	defaultMaxIdleConns        = 100              // 最大空闲连接数
 	defaultMaxIdleConnsPerHost = 10               // 每个主机最大空闲连接数
-	defaultIdleConnTimeout     = 90 * time.Second // 空闲连接超时时间（建议小于上游 LB 超时）
+	defaultIdleConnTimeout     = 5 * time.Minute  // 空闲连接超时时间
 	defaultDialTimeout         = 5 * time.Second  // TCP 连接超时（含代理握手），代理不通时快速失败
 	defaultTLSHandshakeTimeout = 5 * time.Second  // TLS 握手超时
 	validatedHostTTL           = 30 * time.Second // DNS Rebinding 校验缓存 TTL

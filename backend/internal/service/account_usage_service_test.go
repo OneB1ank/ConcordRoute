@@ -1389,14 +1389,24 @@ func TestCodexWindowStatsStart(t *testing.T) {
 		},
 	}
 
-	expiredReset := now.Add(-time.Minute)
+	recentExpiredReset := now.Add(-time.Minute)
 	tests = append(tests, struct {
 		name     string
 		progress *UsageProgress
 		want     time.Time
 	}{
-		name:     "expired reset falls back",
-		progress: &UsageProgress{ResetsAt: &expiredReset},
+		name:     "recently expired reset starts new window",
+		progress: &UsageProgress{ResetsAt: &recentExpiredReset},
+		want:     recentExpiredReset,
+	})
+	staleExpiredReset := now.Add(-window - time.Minute)
+	tests = append(tests, struct {
+		name     string
+		progress *UsageProgress
+		want     time.Time
+	}{
+		name:     "stale expired reset falls back",
+		progress: &UsageProgress{ResetsAt: &staleExpiredReset},
 		want:     now.Add(-window),
 	})
 
@@ -1406,5 +1416,23 @@ func TestCodexWindowStatsStart(t *testing.T) {
 				t.Fatalf("codexWindowStatsStart() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCodexWindowStatsStartsKeepsSevenDayContainingFiveHour(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	fiveReset := now.Add(-time.Minute)
+	sevenReset := now.Add(7*24*time.Hour - time.Minute)
+	fiveStart, sevenStart := codexWindowStatsStarts(
+		&UsageProgress{ResetsAt: &fiveReset},
+		&UsageProgress{ResetsAt: &sevenReset},
+		now,
+	)
+	if !fiveStart.Equal(fiveReset) {
+		t.Fatalf("five-hour start = %v, want reset boundary %v", fiveStart, fiveReset)
+	}
+	if sevenStart.After(fiveStart) {
+		t.Fatalf("seven-day start %v must not be after five-hour start %v", sevenStart, fiveStart)
 	}
 }

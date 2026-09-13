@@ -34,3 +34,25 @@ func TestOpenAIChatReasoningAliasFormalFieldPrecedence(t *testing.T) {
 
 	require.Equal(t, "preferred", gjson.GetBytes(accumulator.ResponseBody(nil), "choices.0.message.reasoning_content").String())
 }
+
+func TestChatChunkStartsResponsesOutputRequiresVisiblePayload(t *testing.T) {
+	empty := ""
+	roleOnly := &apicompat.ChatCompletionsChunk{
+		Choices: []apicompat.ChatChunkChoice{{Delta: apicompat.ChatDelta{Role: "assistant"}}},
+	}
+	emptyContent := &apicompat.ChatCompletionsChunk{
+		Choices: []apicompat.ChatChunkChoice{{Delta: apicompat.ChatDelta{Content: &empty}}},
+	}
+	toolMetadataOnly := &apicompat.ChatCompletionsChunk{
+		Choices: []apicompat.ChatChunkChoice{{Delta: apicompat.ChatDelta{ToolCalls: []apicompat.ChatToolCall{{Function: apicompat.ChatFunctionCall{Name: "lookup"}}}}}},
+	}
+	toolArguments := "{}"
+	toolOutput := &apicompat.ChatCompletionsChunk{
+		Choices: []apicompat.ChatChunkChoice{{Delta: apicompat.ChatDelta{ToolCalls: []apicompat.ChatToolCall{{Function: apicompat.ChatFunctionCall{Name: "lookup", Arguments: toolArguments}}}}}},
+	}
+
+	require.False(t, chatChunkStartsResponsesOutput(roleOnly))
+	require.False(t, chatChunkStartsResponsesOutput(emptyContent))
+	require.False(t, chatChunkStartsResponsesOutput(toolMetadataOnly))
+	require.True(t, chatChunkStartsResponsesOutput(toolOutput))
+}

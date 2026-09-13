@@ -6,14 +6,43 @@ import (
 )
 
 func streamItemHasVisibleOutput(item gjson.Result) bool {
-	if item.Get("arguments").String() != "" || item.Get("input").String() != "" || item.Get("result").String() != "" {
-		return true
+	for _, path := range []string{"arguments", "input", "result"} {
+		value := item.Get(path)
+		if value.Exists() && value.Type == gjson.String && value.String() != "" {
+			return true
+		}
 	}
 	for _, path := range []string{"content", "summary"} {
 		for _, part := range item.Get(path).Array() {
-			if part.Get("text").String() != "" || part.Get("transcript").String() != "" {
+			text := part.Get("text")
+			transcript := part.Get("transcript")
+			if (text.Exists() && text.Type == gjson.String && text.String() != "") ||
+				(transcript.Exists() && transcript.Type == gjson.String && transcript.String() != "") {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func chatCompletionsChunkHasVisibleOutput(root gjson.Result) bool {
+	for _, choice := range root.Get("choices").Array() {
+		delta := choice.Get("delta")
+		for _, path := range []string{"content", "reasoning_content", "reasoning", "refusal", "audio.data", "audio.transcript"} {
+			value := delta.Get(path)
+			if value.Exists() && value.Type == gjson.String && value.String() != "" {
+				return true
+			}
+		}
+		for _, call := range delta.Get("tool_calls").Array() {
+			arguments := call.Get("function.arguments")
+			if arguments.Exists() && arguments.Type == gjson.String && arguments.String() != "" {
+				return true
+			}
+		}
+		arguments := delta.Get("function_call.arguments")
+		if arguments.Exists() && arguments.Type == gjson.String && arguments.String() != "" {
+			return true
 		}
 	}
 	return false
@@ -28,27 +57,37 @@ func StreamDataStartsVisibleOutput(data, eventType string) bool {
 	eventType = strings.TrimSpace(eventType)
 	if eventType == "" {
 		eventType = strings.TrimSpace(gjson.Get(trimmed, "type").String())
+		if eventType == "" && gjson.Get(trimmed, "choices").Exists() {
+			return chatCompletionsChunkHasVisibleOutput(gjson.Parse(trimmed))
+		}
 	}
 	if strings.HasSuffix(eventType, ".delta") {
 		delta := gjson.Get(trimmed, "delta")
-		return delta.Exists() && delta.String() != ""
+		return delta.Exists() && delta.Type == gjson.String && delta.String() != ""
 	}
 	switch eventType {
 	case "response.output_text.done",
 		"response.reasoning_summary_text.done",
 		"response.reasoning_text.done",
 		"response.audio_transcript.done":
-		return gjson.Get(trimmed, "text").String() != ""
+		text := gjson.Get(trimmed, "text")
+		return text.Exists() && text.Type == gjson.String && text.String() != ""
 	case "response.function_call_arguments.done":
-		return gjson.Get(trimmed, "arguments").String() != ""
+		arguments := gjson.Get(trimmed, "arguments")
+		return arguments.Exists() && arguments.Type == gjson.String && arguments.String() != ""
 	case "response.custom_tool_call_input.done":
-		return gjson.Get(trimmed, "input").String() != ""
+		input := gjson.Get(trimmed, "input")
+		return input.Exists() && input.Type == gjson.String && input.String() != ""
 	case "response.image_generation_call.partial_image":
-		return gjson.Get(trimmed, "partial_image_b64").String() != ""
+		partial := gjson.Get(trimmed, "partial_image_b64")
+		return partial.Exists() && partial.Type == gjson.String && partial.String() != ""
 	case "response.content_part.added", "response.content_part.done",
 		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
 		part := gjson.Get(trimmed, "part")
-		return part.Get("text").String() != "" || part.Get("transcript").String() != ""
+		text := part.Get("text")
+		transcript := part.Get("transcript")
+		return (text.Exists() && text.Type == gjson.String && text.String() != "") ||
+			(transcript.Exists() && transcript.Type == gjson.String && transcript.String() != "")
 	case "response.output_item.added", "response.output_item.done":
 		return streamItemHasVisibleOutput(gjson.Get(trimmed, "item"))
 	case "response.completed", "response.done":

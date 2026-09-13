@@ -306,6 +306,13 @@ func (r *usageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 
 // GetAccountWindowStats 获取账号时间窗口内的统计
 func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
+	return r.GetAccountWindowStatsRange(ctx, accountID, startTime, time.Now().UTC())
+}
+
+// GetAccountWindowStatsRange returns account usage for a bounded half-open
+// interval.  The explicit end makes sibling 5h/7d snapshots comparable even
+// while new usage rows are being inserted concurrently.
+func (r *usageLogRepository) GetAccountWindowStatsRange(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountStats, error) {
 	query := `
 		SELECT
 			COUNT(*) as requests,
@@ -314,7 +321,7 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
 		FROM usage_logs
-		WHERE account_id = $1 AND created_at >= $2
+		WHERE account_id = $1 AND created_at >= $2 AND created_at < $3
 	`
 
 	stats := &usagestats.AccountStats{}
@@ -322,7 +329,7 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		ctx,
 		r.sql,
 		query,
-		[]any{accountID, startTime},
+		[]any{accountID, startTime, endTime},
 		&stats.Requests,
 		&stats.Tokens,
 		&stats.Cost,

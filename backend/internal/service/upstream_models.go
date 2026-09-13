@@ -488,12 +488,15 @@ func buildGeminiModelsURL(base string) string {
 }
 
 type upstreamModelEntry struct {
-	ID           string          `json:"id"`
-	Model        string          `json:"model"`
-	ModelID      string          `json:"modelId"`
-	ModelIDSnake string          `json:"model_id"`
-	Name         string          `json:"name"`
-	Meta         json.RawMessage `json:"_meta"`
+	ID                            string          `json:"id"`
+	Model                         string          `json:"model"`
+	ModelID                       string          `json:"modelId"`
+	ModelIDSnake                  string          `json:"model_id"`
+	Name                          string          `json:"name"`
+	Meta                          json.RawMessage `json:"_meta"`
+	ContextWindow                 json.RawMessage `json:"context_window"`
+	MaxContextWindow              json.RawMessage `json:"max_context_window"`
+	EffectiveContextWindowPercent json.RawMessage `json:"effective_context_window_percent"`
 }
 
 type upstreamModelEntryMetadata struct {
@@ -504,8 +507,26 @@ type upstreamModelEntryMetadata struct {
 	Name         string `json:"name"`
 }
 
+// UpstreamModelDescriptor retains the model-catalog metadata required by
+// Codex for context-window resolution. IDs remain the compatibility surface
+// used by existing account/model-list flows.
+type UpstreamModelDescriptor struct {
+	ID                            string `json:"id"`
+	ContextWindow                 *int64 `json:"context_window,omitempty"`
+	MaxContextWindow              *int64 `json:"max_context_window,omitempty"`
+	EffectiveContextWindowPercent *int64 `json:"effective_context_window_percent,omitempty"`
+}
+
 func extractUpstreamModelIDs(body []byte) ([]string, error) {
-	return extractUpstreamModelIDsWithSelector(body, upstreamModelEntryID)
+	descriptors, err := extractUpstreamModelDescriptorsWithSelector(body, upstreamModelEntryID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		ids = append(ids, descriptor.ID)
+	}
+	return ids, nil
 }
 
 func extractGrokUpstreamModelIDs(body []byte) ([]string, error) {
@@ -513,6 +534,18 @@ func extractGrokUpstreamModelIDs(body []byte) ([]string, error) {
 }
 
 func extractUpstreamModelIDsWithSelector(body []byte, selectID func(upstreamModelEntry) string) ([]string, error) {
+	descriptors, err := extractUpstreamModelDescriptorsWithSelector(body, selectID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		ids = append(ids, descriptor.ID)
+	}
+	return ids, nil
+}
+
+func extractUpstreamModelDescriptorsWithSelector(body []byte, selectID func(upstreamModelEntry) string) ([]UpstreamModelDescriptor, error) {
 	var response struct {
 		Data   []upstreamModelEntry `json:"data"`
 		Models []upstreamModelEntry `json:"models"`
@@ -523,31 +556,89 @@ func extractUpstreamModelIDsWithSelector(body []byte, selectID func(upstreamMode
 			return nil, fmt.Errorf("parse upstream model list: %w", err)
 		}
 
-		models := make([]string, 0, len(arrayResponse))
+		models := make([]UpstreamModelDescriptor, 0, len(arrayResponse))
 		for _, entry := range arrayResponse {
-			models = append(models, selectID(entry))
+			models = append(models, upstreamModelDescriptor(entry, selectID))
 		}
-		return dedupeAndSortModelIDs(models), nil
+		return dedupeAndSortModelDescriptors(models), nil
 	}
 
-	models := make([]string, 0, len(response.Data)+len(response.Models))
+	models := make([]UpstreamModelDescriptor, 0, len(response.Data)+len(response.Models))
 	for _, entry := range response.Data {
-		models = append(models, selectID(entry))
+		models = append(models, upstreamModelDescriptor(entry, selectID))
 	}
 	for _, entry := range response.Models {
-		models = append(models, selectID(entry))
+		models = append(models, upstreamModelDescriptor(entry, selectID))
 	}
 
 	if len(models) == 0 {
 		var arrayResponse []upstreamModelEntry
 		if err := json.Unmarshal(body, &arrayResponse); err == nil {
 			for _, entry := range arrayResponse {
-				models = append(models, selectID(entry))
+				models = append(models, upstreamModelDescriptor(entry, selectID))
 			}
 		}
 	}
 
-	return dedupeAndSortModelIDs(models), nil
+	return dedupeAndSortModelDescriptors(models), nil
+}
+
+func upstreamModelDescriptor(entry upstreamModelEntry, selectID func(upstreamModelEntry) string) UpstreamModelDescriptor {
+	return UpstreamModelDescriptor{
+		ID:                            selectID(entry),
+		ContextWindow:                 parseOptionalInt64(entry.ContextWindow),
+		MaxContextWindow:              parseOptionalInt64(entry.MaxContextWindow),
+		EffectiveContextWindowPercent: parseOptionalInt64(entry.EffectiveContextWindowPercent),
+	}
+}
+
+func parseOptionalInt64(raw json.RawMessage) *int64 {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var value int64
+	if err := json.Unmarshal(raw, &value); err == nil && value > 0 {
+		return &value
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err == nil {
+		if parsed, err := number.Int64(); err == nil && parsed > 0 {
+			return &parsed
+		}
+	}
+	return nil
+}
+
+func dedupeAndSortModelDescriptors(models []UpstreamModelDescriptor) []UpstreamModelDescriptor {
+	byID := make(map[string]UpstreamModelDescriptor, len(models))
+	for _, model := range models {
+		model.ID = strings.TrimSpace(model.ID)
+		if model.ID == "" {
+			continue
+		}
+		if existing, ok := byID[model.ID]; ok {
+			// Prefer whichever duplicate carries more complete metadata, while
+			// retaining fields already observed on the first entry.
+			if existing.ContextWindow == nil {
+				existing.ContextWindow = model.ContextWindow
+			}
+			if existing.MaxContextWindow == nil {
+				existing.MaxContextWindow = model.MaxContextWindow
+			}
+			if existing.EffectiveContextWindowPercent == nil {
+				existing.EffectiveContextWindowPercent = model.EffectiveContextWindowPercent
+			}
+			byID[model.ID] = existing
+			continue
+		}
+		byID[model.ID] = model
+	}
+	result := make([]UpstreamModelDescriptor, 0, len(byID))
+	for _, model := range byID {
+		result = append(result, model)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 func upstreamModelEntryID(entry upstreamModelEntry) string {

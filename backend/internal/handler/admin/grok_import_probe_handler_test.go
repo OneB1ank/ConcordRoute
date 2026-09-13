@@ -71,7 +71,7 @@ func (grokImportOAuthClientStub) ConvertSSOToBuild(context.Context, string, stri
 	return &xai.TokenResponse{AccessToken: "access-token", RefreshToken: "refresh-token", ExpiresIn: 3600}, nil
 }
 
-func TestGrokSSOBatchImportKeepsCreatedAccountsWhenOneAutomaticProbeFails(t *testing.T) {
+func TestGrokSSOBatchImportDoesNotProbeQuotaAutomatically(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adminService := newGrokImportAdminService()
 	oauthService := service.NewGrokOAuthService(nil, grokImportOAuthClientStub{})
@@ -95,11 +95,13 @@ func TestGrokSSOBatchImportKeepsCreatedAccountsWhenOneAutomaticProbeFails(t *tes
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"created"`)
 	require.NotContains(t, recorder.Body.String(), `GROK_TEST_PROBE_FAILED`)
-	for i := 0; i < 3; i++ {
-		awaitGrokProbeSignal(t, prober.done)
+	select {
+	case accountID := <-prober.done:
+		t.Fatalf("unexpected automatic Grok quota probe for account %d", accountID)
+	case <-time.After(300 * time.Millisecond):
 	}
 	calls, _, _ := prober.snapshot()
-	require.Equal(t, map[int64]int{501: 1, 502: 1, 503: 1}, calls)
+	require.Empty(t, calls)
 }
 
 func TestAccountCreateWithoutAutomaticGrokProbeServiceStillSucceeds(t *testing.T) {

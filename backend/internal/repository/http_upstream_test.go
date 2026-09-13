@@ -1081,6 +1081,12 @@ func (s *HTTPUpstreamSuite) TestAccountConcurrencyFallbackToDefault() {
 	require.Equal(s.T(), 55, transport.MaxIdleConnsPerHost, "MaxIdleConnsPerHost fallback mismatch")
 }
 
+// TestDefaultPoolSettings_UsesFiveMinuteIdleTimeout 验证未显式配置时保留热连接五分钟。
+func (s *HTTPUpstreamSuite) TestDefaultPoolSettings_UsesFiveMinuteIdleTimeout() {
+	settings := defaultPoolSettings(&config.Config{})
+	require.Equal(s.T(), 5*time.Minute, settings.idleConnTimeout)
+}
+
 // TestEvictOverLimitRemovesOldestIdle 测试超出数量限制时的 LRU 淘汰
 // 验证优先淘汰最久未使用的空闲客户端
 func (s *HTTPUpstreamSuite) TestEvictOverLimitRemovesOldestIdle() {

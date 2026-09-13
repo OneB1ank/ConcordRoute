@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"sort"
 	"strconv"
 	"strings"
@@ -241,7 +242,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
+		upstreamReq = upstreamReq.WithContext(httptrace.WithClientTrace(upstreamReq.Context(), &httptrace.ClientTrace{
+			GotFirstResponseByte: func() { MarkTTFTStage(c, "first_upstream_byte") },
+		}))
+		MarkTTFTStage(c, "upstream_do_started")
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
+		if resp != nil {
+			MarkTTFTStage(c, "upstream_headers_received")
+		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			// 未收到 HTTP 响应时交给外层切换账号，持久故障仍由统一处理器临时摘除。
@@ -513,6 +521,16 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	s.applyCodexVersionRequestBody(req, account, body, routerMatch...)
+	// 有活动 app-server bridge 时，先完成真实 JSON-RPC attestation/generate
+	// 往返，再把内部 context 绑定到本次上游请求。
+	if boundCtx, bindErr := s.bindCodexAppServerForBody(ctx, c, account, body); bindErr != nil {
+		return nil, fmt.Errorf("bind app-server attestation: %w", bindErr)
+	} else {
+		ctx = boundCtx
+	}
+	// x-oai-attestation 只允许来自已完成 app-server 能力协商的内部 context，
+	// 绝不从公网请求头直接透传。
+	s.applyCodexClientAttestation(ctx, account, req.Header, codexClientAttestationFromRequest(c))
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")
 
 	return req, nil
@@ -1325,6 +1343,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
+	defer MarkTTFTStage(c, "stream_completed")
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
 	c.Header("Content-Type", "text/event-stream")
@@ -1365,6 +1384,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		flusher.Flush()
+		MarkTTFTStage(c, "first_downstream_flush")
 		flushPending = false
 	}
 	defer flushPendingOutput()
@@ -1393,6 +1413,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	var finalResponseBody []byte
 	responseAccumulator := apicompat.NewBufferedResponseAccumulator()
+	firstSSEEventObserved := false
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
@@ -1416,6 +1437,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		lineStartsClientOutput := false
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			if !firstSSEEventObserved {
+				firstSSEEventObserved = true
+				MarkTTFTStage(c, "first_sse_event")
+			}
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			if needModelReplace && strings.Contains(data, mappedModel) {
@@ -1579,8 +1604,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
 			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(trimmedData, eventType) {
-				ms := int(time.Since(startTime).Milliseconds())
-				firstTokenMs = &ms
+				MarkTTFTStage(c, "first_visible_output")
+				recordFirstTokenMs(&firstTokenMs, startTime)
 			}
 			if eventType != "response.failed" {
 				s.parseSSEUsageBytes(dataBytes, usage)

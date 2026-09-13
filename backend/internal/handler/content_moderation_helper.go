@@ -236,7 +236,9 @@ func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.Conte
 			zap.Int("body_bytes", len(body)),
 		)
 	}
+	service.MarkTTFTStage(c, "content_moderation_started")
 	decision, err := svc.Check(c.Request.Context(), input)
+	service.MarkTTFTStage(c, "content_moderation_done")
 	if err != nil {
 		if reqLog != nil {
 			reqLog.Warn("content_moderation.check_failed", zap.Error(err))

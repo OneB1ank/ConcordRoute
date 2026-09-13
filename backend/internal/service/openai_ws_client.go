@@ -24,7 +24,7 @@ const openAIWSMessageReadLimitBytes int64 = 16 * 1024 * 1024
 const (
 	openAIWSProxyTransportMaxIdleConns        = 128
 	openAIWSProxyTransportMaxIdleConnsPerHost = 64
-	openAIWSProxyTransportIdleConnTimeout     = 90 * time.Second
+	openAIWSProxyTransportIdleConnTimeout     = 5 * time.Minute
 	openAIWSProxyClientCacheMaxEntries        = 256
 	openAIWSProxyClientCacheIdleTTL           = 15 * time.Minute
 )

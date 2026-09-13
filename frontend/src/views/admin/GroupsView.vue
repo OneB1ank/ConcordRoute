@@ -4124,6 +4124,7 @@ import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
+import type { LiveCapability } from "@/api/admin/groups";
 import { useBalanceDisplay } from "@/composables/useBalanceDisplay";
 import type {
   AdminGroup,
@@ -4734,11 +4735,8 @@ const pendingLiveForm = ref<"create" | "edit" | null>(null);
 const showUnsupportedLiveConfirm = computed(
   () => pendingLiveForm.value !== null,
 );
-const liveCapability = ref<{ supported: boolean; reason?: string } | null>(null);
-let liveCapabilityRequest: Promise<{
-  supported: boolean;
-  reason?: string;
-}> | null = null;
+const liveCapability = ref<LiveCapability | null>(null);
+let liveCapabilityRequest: Promise<LiveCapability> | null = null;
 const showSortModal = ref(false);
 const submitting = ref(false);
 const sortSubmitting = ref(false);
@@ -5501,7 +5499,11 @@ const toggleLive = async (target: "create" | "edit") => {
     return;
   }
   const capability = await loadLiveCapability();
-  if (capability.supported) {
+  if (
+    capability.supported ||
+    capability.live_client_supported ||
+    capability.client_attestation_relay
+  ) {
     form.allow_live = true;
     return;
   }

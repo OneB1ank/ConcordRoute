@@ -155,6 +155,29 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text().trim()).toBe('-')
   })
 
+  it('管理页挂载时通过批量快照入口加载，不直接请求单账号上游用量', async () => {
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 9011, platform: 'openai', type: 'oauth', extra: {} }),
+        requestBatchedUsage
+      },
+      global: {
+        stubs: {
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).not.toHaveBeenCalled()
+    expect(requestBatchedUsage).toHaveBeenCalledTimes(1)
+    expect(requestBatchedUsage).toHaveBeenCalledWith(expect.objectContaining({ id: 9011 }), undefined)
+    wrapper.unmount()
+  })
+
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
     getUsage.mockResolvedValue({
       antigravity_quota: {

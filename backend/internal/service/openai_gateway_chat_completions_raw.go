@@ -11,6 +11,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apicompat"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
+	openai "github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -259,12 +260,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
+	defer MarkTTFTStage(c, "stream_completed")
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
 	var usage OpenAIUsage
 	var firstTokenMs *int
+	firstSSEEventObserved := false
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingLines := make([]string, 0, 8)
@@ -307,6 +310,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		line := scanner.Text()
 		refusalDetector.ObserveSSELine(line)
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
+			if !firstSSEEventObserved {
+				firstSSEEventObserved = true
+				MarkTTFTStage(c, "first_sse_event")
+			}
 			trimmedPayload := strings.TrimSpace(payload)
 			if trimmedPayload != "[DONE]" {
 				if u := extractCCStreamUsage(payload); u != nil {
@@ -314,8 +321,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 				streamAccumulator.ObservePayload(payload)
 				if firstTokenMs == nil && openAIChatStreamHasVisibleOutput(payload) {
-					elapsed := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &elapsed
+					MarkTTFTStage(c, "first_visible_output")
+					recordFirstTokenMs(&firstTokenMs, startTime)
 				}
 			}
 		}
@@ -324,11 +331,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if line == "" {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
+				MarkTTFTStage(c, "first_downstream_flush")
 			}
 			continue
 		}
 		if !clientDisconnected && clientOutputStarted {
 			c.Writer.Flush()
+			MarkTTFTStage(c, "first_downstream_flush")
 		}
 	}
 
@@ -380,24 +389,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 // 原生 Chat 流只以正文、思考、拒答、音频或工具参数开始计时，排除角色帧和空结束帧。
 func openAIChatStreamHasVisibleOutput(payload string) bool {
-	if !gjson.Valid(payload) {
-		return false
-	}
-	for _, choice := range gjson.Get(payload, "choices").Array() {
-		delta := choice.Get("delta")
-		for _, path := range []string{"content", "reasoning_content", "reasoning", "refusal", "audio.data", "audio.transcript", "function_call.arguments"} {
-			value := delta.Get(path)
-			if value.Type == gjson.String && value.Str != "" {
-				return true
-			}
-		}
-		for _, call := range delta.Get("tool_calls").Array() {
-			if call.Get("function.arguments").String() != "" {
-				return true
-			}
-		}
-	}
-	return false
+	return openai.StreamDataStartsVisibleOutput(payload, "")
 }
 
 // ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。

@@ -433,6 +433,14 @@ type OpenAIGatewayService struct {
 	dataSharingService    *DataSharingService
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
+	// codexAttestationStore 只保存已完成 app-server 协商的客户端 token。
+	// 普通 HTTP/WS 请求没有该 context 时不会携带 x-oai-attestation。
+	codexAttestationStore *liveattestation.AppServerAttestationStore
+	// codexAppServerBridges 保存已通过 API Key 鉴权的真实 app-server JSON-RPC
+	// 连接，用于按请求即时发起 attestation/generate。
+	codexAppServerBridges *codexAppServerBridgeRegistry
+	// codexAttestationCollector 只保留管理员显式采集会话的摘要。
+	codexAttestationCollector *CodexAppServerAttestationCollector
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
@@ -607,25 +615,28 @@ func NewOpenAIGatewayService(
 			nil,
 			"service.openai_gateway",
 		),
-		httpUpstream:          httpUpstream,
-		tlsFPProfileService:   tlsFPProfileService,
-		tlsFPRouterService:    tlsFPRouterService,
-		deferredService:       deferredService,
-		openAITokenProvider:   openAITokenProvider,
-		grokTokenProvider:     grokTokenProvider,
-		toolCorrector:         NewCodexToolCorrector(),
-		openaiWSResolver:      NewOpenAIWSProtocolResolver(cfg),
-		resolver:              resolver,
-		channelService:        channelService,
-		balanceNotifyService:  balanceNotifyService,
-		settingService:        settingService,
-		userPlatformQuotaRepo: userPlatformQuotaRepo,
-		dataSharingService:    dataSharingService,
-		liveAttestation:       liveattestation.NewProvider(),
-		liveAttestationCipher: newLiveAttestationCipher(cfg),
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
-		openaiModelTransient:  newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
+		httpUpstream:              httpUpstream,
+		tlsFPProfileService:       tlsFPProfileService,
+		tlsFPRouterService:        tlsFPRouterService,
+		deferredService:           deferredService,
+		openAITokenProvider:       openAITokenProvider,
+		grokTokenProvider:         grokTokenProvider,
+		toolCorrector:             NewCodexToolCorrector(),
+		openaiWSResolver:          NewOpenAIWSProtocolResolver(cfg),
+		resolver:                  resolver,
+		channelService:            channelService,
+		balanceNotifyService:      balanceNotifyService,
+		settingService:            settingService,
+		userPlatformQuotaRepo:     userPlatformQuotaRepo,
+		dataSharingService:        dataSharingService,
+		liveAttestation:           liveattestation.NewProvider(),
+		liveAttestationCipher:     newLiveAttestationCipher(cfg),
+		codexAttestationStore:     liveattestation.NewAppServerAttestationStore(codexAttestationStoreTTL),
+		codexAppServerBridges:     newCodexAppServerBridgeRegistry(),
+		codexAttestationCollector: NewCodexAppServerAttestationCollector(),
+		responseHeaderFilter:      compileResponseHeaderFilter(cfg),
+		codexSnapshotThrottle:     newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
+		openaiModelTransient:      newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
 	}
 	registerOpenAIOutboundIdentityGateway(svc)
 	if rateLimitService != nil {
@@ -636,6 +647,15 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+// CodexAppServerAttestationCollector 返回管理员采集器实例。实例由网关
+// 构造时创建，因此 bridge 与管理面共享同一份短期内存状态。
+func (s *OpenAIGatewayService) CodexAppServerAttestationCollector() *CodexAppServerAttestationCollector {
+	if s == nil {
+		return nil
+	}
+	return s.codexAttestationCollector
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

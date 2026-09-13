@@ -587,31 +587,6 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		}
 	}
 
-	// OAuth 账号：创建后异步设置隐私。
-	// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
-	if account.Type == AccountTypeOAuth {
-		switch account.Platform {
-		case PlatformOpenAI:
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("create_account_openai_privacy_panic", "account_id", account.ID, "recover", r)
-					}
-				}()
-				s.EnsureOpenAIPrivacy(context.Background(), account)
-			}()
-		case PlatformAntigravity:
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("create_account_antigravity_privacy_panic", "account_id", account.ID, "recover", r)
-					}
-				}()
-				s.EnsureAntigravityPrivacy(context.Background(), account)
-			}()
-		}
-	}
-
 	return account, nil
 }
 
@@ -1516,8 +1491,8 @@ func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) erro
 	return s.accountRepo.ResetQuotaUsed(ctx, id)
 }
 
-// EnsureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
-// 未设置则调用 disableOpenAITraining 并持久化到 Extra，返回设置的 mode 值。
+// EnsureOpenAIPrivacy 检查并补写 OpenAI OAuth 账号的 privacy_mode。
+// 该方法保留给显式管理调用方；创建、导入、刷新和定时维护路径不会调用它。
 func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Account) string {
 	// 影子账号不持凭据，隐私设置由母账号管理，直接跳过。
 	if account.IsCredentialShadow() {
@@ -1609,9 +1584,8 @@ func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Acco
 	return mode
 }
 
-// EnsureAntigravityPrivacy 检查 Antigravity OAuth 账号隐私状态。
-// 仅当 privacy_mode 已成功设置（"privacy_set"）时跳过；
-// 未设置或之前失败（"privacy_set_failed"）均会重试。
+// EnsureAntigravityPrivacy 检查并补写 Antigravity OAuth 账号的 privacy_mode。
+// 该方法保留给显式管理调用方；创建、导入、刷新和定时维护路径不会调用它。
 func (s *adminServiceImpl) EnsureAntigravityPrivacy(ctx context.Context, account *Account) string {
 	if account.Platform != PlatformAntigravity || account.Type != AccountTypeOAuth {
 		return ""

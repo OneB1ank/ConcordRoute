@@ -95,6 +95,49 @@ func (s *OpenAIGatewayService) prepareLiveAttestation(ctx context.Context) (stri
 	return header, ciphertext, nil
 }
 
+// prepareLiveAttestationForRequest 优先复用已经完成 app-server 协商的证明；
+// 没有内部 context 时，仅接受官方客户端已经生成的 envelope。Linux 网关
+// 不生成 Windows 客户端证明，缺少客户端 envelope 时才回退到已配置的平台
+// provider（例如 macOS DeviceCheck 或 Linux 外部 helper）。
+func (s *OpenAIGatewayService) prepareLiveAttestationForRequest(
+	ctx context.Context,
+	account *Account,
+	identity LiveCallIdentity,
+) (string, string, error) {
+	if accountSupportsCodexAppServerAttestation(account) {
+		// app-server 已完成能力协商时，证明存储按账号/连接/session/thread
+		// 隔离；这里仅复用已校验的 opaque envelope。
+		if value, ok := s.resolveCodexClientAttestation(ctx, account); ok {
+			if s.liveAttestationCipher == nil {
+				return "", "", &LiveAttestationUnavailableError{Reason: "JWT secret is required to protect the Sideband attestation"}
+			}
+			ciphertext, err := s.liveAttestationCipher.Encrypt(value)
+			if err != nil {
+				return "", "", &LiveAttestationUnavailableError{Reason: "failed to protect the negotiated client attestation"}
+			}
+			return value, ciphertext, nil
+		}
+		if value, ok := normalizeTrustedCodexClientAttestation(codexClientAttestationCandidate{
+			Envelope:   identity.ClientAttestationEnvelope,
+			UserAgent:  identity.UserAgent,
+			Originator: identity.Originator,
+		}); ok {
+			if s.liveAttestationCipher == nil {
+				return "", "", &LiveAttestationUnavailableError{Reason: "JWT secret is required to protect the client attestation"}
+			}
+			ciphertext, err := s.liveAttestationCipher.Encrypt(value)
+			if err != nil {
+				return "", "", &LiveAttestationUnavailableError{Reason: "failed to protect the client attestation"}
+			}
+			return value, ciphertext, nil
+		}
+		if strings.TrimSpace(identity.ClientAttestationEnvelope) != "" {
+			return "", "", &LiveAttestationUnavailableError{Reason: "client attestation envelope is invalid or its client identity is untrusted"}
+		}
+	}
+	return s.prepareLiveAttestation(ctx)
+}
+
 func (s *OpenAIGatewayService) decryptLiveAttestation(record *LiveCallRecord) (string, error) {
 	if record == nil || strings.TrimSpace(record.AttestationCiphertext) == "" || s.liveAttestationCipher == nil {
 		return "", &LiveAttestationUnavailableError{

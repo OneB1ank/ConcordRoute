@@ -421,12 +421,14 @@ const (
 	channelMonitorIntervalMin      = 15
 	channelMonitorIntervalMax      = 3600
 	channelMonitorIntervalFallback = 60
-	defaultChannelMonitorMode      = ChannelMonitorModeV1
+	// V2 使用被动聚合，不会为了展示健康状态主动访问上游；作为默认模式可避免
+	// 新部署在打开监控后产生额外探测流量。需要旧探测行为时仍可显式选择 v1。
+	defaultChannelMonitorMode = ChannelMonitorModeV2
 )
 
 func normalizeChannelMonitorMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case ChannelMonitorModeV1, "":
+	case ChannelMonitorModeV1:
 		return ChannelMonitorModeV1
 	case ChannelMonitorModeV2:
 		return ChannelMonitorModeV2

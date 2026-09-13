@@ -561,7 +561,7 @@ export async function clearError(id: number): Promise<Account> {
  * 获取账号用量信息（5h/7d 窗口）
  * @param id - 账号 ID
  * @param source - 用量来源
- * @param force - 是否强制刷新上游快照
+ * @param force - 单账号 active 查询时强制刷新；批量接口会兼容接收该字段但始终只读快照
  * @returns 账号用量信息
  */
 export async function getUsage(id: number, source?: 'passive' | 'active', force?: boolean): Promise<AccountUsageInfo> {

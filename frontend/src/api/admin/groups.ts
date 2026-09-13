@@ -12,9 +12,21 @@ import type {
   PaginatedResponse
 } from '@/types'
 
-/** LiveCapability 描述当前服务端能否生成 ChatGPT DeviceCheck 证明。 */
+/** LiveCapability 描述当前服务端与客户端中继可用的 Live 证明路径。 */
 export interface LiveCapability {
   supported: boolean
+  server_supported?: boolean
+  live_client_supported?: boolean
+  client_attestation_relay?: boolean
+  client_attestation_source?: string
+  server_attestation_provider?: string
+  app_server_attestation_transport?: boolean
+  live_attestation_mode?: string
+  live_devicecheck_server?: boolean
+  server_platform?: string
+  supported_client_platforms?: string[]
+  tls_profile_platform?: string
+  server_reason?: string
   reason?: string
 }
 

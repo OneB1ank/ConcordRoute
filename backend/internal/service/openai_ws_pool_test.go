@@ -94,6 +94,24 @@ func TestNormalizeOpenAIWSHandshakeCompatibilitySeparatesOutboundIdentity(t *tes
 	require.NotEqual(t, baseKey, normalizeOpenAIWSHandshakeCompatibility(account, otherVersion))
 }
 
+func TestNormalizeOpenAIWSHandshakeCompatibilitySeparatesAttestation(t *testing.T) {
+	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	base := http.Header{
+		"User-Agent":          []string{"codex-tui/0.153.4 (Windows 10.0.26200; x86_64)"},
+		"Originator":          []string{"codex-tui"},
+		"Version":             []string{"0.153.4"},
+		liveAttestationHeader: []string{`{"v":1,"s":0,"t":"v1.first"}`},
+	}
+	other := base.Clone()
+	other.Set(liveAttestationHeader, `{"v":1,"s":0,"t":"v1.second"}`)
+
+	firstKey := normalizeOpenAIWSHandshakeCompatibility(account, base)
+	secondKey := normalizeOpenAIWSHandshakeCompatibility(account, other)
+	require.NotEqual(t, firstKey, secondKey)
+	require.NotContains(t, firstKey.attestationDigest, "v1.first")
+	require.NotContains(t, secondKey.attestationDigest, "v1.second")
+}
+
 func TestSameOpenAIWSPrewarmTargetKeepsRoutingHintSoftAndTLSHard(t *testing.T) {
 	baseHeaders := http.Header{
 		"X-Codex-Beta-Features":      {"responses_websockets_v2"},

@@ -701,13 +701,15 @@ func (s *GeminiMessagesCompatService) handleOpenAICompatStreamingResponseFromGem
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
-	firstChunk := true
 	streamAccumulator := newOpenAIChatCompletionsStreamAccumulator(originalModel)
 
 	writeChatChunk := func(chunk apicompat.ChatCompletionsChunk) bool {
 		payload, err := json.Marshal(chunk)
 		if err != nil {
 			return false
+		}
+		if firstTokenMs == nil && chatCompletionsChunkStartsVisibleOutput(chunk) {
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		observeOpenAIChatStreamPayload(streamAccumulator, payload, openAIUsageFromClaudeUsage(usage))
 		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", payload); err != nil {
@@ -719,6 +721,9 @@ func (s *GeminiMessagesCompatService) handleOpenAICompatStreamingResponseFromGem
 		payload, err := json.Marshal(event)
 		if err != nil {
 			return false
+		}
+		if firstTokenMs == nil && responsesEventStartsVisibleOutput(event) {
+			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		payload = reverseToolNamesIfPresent(c, payload)
 		payloads, _, err := clientToolRestorer.RestoreEvent(payload)
@@ -830,11 +835,6 @@ func (s *GeminiMessagesCompatService) handleOpenAICompatStreamingResponseFromGem
 
 					var geminiResp map[string]any
 					if err := json.Unmarshal(rawBytes, &geminiResp); err == nil {
-						if firstChunk {
-							firstChunk = false
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
-						}
 						if fr := extractGeminiFinishReason(geminiResp); fr != "" {
 							finishReason = fr
 						}

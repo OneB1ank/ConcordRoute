@@ -378,7 +378,6 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
-	firstChunk := true
 	streamAccumulator := newOpenAIChatCompletionsStreamAccumulator(originalModel)
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -408,6 +407,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			return false
 		}
 		payload = reverseToolNamesIfPresent(c, payload)
+		if firstTokenMs == nil && chatCompletionsChunkStartsVisibleOutput(chunk) {
+			recordFirstTokenMs(&firstTokenMs, startTime)
+		}
 		observeOpenAIChatStreamPayload(streamAccumulator, payload, openAIUsageFromClaudeUsage(usage))
 		// Reverse tool name mapping: fake → real, per-chunk bytes.Replace.
 		// c 可能持有请求侧注入的 ToolNameRewrite；无则仅做静态前缀还原。
@@ -418,12 +420,6 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) bool {
-		if firstChunk {
-			firstChunk = false
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
-
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)

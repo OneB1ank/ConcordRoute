@@ -13,6 +13,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/model"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/platform/liveattestation"
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 )
@@ -263,6 +264,98 @@ func TestPrepareLiveAttestationEncryptsHeaderAndReturnsExplicitProviderError(t *
 	var unavailable *LiveAttestationUnavailableError
 	require.ErrorAs(t, err, &unavailable)
 	require.Contains(t, unavailable.Error(), "macOS app missing")
+}
+
+func TestPrepareLiveAttestationForRequestRelaysTrustedClientEnvelope(t *testing.T) {
+	cipher := newLiveAttestationCipher(&config.Config{
+		JWT: config.JWTConfig{Secret: "windows-client-attestation-secret"},
+	})
+	service := &OpenAIGatewayService{liveAttestationCipher: cipher}
+	identity := LiveCallIdentity{
+		UserAgent:                 "Codex Desktop/0.153.4 (Windows 10.0.26200; x86_64)",
+		Originator:                "Codex Desktop",
+		ClientAttestationEnvelope: `{"v":1,"s":0,"t":"v1.windows-client"}`,
+	}
+	header, ciphertext, err := service.prepareLiveAttestationForRequest(
+		context.Background(),
+		&Account{Type: AccountTypeOAuth},
+		identity,
+	)
+	require.NoError(t, err)
+	require.Equal(t, identity.ClientAttestationEnvelope, header)
+	decrypted, err := cipher.Decrypt(ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, header, decrypted)
+}
+
+func TestPrepareLiveAttestationForRequestUsesNegotiatedClientEnvelope(t *testing.T) {
+	cipher := newLiveAttestationCipher(&config.Config{
+		JWT: config.JWTConfig{Secret: "negotiated-client-attestation-secret"},
+	})
+	store := liveattestation.NewAppServerAttestationStore(time.Minute)
+	service := &OpenAIGatewayService{codexAttestationStore: store, liveAttestationCipher: cipher}
+	key := liveattestation.SessionKey{AccountID: 42, ConnectionID: "live-conn", SessionID: "live-session", ThreadID: "live-thread"}
+	_, err := store.ObserveInitialize(key, []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"requestAttestation":true}}}`))
+	require.NoError(t, err)
+	_, _, err = store.BeginGenerate(key)
+	require.NoError(t, err)
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.windows-client"}}`)))
+	ctx := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
+		Key: key, Envelope: `{"v":1,"s":0,"t":"v1.windows-client"}`,
+	})
+	header, ciphertext, err := service.prepareLiveAttestationForRequest(
+		ctx,
+		&Account{ID: 42, Type: AccountTypeOAuth},
+		LiveCallIdentity{ClientAttestationEnvelope: `{"v":1,"s":0,"t":"v1.untrusted"}`},
+	)
+	require.NoError(t, err)
+	require.Equal(t, `{"v":1,"s":0,"t":"v1.windows-client"}`, header)
+	decrypted, err := cipher.Decrypt(ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, header, decrypted)
+}
+
+func TestPrepareLiveAttestationForRequestRejectsUntrustedClientEnvelope(t *testing.T) {
+	service := &OpenAIGatewayService{
+		liveAttestationCipher: newLiveAttestationCipher(&config.Config{
+			JWT: config.JWTConfig{Secret: "untrusted-client-attestation-secret"},
+		}),
+		// Provider 即使可用，客户端已经带证明时也不能跨来源回退。
+		liveAttestation: liveAttestationStub{header: `{"v":1,"s":0,"t":"v1.server"}`},
+	}
+	_, _, err := service.prepareLiveAttestationForRequest(
+		context.Background(),
+		&Account{Type: AccountTypeOAuth},
+		LiveCallIdentity{
+			UserAgent:                 "curl/8.0",
+			Originator:                "curl",
+			ClientAttestationEnvelope: `{"v":1,"s":0,"t":"v1.untrusted"}`,
+		},
+	)
+	var unavailable *LiveAttestationUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Contains(t, unavailable.Error(), "identity is untrusted")
+}
+
+func TestPrepareLiveAttestationForRequestRejectsMalformedClientEnvelopeWithoutServerFallback(t *testing.T) {
+	service := &OpenAIGatewayService{
+		liveAttestationCipher: newLiveAttestationCipher(&config.Config{
+			JWT: config.JWTConfig{Secret: "malformed-client-attestation-secret"},
+		}),
+		liveAttestation: liveAttestationStub{header: `{"v":1,"s":0,"t":"v1.server"}`},
+	}
+	_, _, err := service.prepareLiveAttestationForRequest(
+		context.Background(),
+		&Account{Type: AccountTypeOAuth},
+		LiveCallIdentity{
+			UserAgent:                 "Codex Desktop/0.153.4 (Windows 10.0.26200; x86_64)",
+			Originator:                "Codex Desktop",
+			ClientAttestationEnvelope: `{"v":1,"s":0,"t":""}`,
+		},
+	)
+	var unavailable *LiveAttestationUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Contains(t, unavailable.Error(), "envelope is invalid")
 }
 
 func TestLiveMaxSessionDurationDefaultsAndOverrides(t *testing.T) {

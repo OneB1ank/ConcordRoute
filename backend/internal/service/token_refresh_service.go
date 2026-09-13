@@ -65,7 +65,7 @@ type TokenRefreshService struct {
 	refreshAPI       *OAuthRefreshAPI // 统一刷新 API
 	runtimeBlocker   AccountRuntimeBlocker
 
-	// OpenAI privacy: 刷新成功后检查并设置 training opt-out
+	// 历史隐私依赖保留用于兼容旧注入接口；后台刷新路径不触发隐私设置。
 	privacyClientFactory PrivacyClientFactory
 	proxyRepo            ProxyRepository
 
@@ -209,7 +209,7 @@ func (s *TokenRefreshService) setCandidateAfterID(afterID int64) {
 	s.candidateMu.Unlock()
 }
 
-// SetPrivacyDeps 注入 OpenAI privacy opt-out 所需依赖
+// SetPrivacyDeps 保留旧注入接口；后台令牌刷新不使用这些依赖设置隐私。
 func (s *TokenRefreshService) SetPrivacyDeps(factory PrivacyClientFactory, proxyRepo ProxyRepository) {
 	s.privacyClientFactory = factory
 	s.proxyRepo = proxyRepo
@@ -1224,10 +1224,6 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 		}
 	}
 	s.postRefreshStateSync(ctx, account)
-	// OpenAI OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则尝试关闭训练数据共享
-	s.ensureOpenAIPrivacy(ctx, account)
-	// Antigravity OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则调用 setUserSettings
-	s.ensureAntigravityPrivacy(ctx, account)
 	// Grok 凭证刷新成功后清除软性重新认证标记。
 	if account != nil && account.Platform == PlatformGrok && accountGrokNeedsReauth(account) {
 		clearGrokNeedsReauthExtra(ctx, s.accountRepo, account.ID)
@@ -1476,8 +1472,7 @@ func isNonRetryableRefreshError(err error) bool {
 	return false
 }
 
-// ensureOpenAIPrivacy 检查 OpenAI OAuth 账号是否已设置 privacy_mode，
-// 未设置则调用 disableOpenAITraining 并持久化结果到 Extra。
+// ensureOpenAIPrivacy 是历史兼容辅助方法；后台令牌刷新不再调用它。
 func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *Account) {
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return
@@ -1526,9 +1521,7 @@ func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *
 	}
 }
 
-// ensureAntigravityPrivacy 后台刷新中检查 Antigravity OAuth 账号隐私状态。
-// 仅当 privacy_mode 已成功设置（"privacy_set"）时跳过；
-// 未设置或之前失败（"privacy_set_failed"）均会重试。
+// ensureAntigravityPrivacy 是历史兼容辅助方法；后台令牌刷新不再调用它。
 func (s *TokenRefreshService) ensureAntigravityPrivacy(ctx context.Context, account *Account) {
 	if account.Platform != PlatformAntigravity || account.Type != AccountTypeOAuth {
 		return

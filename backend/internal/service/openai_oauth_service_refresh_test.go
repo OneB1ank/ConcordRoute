@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -121,8 +123,50 @@ func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccess
 	require.NotNil(t, info)
 	require.Equal(t, "existing-access-token", info.AccessToken)
 	require.Equal(t, "client-id-1", info.ClientID)
+	require.Empty(t, info.PrivacyMode, "令牌刷新/账号信息补全不应自动初始化隐私策略")
 	require.Zero(t, atomic.LoadInt32(&client.refreshCalls), "已有 access token 应该复用，不能调用 refresh")
 	require.Positive(t, atomic.LoadInt32(&privacyClientCalls), "已有 access token 也应该执行账号信息补全")
+}
+
+func TestOpenAIOAuthService_RefreshAccountToken_DoesNotInitializePrivacy(t *testing.T) {
+	var privacyCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/accounts/check":
+			_, _ = w.Write([]byte(`{"accounts":{"acct-1":{"account":{"account_id":"acct-1","plan_type":"plus"}}}}`))
+		case "/settings":
+			atomic.AddInt32(&privacyCalls, 1)
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	oldAccountsURL := chatGPTAccountsCheckURL
+	oldSettingsURL := openAISettingsURL
+	chatGPTAccountsCheckURL = server.URL + "/accounts/check"
+	openAISettingsURL = server.URL + "/settings"
+	t.Cleanup(func() {
+		chatGPTAccountsCheckURL = oldAccountsURL
+		openAISettingsURL = oldSettingsURL
+	})
+
+	svc := NewOpenAIOAuthService(nil, &openaiOAuthClientRefreshStub{})
+	svc.SetPrivacyClientFactory(func(string) (*req.Client, error) {
+		return req.C(), nil
+	})
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "existing-access-token"},
+	}
+
+	info, err := svc.RefreshAccountToken(context.Background(), account)
+	require.NoError(t, err)
+	require.Empty(t, info.PrivacyMode)
+	require.Zero(t, atomic.LoadInt32(&privacyCalls), "令牌刷新不应调用隐私设置 PATCH")
 }
 
 func TestOpenAIOAuthService_RefreshAccountTokenConfiguredProxyMissingFailsClosed(t *testing.T) {

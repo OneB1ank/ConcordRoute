@@ -23,8 +23,9 @@ type GrokOAuthHandler struct {
 	grokOAuthService *service.GrokOAuthService
 	adminService     service.AdminService
 	quotaService     *service.GrokQuotaService
-	importProber     grokImportProber
-	reconciler       service.GrokOAuthReconciler
+	// importProber 仅保留为显式探测扩展的依赖注入位，账号创建流程不会自动调用。
+	importProber grokImportProber
+	reconciler   service.GrokOAuthReconciler
 }
 
 func NewGrokOAuthHandler(
@@ -312,7 +313,6 @@ func (h *GrokOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	h.scheduleGrokImportProbe(account)
 	response.Success(c, dto.AccountFromService(account))
 }
 
@@ -449,7 +449,6 @@ func (h *GrokOAuthHandler) createAccountFromSSOToken(ctx context.Context, req Gr
 	if err != nil {
 		return grokSSOImportWorkerResult{item: GrokSSOToOAuthItemResult{Index: index, Name: name, Email: tokenInfo.Email, Error: grokSSOImportErrorMessage(err)}}
 	}
-	h.scheduleGrokImportProbe(account)
 	return grokSSOImportWorkerResult{
 		created: true,
 		item: GrokSSOToOAuthItemResult{

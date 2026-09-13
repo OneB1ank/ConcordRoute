@@ -321,6 +321,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
+	service.MarkTTFTStage(c, "request_body_read")
 
 	if len(body) == 0 {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
@@ -453,6 +454,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	requestPlatform := openAICompatibleRequestPlatform(apiKey)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+	service.MarkTTFTStage(c, "auth_complete")
 	routingStart := time.Now()
 
 	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted, reqLog)
@@ -600,6 +602,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 
 		// Forward request
+		service.MarkTTFTStage(c, "routing_complete")
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 		// 用扣除 compact 心跳字节的口径快照：心跳注释不构成语义响应，
@@ -988,6 +991,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
+	service.MarkTTFTStage(c, "request_body_read")
 	if len(body) == 0 {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
@@ -1038,6 +1042,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	requestPlatform := openAICompatibleRequestPlatform(apiKey)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+	service.MarkTTFTStage(c, "auth_complete")
 	routingStart := time.Now()
 
 	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted, reqLog)
@@ -1155,6 +1160,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 
+		service.MarkTTFTStage(c, "routing_complete")
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 

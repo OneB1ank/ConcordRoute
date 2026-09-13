@@ -417,8 +417,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		// HTTP 桥接为 WS 时保持首内容统计口径，结构进度仍照常转发。
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(string(upstreamMessage), eventType) {
-			ms := int(time.Since(turnStart).Milliseconds())
-			firstTokenMs = &ms
+			recordFirstTokenMs(&firstTokenMs, turnStart)
 		}
 		if openAIWSEventShouldParseUsage(eventType) {
 			parseOpenAIWSResponseUsageFromCompletedEvent(upstreamMessage, &usage)

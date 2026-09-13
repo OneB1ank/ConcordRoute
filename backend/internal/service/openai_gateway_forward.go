@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 每次账号尝试先清空响应身份映射，故障转移不得沿用上一账号的收敛 ID。
 	stageCodexFingerprintIDs(c, nil)
 	startTime := time.Now()
+	MarkTTFTStage(c, "forward_started")
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
 
@@ -875,9 +877,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		proxyURL := resolveAccountProxyURL(account)
+		// httptrace distinguishes a cold/proxy/TLS wait from upstream model
+		// scheduling. It records only transport phase timestamps.
+		upstreamTrace := &httptrace.ClientTrace{
+			GotFirstResponseByte: func() { MarkTTFTStage(c, "first_upstream_byte") },
+		}
+		upstreamReq = upstreamReq.WithContext(httptrace.WithClientTrace(upstreamReq.Context(), upstreamTrace))
 
 		upstreamStart := time.Now()
+		MarkTTFTStage(c, "upstream_do_started")
 		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch))
+		if resp != nil {
+			MarkTTFTStage(c, "upstream_headers_received")
+		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
@@ -1210,6 +1222,16 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// builder directly, so the builder must also close the identity tuple.
 	applyStagedCodexFingerprintHeaders(c, account, req.Header)
 	s.applyCodexVersionRequestBody(req, account, body, routerMatch...)
+	// 有活动 app-server bridge 时，先完成真实 JSON-RPC attestation/generate
+	// 往返，再把内部 context 绑定到本次上游请求。
+	if boundCtx, bindErr := s.bindCodexAppServerForBody(ctx, c, account, body); bindErr != nil {
+		return nil, fmt.Errorf("bind app-server attestation: %w", bindErr)
+	} else {
+		ctx = boundCtx
+	}
+	// x-oai-attestation 只允许来自已完成 app-server 能力协商的内部 context，
+	// 或经过 envelope 校验的官方客户端请求；不加入通用 Header 白名单。
+	s.applyCodexClientAttestation(ctx, account, req.Header, codexClientAttestationFromRequest(c))
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 
 	return req, nil

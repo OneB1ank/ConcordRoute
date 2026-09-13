@@ -878,6 +878,9 @@ type GatewayConfig struct {
 	// OpenAIHighEffortFirstOutputTimeoutSeconds: high/xhigh/max 推理的首个语义输出超时（秒）。
 	// 0 表示回退到 OpenAIFirstOutputTimeoutSeconds。
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
+	// TTFTDiagnosticsEnabled: 为网关请求记录请求阶段时间戳，供定位首字长尾。
+	// 默认关闭；启用后仅增加不含请求体/令牌的阶段耗时日志。
+	TTFTDiagnosticsEnabled bool `mapstructure:"ttft_diagnostics_enabled"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// TextMaxBodySize 限制不允许内联图片或视频载荷的端点请求体大小。
@@ -1706,6 +1709,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.BindEnv("server.enable_server_timing", "ENABLE_SERVER_TIMING"); err != nil {
 		return nil, fmt.Errorf("bind ENABLE_SERVER_TIMING: %w", err)
 	}
+	if err := viper.BindEnv("gateway.ttft_diagnostics_enabled", "GATEWAY_TTFT_DIAGNOSTICS_ENABLED"); err != nil {
+		return nil, fmt.Errorf("bind GATEWAY_TTFT_DIAGNOSTICS_ENABLED: %w", err)
+	}
 
 	// 默认值
 	setDefaults()
@@ -2275,6 +2281,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
 	viper.SetDefault("gateway.openai_first_output_timeout_seconds", 0)
 	viper.SetDefault("gateway.openai_high_effort_first_output_timeout_seconds", 0)
+	viper.SetDefault("gateway.ttft_diagnostics_enabled", false)
 	viper.SetDefault("gateway.log_upstream_error_body", true)
 	viper.SetDefault("gateway.log_upstream_error_body_max_bytes", 2048)
 	viper.SetDefault("gateway.inject_beta_for_apikey", false)
@@ -2374,10 +2381,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationAccountProxy)
 	// HTTP 上游连接池配置（针对 5000+ 并发用户优化）
-	viper.SetDefault("gateway.max_idle_conns", 2560)          // 最大空闲连接总数（高并发场景可调大）
-	viper.SetDefault("gateway.max_idle_conns_per_host", 120)  // 每主机最大空闲连接（HTTP/2 场景默认）
-	viper.SetDefault("gateway.max_conns_per_host", 1024)      // 每主机最大连接数（含活跃；流式/HTTP1.1 场景可调大，如 2400+）
-	viper.SetDefault("gateway.idle_conn_timeout_seconds", 90) // 空闲连接超时（秒）
+	viper.SetDefault("gateway.max_idle_conns", 2560)           // 最大空闲连接总数（高并发场景可调大）
+	viper.SetDefault("gateway.max_idle_conns_per_host", 120)   // 每主机最大空闲连接（HTTP/2 场景默认）
+	viper.SetDefault("gateway.max_conns_per_host", 1024)       // 每主机最大连接数（含活跃；流式/HTTP1.1 场景可调大，如 2400+）
+	viper.SetDefault("gateway.idle_conn_timeout_seconds", 300) // 空闲连接超时（秒，默认5分钟）
 	viper.SetDefault("gateway.max_upstream_clients", 5000)
 	viper.SetDefault("gateway.client_idle_ttl_seconds", 900)
 	viper.SetDefault("gateway.concurrency_slot_ttl_minutes", 30) // 并发槽位过期时间（支持超长请求）
@@ -3224,8 +3231,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.IdleConnTimeoutSeconds <= 0 {
 		return fmt.Errorf("gateway.idle_conn_timeout_seconds must be positive")
 	}
-	if c.Gateway.IdleConnTimeoutSeconds > 180 {
-		slog.Warn("gateway.idle_conn_timeout_seconds is high; consider 60-120 seconds for better connection reuse", "idle_conn_timeout_seconds", c.Gateway.IdleConnTimeoutSeconds)
+	if c.Gateway.IdleConnTimeoutSeconds > 600 {
+		slog.Warn("gateway.idle_conn_timeout_seconds is high; consider 300-600 seconds for better connection reuse", "idle_conn_timeout_seconds", c.Gateway.IdleConnTimeoutSeconds)
 	}
 	if c.Gateway.MaxUpstreamClients <= 0 {
 		return fmt.Errorf("gateway.max_upstream_clients must be positive")

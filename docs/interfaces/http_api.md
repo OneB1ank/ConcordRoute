@@ -47,10 +47,12 @@ RequestLogger
 | `/v1/*` 和兼容裸别名 | ConcordRoute API Key | Anthropic/OpenAI 兼容消息、Responses、Chat、图片、视频、模型、用量与批任务 |
 | `/v1beta/*` | ConcordRoute API Key | Gemini 原生模型 URL、生成、流式生成和 token 统计 |
 | `/antigravity/*` | ConcordRoute API Key + 强制平台 | Antigravity 专用 Claude/Gemini 入口与管理型自省 |
-| `/backend-api/codex/*` | ConcordRoute API Key | Codex Responses、Realtime 与 sideband 兼容入口 |
+| `/backend-api/codex/*` | ConcordRoute API Key | Codex Responses、Realtime、sideband 与独立 app-server JSON-RPC bridge 入口 |
 | `/api/v1/pages/*` 等 page routes | 按页面类型为用户或管理员 JWT | 服务端生成/读取的 pricing、账单或管理页面数据 |
 
 `GET /api/v1/admin/groups/usage-summary` 仅返回管理员可见的全局分组汇总，字段为 `today_cost`、`yesterday_cost` 和 `total_cost`。自然日固定使用服务端配置时区，不接受浏览器时区参数，避免不同管理员在同一列表看到不同的“今日”边界。
+
+`GET /api/v1/admin/groups/live-capability` 的 `supported` 与 `server_supported` 表示网关至少有一条可用的 Live 证明路径：服务端本地生成或受支持客户端提供真实证明后由网关中继。`live_devicecheck_server` 仍严格表示当前服务端本地证明 Provider 已通过检查；`server_attestation_provider` 会标识 `macos_devicecheck`、`linux_external_helper` 或 `none`；Linux helper 只桥接外部真实证明，网关自身不生成 token。`live_client_supported` 与 `client_attestation_relay` 表示 Windows Codex 客户端证明中继路径。客户端先通过独立的 `GET /backend-api/codex/app-server` WebSocket 完成 app-server `initialize` 协商；`app_server_attestation_transport` 仅在至少一条活动连接完成 `requestAttestation` 协商时为 `true`，全部断开或未协商时为 `false`。未建立 bridge 时是 fail-closed 状态：公共 Responses/WS 会剥离未协商的 `x-oai-attestation`，Live 对未协商 envelope 返回不可用，不把 UA/TLS 当作证明。`live_attestation_mode` 会返回 `client_relay`、`server_and_client_relay` 或 `unavailable`。响应同时返回 `client_attestation_source`、`server_platform`、`supported_client_platforms` 和 `tls_profile_platform`；当服务端本地提供器不可用但客户端中继可用时，具体平台原因放在 `server_reason`，不会把整体 `supported` 标成不可用。上述字段用于区分 Linux 网关转发 Windows Codex 客户端真实证明与服务端本地生成证明；Windows UA/TLS 模板不等价于设备证明。
 
 OAuth 登录 start 对 GitHub、Google、LinuxDo、DingTalk、WeChat 和 OIDC 同时保留 `GET` 与 `POST`。未启用腾讯天御或阿里云验证码时，`GET` 继续以 `302` 跳转保持兼容；任一动作验证码启用后，匿名登录必须用 `POST`，腾讯票据使用 `tencent_captcha_ticket` 与 `tencent_captcha_randstr`，阿里云的 `captchaVerifyParam` 复用 `turnstile_token` 字段，成功响应的 `data.authorize_url` 由前端再导航。`*/bind/start` 是当前用户绑定入口，不消费匿名登录验证码。Passkey 登录的 `/auth/passkey/login/begin` 使用相同的提供方字段映射，`finish` 只接受 ceremony session 和 WebAuthn credential。
 

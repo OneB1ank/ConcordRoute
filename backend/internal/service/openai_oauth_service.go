@@ -406,9 +406,9 @@ func valueFromInt64Ptr(value *int64) int64 {
 	return *value
 }
 
-// enrichTokenInfo 通过 ChatGPT backend-api 补全 tokenInfo 并设置隐私（best-effort）。
+// enrichTokenInfo 通过 ChatGPT backend-api 补全 tokenInfo 元数据（best-effort）。
 // 从 accounts/check 获取最新 plan_type、subscription_expires_at、email，
-// 然后尝试关闭训练数据共享。适用于所有获取/刷新 token 的路径。
+// 适用于所有获取/刷新 token 的路径。隐私策略仅由管理员显式操作设置。
 func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *OpenAITokenInfo, proxyURL string) {
 	if tokenInfo.AccessToken == "" || s.privacyClientFactory == nil {
 		return
@@ -451,8 +451,6 @@ func (s *OpenAIOAuthService) enrichTokenInfo(ctx context.Context, tokenInfo *Ope
 		}
 	}
 
-	// 尝试设置隐私（关闭训练数据共享），best-effort
-	tokenInfo.PrivacyMode = disableOpenAITraining(ctx, s.privacyClientFactory, tokenInfo.AccessToken, proxyURL)
 }
 
 func shouldApplyChatGPTAccountInfoPlanType(current, candidate string) bool {

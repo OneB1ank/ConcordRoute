@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -93,6 +95,10 @@ type openAIWSHandshakeCompatibilityKey struct {
 	threadID            string
 	clientRequestID     string
 	codexWindowID       string
+	// x-oai-attestation 属于握手身份；连接复用时不能让不同客户端的
+	// opaque 证明共用同一条已建立连接。这里只保存摘要，避免把 token
+	// 原文放入池键或诊断数据。
+	attestationDigest string
 }
 
 type openAIWSConnLease struct {
@@ -1899,8 +1905,10 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	}
 	id := p.nextConnID(req.Account.ID)
 	pooledConn := newOpenAIWSConn(id, req.Account.ID, conn, handshakeHeaders, req.TLSProfile, req.TLSProfileKey)
-	pooledConn.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(req.Account, req.Headers)
-	pooledConn.routingAffinity = normalizeOpenAIWSRoutingAffinity(req.Headers)
+	// HeadersFactory 可能在实际拨号前刷新身份头；连接兼容键必须以最终
+	// 发出的握手头计算，尤其不能遗漏 x-oai-attestation 的会话隔离。
+	pooledConn.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(req.Account, headers)
+	pooledConn.routingAffinity = normalizeOpenAIWSRoutingAffinity(headers)
 	return pooledConn, nil
 }
 
@@ -2116,10 +2124,11 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 
 func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
-		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
-		userAgent:    normalizeOpenAIWSStableIdentityHeader(headers, "user-agent"),
-		originator:   normalizeOpenAIWSStableIdentityHeader(headers, "originator"),
-		version:      normalizeOpenAIWSStableIdentityHeader(headers, "version"),
+		betaFeatures:      normalizeOpenAIWSBetaFeatures(headers),
+		userAgent:         normalizeOpenAIWSStableIdentityHeader(headers, "user-agent"),
+		originator:        normalizeOpenAIWSStableIdentityHeader(headers, "originator"),
+		version:           normalizeOpenAIWSStableIdentityHeader(headers, "version"),
+		attestationDigest: normalizeOpenAIWSAttestationDigest(headers),
 	}
 	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {
@@ -2139,6 +2148,18 @@ func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Head
 	key.clientRequestID = normalizeOpenAIWSStableIdentityHeader(headers, "x-client-request-id")
 	key.codexWindowID = normalizeOpenAIWSStableIdentityHeader(headers, "x-codex-window-id")
 	return key
+}
+
+func normalizeOpenAIWSAttestationDigest(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	value := strings.TrimSpace(headers.Get(liveAttestationHeader))
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 // activeCodexFingerprintMode 只有在账号持有有效系统种子时才把身份加入连接兼容键。

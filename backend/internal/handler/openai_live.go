@@ -174,17 +174,18 @@ func liveCallIdentity(
 		subscriptionID = &value
 	}
 	return service.LiveCallIdentity{
-		APIKeyID:        apiKey.ID,
-		ActorUserID:     apiKey.UserID,
-		UserID:          userID,
-		TeamID:          apiKey.TeamID,
-		GroupID:         apiKey.GroupID,
-		SubscriptionID:  subscriptionID,
-		UserAgent:       c.GetHeader("User-Agent"),
-		Originator:      c.GetHeader("originator"),
-		IPAddress:       ip.GetClientIP(c),
-		InboundEndpoint: GetInboundEndpoint(c),
-		ModelMapping:    service.CloneModelMapping(apiKey.ModelMapping),
+		APIKeyID:                  apiKey.ID,
+		ActorUserID:               apiKey.UserID,
+		UserID:                    userID,
+		TeamID:                    apiKey.TeamID,
+		GroupID:                   apiKey.GroupID,
+		SubscriptionID:            subscriptionID,
+		UserAgent:                 c.GetHeader("User-Agent"),
+		Originator:                c.GetHeader("originator"),
+		ClientAttestationEnvelope: c.GetHeader("x-oai-attestation"),
+		IPAddress:                 ip.GetClientIP(c),
+		InboundEndpoint:           GetInboundEndpoint(c),
+		ModelMapping:              service.CloneModelMapping(apiKey.ModelMapping),
 	}
 }
 

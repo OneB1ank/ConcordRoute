@@ -18,6 +18,12 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestBuildTransport_DefaultIdleConnTimeoutIsFiveMinutes(t *testing.T) {
+	transport, err := buildTransport(Options{})
+	require.NoError(t, err)
+	require.Equal(t, 5*time.Minute, transport.IdleConnTimeout)
+}
+
 func TestValidatedTransport_CacheHostValidation(t *testing.T) {
 	originalValidate := validateResolvedIP
 	defer func() { validateResolvedIP = originalValidate }()

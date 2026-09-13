@@ -155,3 +155,82 @@ func TestNormalizeCodexClientVersion(t *testing.T) {
 	require.Empty(t, NormalizeCodexClientVersion("version-0.200.1"))
 	require.Equal(t, openai.CodexDefaultOriginator, resolveCodexOutboundIdentity("").originator)
 }
+
+func TestCodexOutboundIdentityProfileRegressionMatrix(t *testing.T) {
+	const canonical = "Codex Desktop/0.153.4 (Windows 10.0.26200; x86_64) dumb (Codex Desktop; 26.901.41600)"
+	withCodexCanonicalUA(t, canonical)
+
+	tests := []struct {
+		name        string
+		candidateUA string
+		wantUA      string
+		wantOrigin  string
+		wantVersion string
+	}{
+		{
+			name:        "tui core and client versions stay separated",
+			candidateUA: "codex-tui/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color (codex-tui; 0.152.0)",
+			wantUA:      "codex-tui/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color (codex-tui; 0.153.4)",
+			wantOrigin:  "codex-tui",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "desktop runtime build does not replace core version",
+			candidateUA: canonical,
+			wantUA:      canonical,
+			wantOrigin:  "Codex Desktop",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "sdk profile",
+			candidateUA: "codex_sdk_ts/0.153.4 (Windows 10.0.26200; x86_64) node (codex_sdk_ts; 0.153.4)",
+			wantUA:      "codex_sdk_ts/0.153.4 (Windows 10.0.26200; x86_64) node (codex_sdk_ts; 0.153.4)",
+			wantOrigin:  "codex_sdk_ts",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "cli rs profile",
+			candidateUA: "codex_cli_rs/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color",
+			wantUA:      "codex_cli_rs/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color",
+			wantOrigin:  "codex_cli_rs",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "cli exec profile",
+			candidateUA: "codex_exec/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color (codex_exec; 0.153.4)",
+			wantUA:      "codex_exec/0.153.4 (Windows 10.0.26200; x86_64) xterm-256color (codex_exec; 0.153.4)",
+			wantOrigin:  "codex_exec",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "incomplete profile falls back to canonical",
+			candidateUA: "codex-tui/",
+			wantUA:      canonical,
+			wantOrigin:  "Codex Desktop",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "unknown profile falls back to canonical",
+			candidateUA: "codex_unknown/0.153.4 (Windows 10.0.26200; x86_64)",
+			wantUA:      canonical,
+			wantOrigin:  "Codex Desktop",
+			wantVersion: "0.153.4",
+		},
+		{
+			name:        "control byte profile falls back to canonical",
+			candidateUA: "codex-tui/0.153.4\r\nX-Injected: 1",
+			wantUA:      canonical,
+			wantOrigin:  "Codex Desktop",
+			wantVersion: "0.153.4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			identity := resolveCodexOutboundIdentity(tt.candidateUA)
+			require.Equal(t, tt.wantUA, identity.userAgent)
+			require.Equal(t, tt.wantOrigin, identity.originator)
+			require.Equal(t, tt.wantVersion, identity.version)
+		})
+	}
+}

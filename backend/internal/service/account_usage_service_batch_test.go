@@ -192,3 +192,90 @@ func TestAccountUsageService_GetUsageBatch_BestEffortByAccount(t *testing.T) {
 		t.Fatalf("expected API key account error to be preserved, got %q", errorsByAccount[7003])
 	}
 }
+
+func TestAccountUsageService_GetUsageBatch_OpenAIUsesSnapshotWithoutUpstreamProbe(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	resetAt := now.Add(2 * time.Hour).Format(time.RFC3339)
+	repo := &stubOpenAIAccountRepo{
+		accounts: []Account{{
+			ID:       7010,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				// 故意使用过期时间：旧实现会尝试 QueryUsage，批量快照路径仍应只读这些值。
+				"codex_usage_updated_at": "2020-01-01T00:00:00Z",
+				"codex_5h_used_percent":  27.0,
+				"codex_5h_reset_at":      resetAt,
+				"codex_7d_used_percent":  41.0,
+				"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+			},
+		}},
+	}
+
+	// 非 nil 但未配置的服务可以暴露旧路径是否被误调用：旧实现会返回配置错误，
+	// 新的批量快照实现不应触碰它。
+	svc := &AccountUsageService{
+		accountRepo:        repo,
+		usageLogRepo:       &usageBatchLogRepoStub{},
+		cache:              NewUsageCache(),
+		openAIQuotaService: &OpenAIQuotaService{},
+	}
+
+	usageByAccount, errorsByAccount, err := svc.GetUsageBatch(context.Background(), []int64{7010}, true)
+	if err != nil {
+		t.Fatalf("GetUsageBatch() error = %v", err)
+	}
+	if errorsByAccount[7010] != "" {
+		t.Fatalf("snapshot batch unexpectedly returned an error: %q", errorsByAccount[7010])
+	}
+	usage := usageByAccount[7010]
+	if usage == nil || usage.Source != "passive" || usage.FiveHour == nil || usage.FiveHour.Utilization != 27 {
+		t.Fatalf("expected passive OpenAI snapshot, got %#v", usage)
+	}
+}
+
+func TestAccountUsageService_PassiveAntigravityReadDoesNotMutateSharedCache(t *testing.T) {
+	t.Parallel()
+
+	resetAt := time.Now().Add(time.Hour).UTC()
+	cached := &UsageInfo{
+		Source: "active",
+		FiveHour: &UsageProgress{
+			RemainingSeconds: 123,
+			ResetsAt:         &resetAt,
+		},
+	}
+	cache := NewUsageCache()
+	cache.antigravityCache.Store(int64(7020), &antigravityUsageCache{usageInfo: cached, timestamp: time.Now()})
+	svc := &AccountUsageService{cache: cache}
+
+	got := svc.getPassiveAntigravityUsage(&Account{ID: 7020})
+	if got == nil || got == cached {
+		t.Fatalf("expected an isolated passive usage copy, got %#v", got)
+	}
+	if got.Source != "passive" {
+		t.Fatalf("passive source = %q, want passive", got.Source)
+	}
+	if cached.Source != "active" || cached.FiveHour.RemainingSeconds != 123 {
+		t.Fatalf("shared cache was mutated: %#v", cached)
+	}
+}
+
+func TestAccountUsageService_PassiveQoderReadDoesNotMutateSharedCache(t *testing.T) {
+	t.Parallel()
+
+	cached := &UsageInfo{Source: "active", Error: "cached"}
+	cache := NewUsageCache()
+	cache.qoderCache.Store(int64(7021), &qoderUsageCache{usageInfo: cached, timestamp: time.Now()})
+	svc := &AccountUsageService{cache: cache}
+
+	got := svc.getPassiveQoderUsage(&Account{ID: 7021})
+	if got == nil || got == cached {
+		t.Fatalf("expected an isolated passive usage copy, got %#v", got)
+	}
+	if got.Source != "passive" || cached.Source != "active" {
+		t.Fatalf("cache source mutation: returned=%#v cached=%#v", got, cached)
+	}
+}

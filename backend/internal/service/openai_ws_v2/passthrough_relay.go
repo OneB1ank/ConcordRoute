@@ -756,16 +756,18 @@ func observeUpstreamMessage(
 	visibleOutput := needsFirstToken && openai.StreamDataStartsVisibleOutput(string(message), eventType)
 	if state.firstTokenMs == nil && visibleOutput {
 		ms := int(now.Sub(startAt).Milliseconds())
-		if ms >= 0 {
-			state.firstTokenMs = &ms
+		if ms < 0 {
+			ms = 0
 		}
+		state.firstTokenMs = &ms
 	}
 	// 无 ID 内容使用活动轮次，不受连接级首字已经产生的影响。
 	if visibleOutput && turnTiming != nil && turnTiming.firstTokenMs == nil {
 		tms := int(now.Sub(turnTiming.startAt).Milliseconds())
-		if tms >= 0 {
-			turnTiming.firstTokenMs = &tms
+		if tms < 0 {
+			tms = 0
 		}
+		turnTiming.firstTokenMs = &tms
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
 	observed := observedUpstreamEvent{
@@ -777,9 +779,10 @@ func observeUpstreamMessage(
 		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
 		if turnTiming != nil && turnTiming.firstTokenMs == nil && visibleOutput {
 			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
-			if ms >= 0 {
-				turnTiming.firstTokenMs = &ms
+			if ms < 0 {
+				ms = 0
 			}
+			turnTiming.firstTokenMs = &ms
 		}
 	}
 	if !isTerminalEvent(eventType) {

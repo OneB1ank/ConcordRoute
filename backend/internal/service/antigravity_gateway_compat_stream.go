@@ -250,6 +250,9 @@ func (s *antigravityCompatStreamSession) consumeClaudeData(eventType, payload st
 }
 
 func (s *antigravityCompatStreamSession) emitOrBuffer(event apicompat.AnthropicStreamEvent) {
+	if s.firstTokenMs == nil && anthropicStreamEventStartsVisibleOutput(&event) {
+		recordFirstTokenMs(&s.firstTokenMs, s.startTime)
+	}
 	if s.meaningfulData {
 		s.adapter.Emit(&event, s.writer)
 		return
@@ -261,8 +264,6 @@ func (s *antigravityCompatStreamSession) emitOrBuffer(event apicompat.AnthropicS
 	}
 
 	s.meaningfulData = true
-	ms := int(time.Since(s.startTime).Milliseconds())
-	s.firstTokenMs = &ms
 	for i := range s.pendingEvents {
 		s.adapter.Emit(&s.pendingEvents[i], s.writer)
 	}

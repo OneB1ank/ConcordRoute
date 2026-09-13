@@ -132,6 +132,12 @@
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.tlsFingerprintRouters.title') }}</span>
                     </button>
+                    <button class="account-tools-menu-item" @click="openCodexAttestationCollector">
+                      <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
+                        <Icon name="shield" size="sm" />
+                      </span>
+                      <span class="flex-1 text-left">{{ t('admin.codexAttestationCollector.title') }}</span>
+                    </button>
 
                     <div class="my-2 border-t border-gray-100 dark:border-gray-700"></div>
                     <div class="px-2 py-2">
@@ -332,7 +338,7 @@
               :batched-usage="usageBatchByAccountId[String(row.id)] ?? null"
               :batched-usage-error="usageBatchErrorByAccountId[String(row.id)] ?? null"
               :batched-usage-loading="usageBatchLoadingByAccountId[String(row.id)] === true"
-              :request-batched-usage="isDesktopViewport ? queueBatchedUsage : null"
+              :request-batched-usage="queueBatchedUsage"
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
             />
@@ -476,6 +482,7 @@
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
     <TLSFingerprintRoutersModal :show="showTLSFingerprintRouters" @close="showTLSFingerprintRouters = false" />
+    <CodexAttestationCollectorModal :show="showCodexAttestationCollector" @close="showCodexAttestationCollector = false" />
     <TotpStepUpDialog :controller="accountExportStepUp" />
   </AppLayout>
 </template>
@@ -521,6 +528,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import TLSFingerprintRoutersModal from '@/components/admin/TLSFingerprintRoutersModal.vue'
+import CodexAttestationCollectorModal from '@/components/admin/CodexAttestationCollectorModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
 import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
@@ -599,6 +607,7 @@ const showInviteReset = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
 const showTLSFingerprintRouters = ref(false)
+const showCodexAttestationCollector = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -831,7 +840,6 @@ const flushQueuedUsageBatch = async () => {
 }
 
 const queueBatchedUsage = (account: Account, options?: { force?: boolean }) => {
-  if (!isDesktopViewport.value) return
   if (!accountSupportsBatchUsage(account)) return
 
   const force = options?.force === true
@@ -1300,7 +1308,8 @@ const isAnyModalOpen = computed(() => {
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
     showTLSFingerprintProfiles.value ||
-    showTLSFingerprintRouters.value
+    showTLSFingerprintRouters.value ||
+    showCodexAttestationCollector.value
   )
 })
 
@@ -1445,6 +1454,11 @@ const openTLSFingerprintProfiles = () => {
 const openTLSFingerprintRouters = () => {
   closeAccountToolsDropdown()
   showTLSFingerprintRouters.value = true
+}
+
+const openCodexAttestationCollector = () => {
+  closeAccountToolsDropdown()
+  showCodexAttestationCollector.value = true
 }
 
 const syncPendingListChanges = async () => {

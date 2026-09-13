@@ -150,6 +150,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
+	service.MarkTTFTStage(c, "request_body_read")
 
 	if len(body) == 0 {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
@@ -1291,14 +1292,23 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 			models = append(models, model)
 			continue
 		}
-		models = append(models, openai.Model{
+		model := openai.Model{
 			ID:          modelID,
 			Object:      "model",
 			Created:     1704067200,
 			OwnedBy:     "openai",
 			Type:        "model",
 			DisplayName: modelID,
-		})
+		}
+		// Preserve Codex context metadata for aliases or upstream IDs that are
+		// not part of the bundled display list. In particular, do not confuse
+		// the 272k billing threshold with the model's larger max window.
+		if metadata, ok := openai.ModelContextMetadataForID(modelID); ok {
+			model.ContextWindow = metadata.ContextWindow
+			model.MaxContextWindow = metadata.MaxContextWindow
+			model.EffectiveContextWindowPercent = metadata.EffectiveContextWindowPercent
+		}
+		models = append(models, model)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
