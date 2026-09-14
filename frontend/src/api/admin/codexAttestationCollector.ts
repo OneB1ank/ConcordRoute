@@ -26,12 +26,20 @@ export interface CodexAttestationCaptureRecord {
   thread_id?: string
   client_name?: string
   client_version?: string
+  jsonrpc_version?: string
+  capability_keys?: string[]
   request_attestation: boolean
   initialize_id?: string
+  frame_sha256?: string
   generate_request_id?: number
+  generate_response_id?: string
   status: string
   proof_length?: number
   proof_sha256?: string
+  handshake_protocol?: string
+  handshake_transport?: string
+  handshake_user_agent?: string
+  handshake_originator?: string
 }
 
 export async function status(): Promise<CodexAttestationCollectorStatus> {

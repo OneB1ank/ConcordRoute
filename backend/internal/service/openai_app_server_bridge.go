@@ -41,6 +41,7 @@ type codexAppServerBridge struct {
 	sessionID      string
 	threadID       string
 	collectorToken string
+	handshake      CodexAttestationHandshakeMetadata
 	conn           *coderws.Conn
 	registry       *codexAppServerBridgeRegistry
 	// boundAccountID prevents a single client proof channel from being reused
@@ -307,15 +308,21 @@ func (b *codexAppServerBridge) readLoop(ctx context.Context) error {
 // 首帧必须是 initialize，后续 attestation/generate 响应按 JSON-RPC id 投递给
 // 等待中的上游请求；普通 Responses/WS 数据不会混入此连接。
 func (s *OpenAIGatewayService) ServeCodexAppServerBridge(ctx context.Context, apiKeyID int64, conn *coderws.Conn, sessionID, threadID string, collectorTokens ...string) error {
+	collectorToken := ""
+	if len(collectorTokens) > 0 {
+		collectorToken = strings.TrimSpace(collectorTokens[0])
+	}
+	return s.serveCodexAppServerBridge(ctx, apiKeyID, conn, sessionID, threadID, CodexAttestationHandshakeMetadata{}, collectorToken)
+}
+
+// serveCodexAppServerBridge 是 HTTP handler 使用的传输感知实现。公开包装函数继续兼容
+// 无握手元数据的进程内调用方和测试。
+func (s *OpenAIGatewayService) serveCodexAppServerBridge(ctx context.Context, apiKeyID int64, conn *coderws.Conn, sessionID, threadID string, handshake CodexAttestationHandshakeMetadata, collectorToken string) error {
 	if s == nil || s.codexAppServerBridges == nil || apiKeyID <= 0 || conn == nil {
 		return ErrCodexAppServerBridgeUnavailable
 	}
 	if ctx == nil {
 		ctx = context.Background()
-	}
-	collectorToken := ""
-	if len(collectorTokens) > 0 {
-		collectorToken = strings.TrimSpace(collectorTokens[0])
 	}
 	bridge := &codexAppServerBridge{
 		apiKeyID:       apiKeyID,
@@ -323,6 +330,7 @@ func (s *OpenAIGatewayService) ServeCodexAppServerBridge(ctx context.Context, ap
 		sessionID:      strings.TrimSpace(sessionID),
 		threadID:       strings.TrimSpace(threadID),
 		collectorToken: collectorToken,
+		handshake:      normalizeCollectorHandshakeMetadata(handshake),
 		conn:           conn,
 		pending:        make(map[string]chan []byte),
 		closed:         make(chan struct{}),
@@ -361,7 +369,7 @@ func (s *OpenAIGatewayService) ServeCodexAppServerBridge(ctx context.Context, ap
 		key := liveattestation.SessionKey{AccountID: apiKeyID, ConnectionID: bridge.connectionID, SessionID: bridge.sessionID, ThreadID: bridge.threadID}
 		// initialize 阶段尚未选定 OAuth 账号，先记录能力与连接；业务请求
 		// 到达后会追加带真实账号 ID 的 generate 记录。
-		_ = s.codexAttestationCollector.RecordInitializeForAPIKey(collectorToken, apiKeyID, key, first)
+		_ = s.codexAttestationCollector.RecordInitializeForAPIKeyWithMetadata(collectorToken, apiKeyID, key, first, bridge.handshake)
 	}
 	// Register only after the first frame has been validated. A client that
 	// never sends initialize must not consume the per-API-key bridge quota.
@@ -511,7 +519,13 @@ func (s *OpenAIGatewayService) HandleCodexAppServerBridge(c *gin.Context, apiKey
 	defer func() { _ = conn.CloseNow() }()
 	sessionID, threadID := codexAppServerHeaderHints(c)
 	collectorToken := codexAppServerCollectorToken(c)
-	if err := s.ServeCodexAppServerBridge(c.Request.Context(), apiKeyID, conn, sessionID, threadID, collectorToken); err != nil {
+	handshake := CodexAttestationHandshakeMetadata{
+		HTTPProtocol: c.Request.Proto,
+		Transport:    "websocket",
+		UserAgent:    c.GetHeader("User-Agent"),
+		Originator:   c.GetHeader("originator"),
+	}
+	if err := s.serveCodexAppServerBridge(c.Request.Context(), apiKeyID, conn, sessionID, threadID, handshake, collectorToken); err != nil {
 		_ = conn.Close(coderws.StatusPolicyViolation, err.Error())
 	}
 }

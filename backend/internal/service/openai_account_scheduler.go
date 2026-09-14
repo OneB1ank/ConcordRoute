@@ -2228,17 +2228,22 @@ func openAIQuotaHeadroomFactor(account *Account, now time.Time) float64 {
 	if account == nil || len(account.Extra) == 0 || openAIQuotaHeadroomSnapshotStale(account.Extra, now) {
 		return openAIQuotaHeadroomNeutralFactor
 	}
+	if !codexQuotaWindowAvailable(account.Extra, "7d") {
+		return openAIQuotaHeadroomNeutralFactor
+	}
 	primaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_primary_used_percent", "codex_7d_used_percent")
 	if !ok || openAIQuotaWindowResetAny(account.Extra, now, "primary", "7d") {
 		return openAIQuotaHeadroomNeutralFactor
 	}
 
 	factor := 1 - clamp01(primaryUsedPercent/100)
-	if secondaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_secondary_used_percent", "codex_5h_used_percent"); ok &&
-		!openAIQuotaWindowResetAny(account.Extra, now, "secondary", "5h") {
-		secondaryRemaining := 1 - clamp01(secondaryUsedPercent/100)
-		if secondaryRemaining < openAIQuotaHeadroomSecondaryLowRemain {
-			factor *= openAIQuotaHeadroomNeutralFactor
+	if codexQuotaWindowAvailable(account.Extra, "5h") {
+		if secondaryUsedPercent, ok := resolveAccountExtraNumber(account.Extra, "codex_secondary_used_percent", "codex_5h_used_percent"); ok &&
+			!openAIQuotaWindowResetAny(account.Extra, now, "secondary", "5h") {
+			secondaryRemaining := 1 - clamp01(secondaryUsedPercent/100)
+			if secondaryRemaining < openAIQuotaHeadroomSecondaryLowRemain {
+				factor *= openAIQuotaHeadroomNeutralFactor
+			}
 		}
 	}
 	return factor

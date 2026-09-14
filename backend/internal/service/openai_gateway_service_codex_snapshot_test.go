@@ -104,6 +104,12 @@ func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 	if got := updates["codex_7d_reset_at"]; got != "2026-02-17T10:00:00Z" {
 		t.Fatalf("codex_7d_reset_at = %v, want %s", got, "2026-02-17T10:00:00Z")
 	}
+	if got := updates["codex_5h_available"]; got != true {
+		t.Fatalf("codex_5h_available = %v, want true", got)
+	}
+	if got := updates["codex_7d_available"]; got != true {
+		t.Fatalf("codex_7d_available = %v, want true", got)
+	}
 }
 
 // TestBuildCodexUsageExtraUpdates_FreshAccountUsedPercentNotInverted_Issue2994 固定 5h
@@ -221,5 +227,11 @@ func TestBuildCodexUsageExtraUpdates_WithoutNormalizedWindowFields(t *testing.T)
 	}
 	if _, ok := updates["codex_7d_reset_at"]; ok {
 		t.Fatalf("did not expect codex_7d_reset_at in updates: %v", updates["codex_7d_reset_at"])
+	}
+	if got := updates["codex_5h_available"]; got != false {
+		t.Fatalf("codex_5h_available = %v, want false", got)
+	}
+	if got := updates["codex_7d_available"]; got != true {
+		t.Fatalf("codex_7d_available = %v, want true", got)
 	}
 }

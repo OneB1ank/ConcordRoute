@@ -39,3 +39,15 @@ func TestDefaultModelsContainsGPT6Astra(t *testing.T) {
 	}
 	t.Fatal("expected gpt-6-astra in DefaultModels")
 }
+
+func TestModelContextMetadataForIDIncludesBundledAliases(t *testing.T) {
+	t.Parallel()
+
+	for _, modelID := range []string{"gpt-5.6", "gpt-5.6-sol", "GPT-5.6"} {
+		metadata, ok := ModelContextMetadataForID(modelID)
+		require.True(t, ok, "model %q should have bundled context metadata", modelID)
+		require.EqualValues(t, 272000, metadata.ContextWindow)
+		require.EqualValues(t, 872000, metadata.MaxContextWindow)
+		require.EqualValues(t, 95, metadata.EffectiveContextWindowPercent)
+	}
+}

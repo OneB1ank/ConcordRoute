@@ -721,6 +721,44 @@ func resolveAccountExtraBool(extra map[string]any, key string) bool {
 	return false
 }
 
+// codexQuotaWindowAvailable 区分上游明确缺失的窗口与早于存在性标记的旧快照。
+// 显式标记优先；标记缺失时，只要存在任一规范窗口字段就保持向后兼容。
+func codexQuotaWindowAvailable(extra map[string]any, window string) bool {
+	if len(extra) == 0 {
+		return false
+	}
+	availabilityKey := "codex_" + window + "_available"
+	if _, ok := extra[availabilityKey]; ok {
+		return resolveAccountExtraBool(extra, availabilityKey)
+	}
+	keys := []string{
+		"codex_" + window + "_used_percent",
+		"codex_" + window + "_reset_after_seconds",
+		"codex_" + window + "_reset_at",
+		"codex_" + window + "_window_minutes",
+	}
+	// 旧快照只有 primary/secondary 名称；缺少显式存在性标记时保留历史映射。
+	if window == "5h" {
+		keys = append(keys,
+			"codex_secondary_used_percent",
+			"codex_secondary_reset_after_seconds",
+			"codex_secondary_window_minutes",
+		)
+	} else if window == "7d" {
+		keys = append(keys,
+			"codex_primary_used_percent",
+			"codex_primary_reset_after_seconds",
+			"codex_primary_window_minutes",
+		)
+	}
+	for _, key := range keys {
+		if _, ok := extra[key]; ok && extra[key] != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveOpenAIQuotaAutoPauseThresholds(ctx context.Context, account *Account) (float64, float64) {
 	threshold5h, _ := resolveAccountExtraNumber(account.Extra, "auto_pause_5h_threshold")
 	threshold7d, _ := resolveAccountExtraNumber(account.Extra, "auto_pause_7d_threshold")
@@ -780,6 +818,9 @@ func resolveAccountExtraNumber(extra map[string]any, keys ...string) (float64, b
 // without this check an old used_percent would keep the account paused forever even
 // after the real window reset.
 func resolveOpenAIQuotaUtilization(extra map[string]any, window string, now time.Time) (float64, bool) {
+	if !codexQuotaWindowAvailable(extra, window) {
+		return 0, false
+	}
 	usedPercent := readOpenAIQuotaUsedPercent(extra, window)
 	if usedPercent <= 0 {
 		return 0, false
@@ -823,6 +864,9 @@ func openAICodexSnapshotStaleForPause(extra map[string]any, now time.Time) bool 
 // codex_usage_updated_at, mirroring AccountUsageService's window-progress logic.
 func openAIQuotaWindowReset(extra map[string]any, window string, now time.Time) bool {
 	if len(extra) == 0 {
+		return false
+	}
+	if !codexQuotaWindowAvailable(extra, window) {
 		return false
 	}
 	if resetAtRaw, ok := extra["codex_"+window+"_reset_at"]; ok {

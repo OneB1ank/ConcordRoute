@@ -212,10 +212,12 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"codex_5h_reset_after_seconds":                {},
 	"codex_5h_window_minutes":                     {},
 	"codex_5h_reset_at":                           {},
+	"codex_5h_available":                          {},
 	"codex_7d_used_percent":                       {},
 	"codex_7d_reset_after_seconds":                {},
 	"codex_7d_window_minutes":                     {},
 	"codex_7d_reset_at":                           {},
+	"codex_7d_available":                          {},
 	deprecatedUpstreamBillingProbeExtraKey:        {},
 	deprecatedUpstreamBillingProbeEnabledExtraKey: {},
 }

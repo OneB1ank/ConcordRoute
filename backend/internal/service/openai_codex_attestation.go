@@ -33,7 +33,7 @@ type CodexAttestationRequestContext struct {
 }
 
 // CodexAppServerAttestationAdapter 是 JSON-RPC app-server 与 Responses/WS
-// 请求之间的窄适配层。它只负责把客户端真实返回的 token 交给短 TTL
+// 请求之间的窄适配层。它只负责把客户端真实返回的 headerValue 交给短 TTL
 // 存储，不在 Linux 网关上生成或签名设备证明。
 type CodexAppServerAttestationAdapter struct {
 	service           *OpenAIGatewayService
@@ -132,7 +132,7 @@ func (a *CodexAppServerAttestationAdapter) BeginGenerate() ([]byte, uint64, erro
 	return a.service.BeginCodexAttestationGenerate(a.key)
 }
 
-// AcceptGenerateResponse 校验 JSON-RPC ID，并保存客户端返回的 opaque token。
+// AcceptGenerateResponse 校验 JSON-RPC ID，并保存客户端返回的 opaque headerValue。
 func (a *CodexAppServerAttestationAdapter) AcceptGenerateResponse(raw []byte) error {
 	if a == nil || a.service == nil {
 		return errors.New("codex attestation adapter is nil")
@@ -146,7 +146,7 @@ func (a *CodexAppServerAttestationAdapter) AcceptGenerateResponse(raw []byte) er
 }
 
 // GenerateForRequest performs the Codex just-in-time attestation exchange.
-// Successful responses produce s=0 with the client-owned opaque token. Transport
+// 成功响应使用客户端持有的不透明 headerValue 生成 s=0；传输层
 // and client failures are converted to the official s=1..4 envelopes instead of
 // synthesizing a token. The resulting header can be attached to exactly one
 // upstream request by the caller.
@@ -301,7 +301,7 @@ func (s *OpenAIGatewayService) BeginCodexAttestationGenerateWithTimeout(key live
 	return s.codexAttestationStore.BeginGenerateWithTimeout(key, timeout)
 }
 
-// AcceptCodexAttestationGenerateResponse 接收客户端响应并保存其 opaque token。
+// AcceptCodexAttestationGenerateResponse 接收客户端响应并保存其 opaque headerValue。
 func (s *OpenAIGatewayService) AcceptCodexAttestationGenerateResponse(key liveattestation.SessionKey, raw []byte) error {
 	_, err := s.AcceptCodexAttestationGenerateResponseWithHeader(key, raw)
 	return err

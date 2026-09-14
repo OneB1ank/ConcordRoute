@@ -299,7 +299,7 @@ func TestPrepareLiveAttestationForRequestUsesNegotiatedClientEnvelope(t *testing
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.windows-client"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.windows-client"}}`)))
 	ctx := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
 		Key: key, Envelope: `{"v":1,"s":0,"t":"v1.windows-client"}`,
 	})

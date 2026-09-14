@@ -100,8 +100,11 @@ func buildCodexQuotaOverdraftUsageState(account *Account, usage *UsageInfo, now 
 	}
 	if base == nil {
 		used := 0.0
-		for _, key := range []string{"codex_5h_used_percent", "codex_7d_used_percent"} {
-			if v := parseExtraFloat64(account.Extra[key]); v > used {
+		for _, window := range []string{"5h", "7d"} {
+			if !codexQuotaWindowAvailable(account.Extra, window) {
+				continue
+			}
+			if v := parseExtraFloat64(account.Extra["codex_"+window+"_used_percent"]); v > used {
 				used = v
 			}
 		}
@@ -260,6 +263,10 @@ func codexQuotaOverdraftInjectionEligible(account *Account, now time.Time) bool 
 		}
 	}
 	windowEligible := func(usedKey, resetKey string) bool {
+		window := strings.TrimSuffix(strings.TrimPrefix(usedKey, "codex_"), "_used_percent")
+		if !codexQuotaWindowAvailable(account.Extra, window) {
+			return false
+		}
 		if parseExtraFloat64(account.Extra[usedKey]) < codexQuotaOverdraftPrearmPercent {
 			return false
 		}

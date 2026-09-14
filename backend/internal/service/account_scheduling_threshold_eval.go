@@ -225,6 +225,9 @@ func openAIThresholdCandidate(extra map[string]any, window string, now time.Time
 	if len(extra) == 0 {
 		return nil
 	}
+	if !codexQuotaWindowAvailable(extra, window) {
+		return nil
+	}
 
 	var (
 		usedPercentKey string

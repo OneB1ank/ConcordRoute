@@ -964,6 +964,9 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 
 	// 归一化到 5h/7d 规范字段
 	if normalized := snapshot.Normalize(); normalized != nil {
+		// 持久化显式存在性，避免新的仅周窗口响应让旧 5 小时配额继续在界面或调度器生效。
+		updates["codex_5h_available"] = normalized.Has5hWindow
+		updates["codex_7d_available"] = normalized.Has7dWindow
 		if normalized.Used5hPercent != nil {
 			updates["codex_5h_used_percent"] = *normalized.Used5hPercent
 		}

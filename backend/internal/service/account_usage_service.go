@@ -165,9 +165,10 @@ type WindowStats struct {
 
 // UsageProgress 使用量进度
 type UsageProgress struct {
-	Utilization         float64      `json:"utilization"`       // 使用率百分比 (0-100+，100表示100%)
-	ResetsAt            *time.Time   `json:"resets_at"`         // 重置时间
-	RemainingSeconds    int          `json:"remaining_seconds"` // 距重置剩余秒数
+	Utilization         float64      `json:"utilization"`          // 使用率百分比 (0-100+，100表示100%)
+	ResetsAt            *time.Time   `json:"resets_at"`            // 重置时间
+	RemainingSeconds    int          `json:"remaining_seconds"`    // 距重置剩余秒数
+	LocalOnly           bool         `json:"local_only,omitempty"` // 仅本地账务统计，无对应上游配额窗口
 	OverdraftActive     bool         `json:"overdraft_active,omitempty"`
 	OverdraftTerminated bool         `json:"overdraft_terminated,omitempty"`
 	OverdraftStats      *WindowStats `json:"overdraft_stats,omitempty"`
@@ -1000,17 +1001,35 @@ func (s *AccountUsageService) addOpenAIWindowStats(ctx context.Context, account 
 
 	if stats, err := s.getAccountWindowStats(ctx, account.ID, fiveHourStart, statsEnd); err == nil {
 		if usage.FiveHour == nil {
-			usage.FiveHour = &UsageProgress{Utilization: 0}
+			// 只有周窗口的 Codex 账号仍可展示本地最近 5 小时账务，
+			// 但不能把它渲染成上游并不存在的 5 小时配额窗口。
+			if accountStatsHasUsage(stats) {
+				usage.FiveHour = &UsageProgress{LocalOnly: true}
+			}
 		}
-		usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
+		if usage.FiveHour != nil {
+			usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
+		}
 	}
 
 	if stats, err := s.getAccountWindowStats(ctx, account.ID, sevenDayStart, statsEnd); err == nil {
 		if usage.SevenDay == nil {
-			usage.SevenDay = &UsageProgress{Utilization: 0}
+			// 对完全没有上游 7 天配额元数据的账号同样保留此区分。
+			if accountStatsHasUsage(stats) {
+				usage.SevenDay = &UsageProgress{LocalOnly: true}
+			}
 		}
-		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
+		if usage.SevenDay != nil {
+			usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
+		}
 	}
+}
+
+func accountStatsHasUsage(stats *usagestats.AccountStats) bool {
+	if stats == nil {
+		return false
+	}
+	return stats.Requests != 0 || stats.Tokens != 0 || stats.Cost != 0 || stats.StandardCost != 0 || stats.UserCost != 0
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
@@ -2211,6 +2230,9 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 	if len(extra) == 0 {
 		return nil
 	}
+	if !codexQuotaWindowAvailable(extra, window) {
+		return nil
+	}
 
 	var (
 		usedPercentKey string
@@ -2296,15 +2318,11 @@ func codexWindowStatsStart(progress *UsageProgress, fallbackWindow time.Duration
 	return now.Add(-fallbackWindow)
 }
 
-// codexWindowStatsStarts computes both local aggregation starts from the same
-// timestamp and enforces the nesting invariant: the 7d window must contain the
-// 5h window, even when independently sampled upstream reset metadata is skewed.
+// codexWindowStatsStarts 根据对应上游窗口独立计算本地聚合起点。固定周窗口可能在
+// 滚动 5 小时窗口之后开始，强制周窗口包含 5 小时窗口会在周重置后重复统计用量。
 func codexWindowStatsStarts(fiveHour, sevenDay *UsageProgress, now time.Time) (time.Time, time.Time) {
 	fiveHourStart := codexWindowStatsStart(fiveHour, 5*time.Hour, now)
 	sevenDayStart := codexWindowStatsStart(sevenDay, 7*24*time.Hour, now)
-	if sevenDayStart.After(fiveHourStart) {
-		sevenDayStart = fiveHourStart
-	}
 	return fiveHourStart, sevenDayStart
 }
 

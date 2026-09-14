@@ -138,6 +138,10 @@ type NormalizedCodexLimits struct {
 	Used7dPercent   *float64
 	Reset7dSeconds  *int
 	Window7dMinutes *int
+	// Has*Window 与上面的可选值分开记录窗口存在性。较新的上游快照可能省略旧快照中
+	// 存在的窗口，调用方依靠这些标记忽略持久化的陈旧字段。
+	Has5hWindow bool
+	Has7dWindow bool
 }
 
 // Normalize converts primary/secondary fields to canonical 5h/7d fields.
@@ -149,6 +153,8 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 	}
 
 	result := &NormalizedCodexLimits{}
+	primaryPresent := s.PrimaryUsedPercent != nil || s.PrimaryResetAfterSeconds != nil || s.PrimaryWindowMinutes != nil
+	secondaryPresent := s.SecondaryUsedPercent != nil || s.SecondaryResetAfterSeconds != nil || s.SecondaryWindowMinutes != nil
 
 	primaryMins := 0
 	secondaryMins := 0
@@ -198,6 +204,8 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 
 	// Assign values
 	if use5hFromPrimary {
+		result.Has5hWindow = primaryPresent
+		result.Has7dWindow = secondaryPresent
 		result.Used5hPercent = s.PrimaryUsedPercent
 		result.Reset5hSeconds = s.PrimaryResetAfterSeconds
 		result.Window5hMinutes = s.PrimaryWindowMinutes
@@ -205,6 +213,8 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 		result.Reset7dSeconds = s.SecondaryResetAfterSeconds
 		result.Window7dMinutes = s.SecondaryWindowMinutes
 	} else if use7dFromPrimary {
+		result.Has7dWindow = primaryPresent
+		result.Has5hWindow = secondaryPresent
 		result.Used7dPercent = s.PrimaryUsedPercent
 		result.Reset7dSeconds = s.PrimaryResetAfterSeconds
 		result.Window7dMinutes = s.PrimaryWindowMinutes

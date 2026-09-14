@@ -923,6 +923,10 @@ func openAIStreamDataStartsVisibleOutput(data, eventType string) bool {
 	return openai.StreamDataStartsVisibleOutput(data, eventType)
 }
 
+func openAIStreamDataStartsVisibleOutputBytes(data []byte, eventType string) bool {
+	return openai.StreamDataStartsVisibleOutputBytes(data, eventType)
+}
+
 // openAIStreamFailedEventErrorCode 提取流内 failed 事件的错误码（小写），
 // 兼容 response.failed 的嵌套形态与裸 error 形态。
 func openAIStreamFailedEventErrorCode(payload []byte) string {
@@ -1363,6 +1367,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
+	firstVisibleOutputPendingFlush := false
 	responseID := ""
 	clientDisconnected := false
 	sawDone := false
@@ -1380,11 +1385,26 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	// flushPending 表示已写入但未到 SSE 空行边界的脏状态；defer 兜底函数退出前的残留，断连后不再 Flush。
 	flushPending := false
 	flushPendingOutput := func() {
-		if clientDisconnected || !flushPending {
+		if !flushPending {
+			return
+		}
+		if clientDisconnected {
+			// 断连前已写入可见事件。即使客户端未观察到最终 flush，仍保留样本供计费和调度使用。
+			if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+				MarkTTFTStage(c, "first_visible_output")
+				recordFirstTokenMs(&firstTokenMs, startTime)
+				firstVisibleOutputPendingFlush = false
+			}
+			flushPending = false
 			return
 		}
 		flusher.Flush()
 		MarkTTFTStage(c, "first_downstream_flush")
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			MarkTTFTStage(c, "first_visible_output")
+			recordFirstTokenMs(&firstTokenMs, startTime)
+			firstVisibleOutputPendingFlush = false
+		}
 		flushPending = false
 	}
 	defer flushPendingOutput()
@@ -1603,9 +1623,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				openAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
-			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(trimmedData, eventType) {
-				MarkTTFTStage(c, "first_visible_output")
-				recordFirstTokenMs(&firstTokenMs, startTime)
+			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType) {
+				firstVisibleOutputPendingFlush = true
 			}
 			if eventType != "response.failed" {
 				s.parseSSEUsageBytes(dataBytes, usage)
@@ -1625,6 +1644,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+				flushPendingOutput()
 			} else {
 				clientOutputStarted = true
 				flushPending = true

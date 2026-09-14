@@ -186,6 +186,25 @@ describe('UsageProgressBar', () => {
     expect(wrapper.get('[data-testid="overdraft-stats"]').text()).toContain('U $12.34')
   })
 
+  it('statsOnly 仅显示本地统计，不伪造配额百分比和重置时间', () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        resetsAt: null,
+        statsOnly: true,
+        color: 'indigo',
+        windowStats: { requests: 3, tokens: 336800, cost: 0.32, user_cost: 0.32 }
+      }
+    })
+
+    expect(wrapper.text()).toContain('5h')
+    expect(wrapper.text()).toContain('3 req')
+    expect(wrapper.text()).toContain('336.8K')
+    expect(wrapper.text()).not.toContain('0%')
+    expect(wrapper.find('.h-1\\.5').exists()).toBe(false)
+  })
+
   it('宽标签模式为 Credits 预留固定空间，避免与进度条重叠', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {

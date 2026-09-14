@@ -1123,7 +1123,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				terminalEventCount++
 			}
 			// 与 HTTP 共用首内容判断，不改变 WS 的事件转发和重试边界。
-			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(string(upstreamMessage), eventType) {
+			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(upstreamMessage, eventType) {
 				recordFirstTokenMs(&firstTokenMs, turnStart)
 			}
 			if openAIWSEventShouldParseUsage(eventType) {

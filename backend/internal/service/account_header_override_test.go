@@ -76,7 +76,7 @@ func TestGetHeaderOverrides(t *testing.T) {
 	acc := headerOverrideTestAccount(PlatformOpenAI, AccountTypeAPIKey, map[string]any{
 		credKeyHeaderOverrideEnabled: true,
 		credKeyHeaderOverrides: map[string]any{
-			"User-Agent":    "my-agent/1.0",  // 大写 key 归一化为小写
+			"User-Agent":    "my-agent/1.0",  // OpenAI managed identity 不生效
 			" X-App ":       "cli",           // 名称去空白
 			"x-empty":       "",              // 空 value（模板占位）跳过
 			"authorization": "Bearer leaked", // 禁止覆写的头跳过
@@ -86,10 +86,16 @@ func TestGetHeaderOverrides(t *testing.T) {
 	})
 	overrides := acc.GetHeaderOverrides()
 	require.Equal(t, map[string]string{
-		"user-agent": "my-agent/1.0",
-		"x-app":      "cli",
-		"x-padded":   "padded",
+		"x-app":    "cli",
+		"x-padded": "padded",
 	}, overrides)
+
+	// 直接注入的 map[string]string 也必须遵循相同的 OpenAI managed identity 过滤。
+	legacyMap := headerOverrideTestAccount(PlatformOpenAI, AccountTypeAPIKey, map[string]any{
+		credKeyHeaderOverrideEnabled: true,
+		credKeyHeaderOverrides:       map[string]string{"User-Agent": "legacy-agent", "x-custom": "ok"},
+	})
+	require.Equal(t, map[string]string{"x-custom": "ok"}, legacyMap.GetHeaderOverrides())
 
 	// 未启用时返回 nil
 	disabled := headerOverrideTestAccount(PlatformOpenAI, AccountTypeAPIKey, map[string]any{
@@ -113,6 +119,9 @@ func TestGetHeaderOverrides(t *testing.T) {
 			"sec-websocket-key":        "forged",
 			"content-type":             "application/json", // 名单扩充前落库的数据也要被拦截
 			"x-claude-code-session-id": "pinned-session",
+			"User-Agent":               "legacy-override",
+			"Originator":               "legacy-originator",
+			"Version":                  "legacy-version",
 			"x-ok":                     "ok",
 		},
 	})
@@ -137,7 +146,7 @@ func TestApplyHeaderOverrides(t *testing.T) {
 
 	acc.ApplyHeaderOverrides(h)
 
-	// user-agent 覆盖且只有一个值（已知头恢复 wire casing）
+	// 非 OpenAI 平台继续保留既有的 User-Agent 覆写行为。
 	require.Equal(t, []string{"override-agent/2.0"}, h["User-Agent"])
 	// anthropic-beta：非 canonical 旧值被清除，写入 wire casing（小写）
 	require.Equal(t, []string{"custom-beta-1"}, h["anthropic-beta"])
@@ -156,6 +165,31 @@ func TestApplyHeaderOverrides(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, count)
+}
+
+func TestApplyHeaderOverridesOpenAIManagedIdentity(t *testing.T) {
+	acc := headerOverrideTestAccount(PlatformOpenAI, AccountTypeAPIKey, map[string]any{
+		credKeyHeaderOverrideEnabled: true,
+		credKeyHeaderOverrides: map[string]any{
+			"User-Agent":    "forged-agent/1.0",
+			"Originator":    "forged-originator",
+			"Version":       "9.9.9",
+			"codex_version": "9.9.9",
+			"x-custom":      "allowed",
+		},
+	})
+	h := http.Header{}
+	h.Set("User-Agent", "codex-tui/0.153.4")
+	h.Set("Originator", "codex-tui")
+	h.Set("Version", "0.153.4")
+	acc.ApplyHeaderOverrides(h)
+
+	require.Equal(t, "codex-tui/0.153.4", h.Get("User-Agent"))
+	require.Equal(t, "codex-tui", h.Get("Originator"))
+	require.Equal(t, "0.153.4", h.Get("Version"))
+	require.Empty(t, h.Get("codex_version"))
+	// 未知覆写项直接使用线上小写键名，因此检查原始 map，避免 Header.Get 的规范化查找影响断言。
+	require.Equal(t, "allowed", getHeaderRaw(h, "x-custom"))
 }
 
 func TestApplyHeaderOverridesNoOpPaths(t *testing.T) {
@@ -283,6 +317,7 @@ func TestNormalizeHeaderOverrideCredentials(t *testing.T) {
 			"conversation_id", "x-codex-turn-state", "chatgpt-account-id",
 			"Content-Type", "Cookie", "x-goog-api-key",
 			"X-Claude-Code-Session-Id", "x-client-request-id",
+			"Originator", "Version", "codex_version",
 		} {
 			err := NormalizeHeaderOverrideCredentials(map[string]any{
 				credKeyHeaderOverrides: map[string]any{name: "v"},

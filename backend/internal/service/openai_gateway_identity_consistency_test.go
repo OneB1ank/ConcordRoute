@@ -52,7 +52,7 @@ func TestOpenAIGatewayCodexIdentityTupleAcrossOutboundBuilders(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-envelope"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-envelope"}}`)))
 	attestedCtx := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
 		Key: key, Envelope: `{"v":1,"s":0,"t":"v1.client-envelope"}`,
 	})

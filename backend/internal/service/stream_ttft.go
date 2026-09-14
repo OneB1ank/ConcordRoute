@@ -97,7 +97,7 @@ func geminiResponseParts(response map[string]any) []map[string]any {
 }
 
 func openAIImageStreamDataStartsVisibleOutput(data []byte) bool {
-	if openAIStreamDataStartsVisibleOutput(string(data), "") {
+	if openAIStreamDataStartsVisibleOutputBytes(data, "") {
 		return true
 	}
 	if len(data) == 0 {

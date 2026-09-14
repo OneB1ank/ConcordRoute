@@ -111,6 +111,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	var firstTokenMs *int
+	// SSE 载荷只有在事件边界完成 flush 后才对客户端可见。待确认标记与 firstTokenMs 分离，
+	// 使持久化 TTFT 表示下游真实可见的写入时刻。
+	firstVisibleOutputPendingFlush := false
 	firstSSEEventObserved := false
 	firstOutputProgressObserved := false
 	bufferedWriter := bufio.NewWriterSize(w, 4*1024)
@@ -147,6 +150,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		flusher.Flush()
 		MarkTTFTStage(c, "first_downstream_flush")
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			MarkTTFTStage(c, "first_visible_output")
+			recordFirstTokenMs(&firstTokenMs, startTime)
+			firstVisibleOutputPendingFlush = false
+		}
 		return nil
 	}
 
@@ -264,12 +272,21 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			_ = resp.Body.Close()
 			return
 		}
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			// 可见事件已写入但客户端在 SSE 空行 flush 前断连时，仍保留该样本。
+			MarkTTFTStage(c, "first_visible_output")
+			recordFirstTokenMs(&firstTokenMs, startTime)
+			firstVisibleOutputPendingFlush = false
+		}
 		clientDisconnected = true
 		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 	}
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
 		completedVisibleEvent := eventStartsVisibleOutput
+		if completedVisibleEvent && firstTokenMs == nil {
+			firstVisibleOutputPendingFlush = true
+		}
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
@@ -290,10 +307,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			firstOutputScanGuard.Store(false)
 			firstOutputProgressObserved = true
 			stopFirstOutputTimer()
-		}
-		if completedVisibleEvent && firstTokenMs == nil {
-			MarkTTFTStage(c, "first_visible_output")
-			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
 		eventStartsClientOutput = false
 		eventStartsVisibleOutput = false
@@ -624,7 +637,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
-			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
+			startsVisibleOutput := openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType)
 			if guardFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput
@@ -660,10 +673,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 
-			// Record first token time
+			// 事件边界 flush 完成后再记录首字，使指标与下游客户端实际可见时间一致。
 			if !guardFirstOutput && firstTokenMs == nil && startsVisibleOutput {
-				MarkTTFTStage(c, "first_visible_output")
-				recordFirstTokenMs(&firstTokenMs, startTime)
+				firstVisibleOutputPendingFlush = true
 				stopFirstOutputTimer()
 			}
 			if eventType != "response.failed" {

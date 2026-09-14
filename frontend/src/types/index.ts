@@ -1378,6 +1378,7 @@ export interface UsageProgress {
   utilization: number // Percentage (0-100+, 100 = 100%)
   resets_at: string | null
   remaining_seconds: number
+  local_only?: boolean // Local accounting window without an upstream quota
   overdraft_active?: boolean
   overdraft_terminated?: boolean
   overdraft_stats?: WindowStats | null
@@ -1563,10 +1564,12 @@ export interface CodexUsageSnapshot {
   codex_5h_reset_after_seconds?: number // Seconds until 5h window reset
   codex_5h_reset_at?: string // 5-hour window absolute reset time (RFC3339)
   codex_5h_window_minutes?: number // 5h window in minutes (should be ~300)
+  codex_5h_available?: boolean // Whether the upstream exposes a 5-hour quota window
   codex_7d_used_percent?: number // 7-day window usage percentage
   codex_7d_reset_after_seconds?: number // Seconds until 7d window reset
   codex_7d_reset_at?: string // 7-day window absolute reset time (RFC3339)
   codex_7d_window_minutes?: number // 7d window in minutes (should be ~10080)
+  codex_7d_available?: boolean // Whether the upstream exposes a 7-day quota window
 
   codex_usage_updated_at?: string // Last update timestamp
 }

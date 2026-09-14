@@ -267,6 +267,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	var usage OpenAIUsage
 	var firstTokenMs *int
+	firstVisibleOutputPendingFlush := false
 	firstSSEEventObserved := false
 	clientDisconnected := false
 	clientOutputStarted := false
@@ -305,6 +306,18 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			)
 		}
 	}
+	flushDownstream := func() {
+		if clientDisconnected || !clientOutputStarted {
+			return
+		}
+		c.Writer.Flush()
+		MarkTTFTStage(c, "first_downstream_flush")
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			MarkTTFTStage(c, "first_visible_output")
+			recordFirstTokenMs(&firstTokenMs, startTime)
+			firstVisibleOutputPendingFlush = false
+		}
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -321,24 +334,17 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 				streamAccumulator.ObservePayload(payload)
 				if firstTokenMs == nil && openAIChatStreamHasVisibleOutput(payload) {
-					MarkTTFTStage(c, "first_visible_output")
-					recordFirstTokenMs(&firstTokenMs, startTime)
+					firstVisibleOutputPendingFlush = true
 				}
 			}
 		}
 
 		writeLine(line)
 		if line == "" {
-			if !clientDisconnected && clientOutputStarted {
-				c.Writer.Flush()
-				MarkTTFTStage(c, "first_downstream_flush")
-			}
+			flushDownstream()
 			continue
 		}
-		if !clientDisconnected && clientOutputStarted {
-			c.Writer.Flush()
-			MarkTTFTStage(c, "first_downstream_flush")
-		}
+		flushDownstream()
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -366,6 +372,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			if !clientDisconnected {
 				c.Writer.Flush()
+				MarkTTFTStage(c, "first_downstream_flush")
+				if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+					MarkTTFTStage(c, "first_visible_output")
+					recordFirstTokenMs(&firstTokenMs, startTime)
+					firstVisibleOutputPendingFlush = false
+				}
 				clientOutputStarted = true
 			}
 		}

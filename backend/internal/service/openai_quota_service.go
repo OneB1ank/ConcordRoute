@@ -624,6 +624,9 @@ func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.
 	}
 
 	updates := make(map[string]any)
+	// 持久化显式存在性，使仅周窗口响应即使保留旧 JSONB 字段也能清除有效的 5 小时配额。
+	updates["codex_5h_available"] = normalized.Has5hWindow
+	updates["codex_7d_available"] = normalized.Has7dWindow
 	if normalized.Used5hPercent != nil {
 		updates["codex_5h_used_percent"] = *normalized.Used5hPercent
 	}

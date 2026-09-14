@@ -21,7 +21,7 @@ func TestAppServerAttestationStoreNegotiatesAndBindsToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, request)
 	require.NotZero(t, requestID)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`)))
 
 	header, ok := store.HeaderForRequest(key)
 	require.True(t, ok)
@@ -40,7 +40,7 @@ func TestAppServerAttestationStoreRejectsCrossAccountAndUnnegotiatedUse(t *testi
 	require.NoError(t, err)
 
 	other := SessionKey{AccountID: 8, ConnectionID: "conn-a"}
-	err = store.AcceptGenerateResponse(other, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(other, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`))
 	require.ErrorIs(t, err, ErrAttestationRequestExpired)
 	require.False(t, func() bool { _, ok := store.HeaderForRequest(other); return ok }())
 }
@@ -56,7 +56,7 @@ func TestAppServerAttestationStoreExpiresPendingRequests(t *testing.T) {
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
 	now = now.Add(2 * time.Millisecond)
-	err = store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`))
 	require.ErrorIs(t, err, ErrAttestationRequestExpired)
 }
 
@@ -71,7 +71,7 @@ func TestAppServerAttestationStoreTreatsExactPendingDeadlineAsExpired(t *testing
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
 	now = now.Add(time.Millisecond)
-	err = store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"headerValue":"v1.client-token"}}`))
 	require.ErrorIs(t, err, ErrAttestationRequestExpired)
 }
 
@@ -82,7 +82,7 @@ func TestAppServerAttestationStoreRejectsNonIntegerResponseID(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	err = store.AcceptGenerateResponse(key, []byte(`{"id":1.0,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(key, []byte(`{"id":1.0,"result":{"headerValue":"v1.client-token"}}`))
 	require.Error(t, err)
 }
 
@@ -93,10 +93,10 @@ func TestAppServerAttestationStoreRejectsMismatchedResponseIDWithoutTreatingItAs
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	err = store.AcceptGenerateResponse(key, []byte(`{"id":999,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(key, []byte(`{"id":999,"result":{"headerValue":"v1.client-token"}}`))
 	require.ErrorIs(t, err, ErrAttestationResponseIDMismatch)
 	// The pending request remains available for the matching response.
-	err = store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"headerValue":"v1.client-token"}}`))
 	require.NoError(t, err)
 }
 
@@ -128,7 +128,7 @@ func TestAppServerAttestationStoreRejectsInvalidIDOnClientErrorResponse(t *testi
 	require.Error(t, err)
 	// The valid pending request is still available after rejecting the invalid
 	// response frame and can be completed by the matching response.
-	err = store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"token":"v1.client-token"}}`))
+	err = store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"headerValue":"v1.client-token"}}`))
 	require.NoError(t, err)
 }
 
@@ -204,7 +204,7 @@ func TestAppServerAttestationStoreCustomPendingTimeout(t *testing.T) {
 	_, _, err = store.BeginGenerateWithTimeout(key, 500*time.Millisecond)
 	require.NoError(t, err)
 	now = now.Add(150 * time.Millisecond)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"token":"v1.remote-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"headerValue":"v1.remote-token"}}`)))
 	header, ok := store.HeaderForRequest(key)
 	require.True(t, ok)
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.remote-token"}`, header)
@@ -217,7 +217,7 @@ func TestAppServerAttestationStoreReturnsCommittedEnvelopeAtomically(t *testing.
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	envelope, err := store.AcceptGenerateResponseWithHeader(key, []byte(`{"id":1,"result":{"token":"opaque-token"}}`))
+	envelope, err := store.AcceptGenerateResponseWithHeader(key, []byte(`{"id":1,"result":{"headerValue":"opaque-token"}}`))
 	require.NoError(t, err)
 	require.Equal(t, `{"v":1,"s":0,"t":"opaque-token"}`, envelope)
 }
@@ -229,7 +229,7 @@ func TestAppServerAttestationStoreEscapesOpaqueTokenAsValidJSON(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	envelope, err := store.AcceptGenerateResponseWithHeader(key, []byte(`{"id":1,"result":{"token":"opaque\\\"token\\nline"}}`))
+	envelope, err := store.AcceptGenerateResponseWithHeader(key, []byte(`{"id":1,"result":{"headerValue":"opaque\\\"token\\nline"}}`))
 	require.NoError(t, err)
 	require.Equal(t, `{"v":1,"s":0,"t":"opaque\\\"token\\nline"}`, envelope)
 }

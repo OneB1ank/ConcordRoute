@@ -30,7 +30,9 @@ const (
 //   - accept-encoding：强制压缩会破坏网关对上游流式响应（SSE/usage）的解析；
 //   - sec-websocket-*：WebSocket 握手头由拨号器管理（OpenAI WS 模式）；
 //   - session_id/x-claude-code-session-id/x-grok-conv-id 等：逐请求会话隔离头，
-//     固定值会造成会话串扰。
+//     固定值会造成会话串扰；
+//   - OpenAI/Codex 的 User-Agent/Originator/Version：由选定的账号、路由或全局
+//     profile 统一生成，禁止通用 override 拆分这一 managed identity 元组。
 var headerOverrideBlockedNames = map[string]struct{}{
 	"host":                     {},
 	"content-length":           {},
@@ -49,6 +51,9 @@ var headerOverrideBlockedNames = map[string]struct{}{
 	"x-goog-api-key":           {},
 	"cookie":                   {},
 	"accept-encoding":          {},
+	"originator":               {},
+	"version":                  {},
+	"codex_version":            {},
 	"sec-websocket-key":        {},
 	"sec-websocket-version":    {},
 	"sec-websocket-extensions": {},
@@ -67,6 +72,15 @@ var headerOverrideBlockedNames = map[string]struct{}{
 func isHeaderOverrideBlockedName(lowerName string) bool {
 	_, blocked := headerOverrideBlockedNames[lowerName]
 	return blocked
+}
+
+func isManagedCodexIdentityOverrideName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "user-agent", "originator", "version", "codex_version":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsHeaderOverrideEligible 报告账号类型是否支持请求头覆写。
@@ -107,7 +121,11 @@ func (a *Account) GetHeaderOverrides() map[string]string {
 	rawMapping, rawIsAnyMap := a.Credentials[credKeyHeaderOverrides].(map[string]any)
 	if !rawIsAnyMap {
 		// 非 JSON 反序列化产物（如直接注入的 map[string]string）：直接解析，不缓存
-		return resolveHeaderOverrides(stringMappingFromRaw(a.Credentials[credKeyHeaderOverrides]))
+		overrides := resolveHeaderOverrides(stringMappingFromRaw(a.Credentials[credKeyHeaderOverrides]))
+		if a.Platform == PlatformOpenAI {
+			delete(overrides, "user-agent")
+		}
+		return overrides
 	}
 
 	credentialsPtr := mapPtr(a.Credentials)
@@ -128,6 +146,9 @@ func (a *Account) GetHeaderOverrides() map[string]string {
 	}
 
 	overrides := resolveHeaderOverrides(stringMappingFromRaw(rawMapping))
+	if a.Platform == PlatformOpenAI {
+		delete(overrides, "user-agent")
+	}
 	if !rawSigReady {
 		rawSig = modelMappingSignature(rawMapping)
 	}
@@ -184,6 +205,9 @@ func (a *Account) ApplyHeaderOverrides(h http.Header) {
 	// 全量 EqualFold 扫描兜底删除任意 casing 的既有键：透传链路可能保留客户端
 	// 原始 casing，非 canonical/wire casing 的键 deleteHeaderAllForms 覆盖不到。
 	for name, value := range overrides {
+		if a.Platform == PlatformOpenAI && isManagedCodexIdentityOverrideName(name) {
+			continue
+		}
 		for existing := range h {
 			if strings.EqualFold(existing, name) {
 				delete(h, existing)

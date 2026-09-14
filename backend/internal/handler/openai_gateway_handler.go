@@ -515,6 +515,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		legacyCompact,
 		requestPlatform,
 	)
+	service.MarkTTFTStage(c, "account_selection_started")
 
 	for {
 		// 流式 Forward 会主动分离上游请求，以便客户端断开后继续回收用量；每次账号尝试前
@@ -592,6 +593,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		account := selection.Account
+		service.MarkTTFTStage(c, "account_selected")
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -1089,6 +1091,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	service.MarkTTFTStage(c, "account_selection_started")
 
 	for {
 		if failoverClientGone(c) {
@@ -1150,6 +1153,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		service.MarkTTFTStage(c, "account_selected")
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
@@ -1473,12 +1477,14 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	reqLog *zap.Logger,
 ) (func(), bool) {
 	ctx := c.Request.Context()
+	service.MarkTTFTStage(c, "user_slot_wait_started")
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, reqStream, streamStarted)
 	if err != nil {
 		reqLog.Warn("openai.user_slot_acquire_failed", zap.Error(err))
 		h.handleConcurrencyError(c, err, "user", *streamStarted)
 		return nil, false
 	}
+	service.MarkTTFTStage(c, "user_slot_acquired")
 	return wrapReleaseOnDone(ctx, userReleaseFunc), true
 }
 
@@ -1501,6 +1507,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	ctx := c.Request.Context()
 	account := selection.Account
 	if selection.Acquired {
+		service.MarkTTFTStage(c, "account_slot_acquired")
 		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), true
 	}
 	if selection.WaitPlan == nil {
@@ -1509,6 +1516,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		return nil, false
 	}
 
+	service.MarkTTFTStage(c, "account_slot_wait_started")
 	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
 		ctx,
 		account.ID,
@@ -1520,6 +1528,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		return nil, false
 	}
 	if fastAcquired {
+		service.MarkTTFTStage(c, "account_slot_acquired")
 		if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
@@ -1562,6 +1571,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	}
 
 	// Slot acquired: no longer waiting in queue.
+	service.MarkTTFTStage(c, "account_slot_acquired")
 	releaseWait()
 	if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))

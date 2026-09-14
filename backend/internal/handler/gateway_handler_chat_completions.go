@@ -117,12 +117,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
 	// 1. Acquire user concurrency slot
+	service.MarkTTFTStage(c, "user_slot_wait_started")
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
 	if err != nil {
 		reqLog.Warn("gateway.cc.user_slot_acquire_failed", zap.Error(err))
 		h.handleConcurrencyError(c, err, "user", streamStarted)
 		return
 	}
+	service.MarkTTFTStage(c, "user_slot_acquired")
 	userReleaseFunc = wrapReleaseOnDone(c.Request.Context(), userReleaseFunc)
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
@@ -175,6 +177,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	if groupPlatform == service.PlatformGemini {
 		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
 	}
+	service.MarkTTFTStage(c, "account_selection_started")
 
 	for {
 		if c.Request.Context().Err() != nil {
@@ -216,6 +219,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		account := selection.Account
+		service.MarkTTFTStage(c, "account_selected")
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		// 4. Acquire account concurrency slot
@@ -226,6 +230,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
 				return
 			}
+			service.MarkTTFTStage(c, "account_slot_wait_started")
 			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
 				c,
 				account.ID,
@@ -240,6 +245,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			}
 		}
+		service.MarkTTFTStage(c, "account_slot_acquired")
+		service.MarkTTFTStage(c, "routing_complete")
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
 		if groupPlatform == service.PlatformGemini && account.Platform != service.PlatformGemini {

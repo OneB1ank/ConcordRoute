@@ -6,6 +6,16 @@
       class="mb-0.5 flex items-center"
     >
       <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
+        <span
+          v-if="statsOnly"
+          :class="[
+            wideLabel ? 'w-[48px]' : 'w-[32px]',
+            'shrink-0 whitespace-nowrap rounded px-1 text-center text-[10px] font-medium',
+            labelClass
+          ]"
+        >
+          {{ label }}
+        </span>
         <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
           {{ formatRequests }} req
         </span>
@@ -55,7 +65,7 @@
     </div>
 
     <!-- 进度条行 -->
-    <div class="flex items-center gap-1">
+    <div v-if="!statsOnly" class="flex items-center gap-1">
       <!-- 标签保持固定宽度，让同一单元格内的多行进度条对齐。 -->
       <span
         :class="[
@@ -104,6 +114,7 @@ const props = defineProps<{
   windowStats?: WindowStats | null
   overdraftStats?: WindowStats | null
   showNowWhenIdle?: boolean
+  statsOnly?: boolean
   remainingCapacity?: boolean
   wideLabel?: boolean
 }>()

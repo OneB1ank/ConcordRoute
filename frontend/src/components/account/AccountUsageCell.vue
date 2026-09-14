@@ -145,6 +145,7 @@
           :window-stats="usageInfo.five_hour.window_stats"
           :overdraft-stats="codexOverdraftStatsFor(usageInfo.five_hour)"
           :show-now-when-idle="true"
+          :stats-only="usageInfo.five_hour.local_only"
           color="indigo"
         />
         <UsageProgressBar
@@ -155,6 +156,7 @@
           :window-stats="usageInfo.seven_day.window_stats"
           :overdraft-stats="codexOverdraftStatsFor(usageInfo.seven_day)"
           :show-now-when-idle="true"
+          :stats-only="usageInfo.seven_day.local_only"
           color="emerald"
         />
         <OpenAIQuotaResetCell

@@ -116,6 +116,33 @@ func TestCodexAppServerBridgeRoundTripBindsAttestationContext(t *testing.T) {
 	require.False(t, liveattestation.AppServerAttestationTransportEnabled())
 }
 
+func TestCodexAppServerBridgeAcceptsHTTP11WebSocketUpgrade(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	seen := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Proto
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = conn.Close(coderws.StatusNormalClosure, "done")
+	}))
+	defer server.Close()
+
+	// coder/websocket 接受 http/https URL，并通过 HTTP/1.1 完成 WebSocket 握手，
+	// 与界面展示的采集器地址保持一致。
+	client, _, err := coderws.Dial(ctx, server.URL, nil)
+	require.NoError(t, err)
+	defer client.CloseNow()
+	select {
+	case proto := <-seen:
+		require.Equal(t, "HTTP/1.1", proto)
+	case <-ctx.Done():
+		t.Fatal("HTTP/1.1 WebSocket upgrade was not observed")
+	}
+}
+
 func TestCodexAppServerBridgeCollectorCapturesRealRoundTripSummary(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -134,11 +161,19 @@ func TestCodexAppServerBridgeCollectorCapturesRealRoundTripSummary(t *testing.T)
 			return
 		}
 		defer conn.CloseNow()
-		_ = svc.ServeCodexAppServerBridge(ctx, 42, conn, "session-capture", "thread-capture", session.Token)
+		_ = svc.serveCodexAppServerBridge(ctx, 42, conn, "session-capture", "thread-capture", CodexAttestationHandshakeMetadata{
+			HTTPProtocol: r.Proto,
+			Transport:    "websocket",
+			UserAgent:    r.Header.Get("User-Agent"),
+			Originator:   r.Header.Get("originator"),
+		}, session.Token)
 	}))
 	defer server.Close()
 
-	client, _, err := coderws.Dial(ctx, "ws"+server.URL[len("http"):], nil)
+	client, _, err := coderws.Dial(ctx, "ws"+server.URL[len("http"):], &coderws.DialOptions{HTTPHeader: http.Header{
+		"User-Agent": {"codex-tui/0.153.4 (Windows)"},
+		"originator": {"codex_cli_rs"},
+	}})
 	require.NoError(t, err)
 	defer client.CloseNow()
 	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-tui","version":"0.153.4"},"capabilities":{"requestAttestation":true}}}`)))
@@ -166,7 +201,7 @@ func TestCodexAppServerBridgeCollectorCapturesRealRoundTripSummary(t *testing.T)
 	_, generateRequest, err := client.Read(ctx)
 	require.NoError(t, err)
 	requestID := numberValue(generateRequest, "id")
-	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":`+fmt.Sprintf("%.0f", requestID)+`,"result":{"token":"v1.collector-proof"}}`)))
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":`+fmt.Sprintf("%.0f", requestID)+`,"result":{"headerValue":"v1.collector-proof"}}`)))
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -180,6 +215,77 @@ func TestCodexAppServerBridgeCollectorCapturesRealRoundTripSummary(t *testing.T)
 	require.Equal(t, int64(42), records[0].APIKeyID)
 	require.Equal(t, int64(99), records[0].AccountID)
 	require.Equal(t, "codex-tui", records[0].ClientName)
+	require.Equal(t, "HTTP/1.1", records[1].HandshakeProtocol)
+	require.Equal(t, "websocket", records[1].HandshakeTransport)
+	require.Equal(t, "codex-tui/0.153.4 (Windows)", records[1].HandshakeUserAgent)
+	require.Equal(t, "codex_cli_rs", records[1].HandshakeOriginator)
+}
+
+func TestCodexAppServerBridgeHandlerCapturesOfficialHeaderValue(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	collector := NewCodexAppServerAttestationCollector()
+	collector.Start()
+	session, err := collector.CreateSession()
+	require.NoError(t, err)
+	svc := &OpenAIGatewayService{
+		codexAttestationStore:     liveattestation.NewAppServerAttestationStore(time.Minute),
+		codexAppServerBridges:     newCodexAppServerBridgeRegistry(),
+		codexAttestationCollector: collector,
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/backend-api/codex/app-server", func(c *gin.Context) {
+		svc.HandleCodexAppServerBridge(c, 42)
+	})
+	server := httptest.NewServer(router)
+	defer server.Close()
+	endpoint := "ws" + server.URL[len("http"):]
+	endpoint += "/backend-api/codex/app-server"
+	endpoint += "?" + session.BridgeQuery
+	client, _, err := coderws.Dial(ctx, endpoint, &coderws.DialOptions{HTTPHeader: http.Header{
+		"User-Agent": {"codex-tui/0.153.4 (Windows)"},
+		"originator": {"codex_cli_rs"},
+	}})
+	require.NoError(t, err)
+	defer client.CloseNow()
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-tui","version":"0.153.4"},"capabilities":{"requestAttestation":true}}}`)))
+	_, _, err = client.Read(ctx)
+	require.NoError(t, err)
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"method":"initialized"}`)))
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		bridge, findErr := svc.codexAppServerBridges.find(42, "", "")
+		if findErr == nil && bridge != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("handler did not register initialized bridge")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = svc.bindCodexAppServerAttestationContextForAPIKey(ctx, 42, &Account{ID: 99, Type: AccountTypeOAuth}, "", "")
+		close(done)
+	}()
+	_, generateRequest, err := client.Read(ctx)
+	require.NoError(t, err)
+	requestID := numberValue(generateRequest, "id")
+	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":`+fmt.Sprintf("%.0f", requestID)+`,"result":{"headerValue":"v1.handler-proof"}}`)))
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("handler attestation round trip did not finish")
+	}
+	records, err := collector.ListCaptures(session.Token)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	require.Equal(t, "success", records[0].Status)
+	require.Equal(t, "codex-tui/0.153.4 (Windows)", records[0].HandshakeUserAgent)
+	require.Equal(t, "codex_cli_rs", records[0].HandshakeOriginator)
+	require.Equal(t, "HTTP/1.1", records[0].HandshakeProtocol)
 }
 
 func TestCodexAppServerBridgeDoesNotRegisterUnnegotiatedConnection(t *testing.T) {

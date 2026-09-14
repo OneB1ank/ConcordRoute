@@ -888,13 +888,31 @@ func codexQuotaOverdraftSignalFromAccount(account *Account, state *CodexQuotaOve
 	if account == nil || len(account.Extra) == 0 {
 		return codexQuotaOverdraftSignal{}, false
 	}
-	fiveUsed := parseExtraFloat64(account.Extra["codex_5h_used_percent"])
-	sevenUsed := parseExtraFloat64(account.Extra["codex_7d_used_percent"])
+	fiveAvailable := codexQuotaWindowAvailable(account.Extra, "5h")
+	sevenAvailable := codexQuotaWindowAvailable(account.Extra, "7d")
+	fiveUsed := 0.0
+	sevenUsed := 0.0
+	if fiveAvailable {
+		fiveUsed = parseExtraFloat64(account.Extra["codex_5h_used_percent"])
+	}
+	if sevenAvailable {
+		sevenUsed = parseExtraFloat64(account.Extra["codex_7d_used_percent"])
+	}
 	fiveReset := codexQuotaOverdraftResetAt(account.Extra["codex_5h_reset_at"], now)
 	sevenReset := codexQuotaOverdraftResetAt(account.Extra["codex_7d_reset_at"], now)
+	if !fiveAvailable {
+		fiveReset = nil
+	}
+	if !sevenAvailable {
+		sevenReset = nil
+	}
 	if state != nil {
-		fiveReset = stabilizeCodexQuotaOverdraftReset(fiveReset, state.FiveHourRecoverAt, now)
-		sevenReset = stabilizeCodexQuotaOverdraftReset(sevenReset, state.SevenDayRecoverAt, now)
+		if fiveAvailable {
+			fiveReset = stabilizeCodexQuotaOverdraftReset(fiveReset, state.FiveHourRecoverAt, now)
+		}
+		if sevenAvailable {
+			sevenReset = stabilizeCodexQuotaOverdraftReset(sevenReset, state.SevenDayRecoverAt, now)
+		}
 	}
 	fiveExhausted := fiveUsed >= codexQuotaOverdraftStartPercent && (fiveReset == nil || fiveReset.After(now))
 	sevenExhausted := sevenUsed >= codexQuotaOverdraftStartPercent && (sevenReset == nil || sevenReset.After(now))
@@ -941,8 +959,14 @@ func clearRecoveredCodexQuotaOverdraftWindows(state *CodexQuotaOverdraftProbeSta
 		return false
 	}
 	changed := false
-	fiveUsed := parseExtraFloat64(account.Extra["codex_5h_used_percent"])
-	sevenUsed := parseExtraFloat64(account.Extra["codex_7d_used_percent"])
+	fiveUsed := 0.0
+	sevenUsed := 0.0
+	if codexQuotaWindowAvailable(account.Extra, "5h") {
+		fiveUsed = parseExtraFloat64(account.Extra["codex_5h_used_percent"])
+	}
+	if codexQuotaWindowAvailable(account.Extra, "7d") {
+		sevenUsed = parseExtraFloat64(account.Extra["codex_7d_used_percent"])
+	}
 	if state.FiveHourStartedAt != nil && (fiveUsed < codexQuotaOverdraftStartPercent || state.FiveHourRecoverAt == nil || !state.FiveHourRecoverAt.After(now)) {
 		state.FiveHourStartedAt = nil
 		state.FiveHourRecoverAt = nil

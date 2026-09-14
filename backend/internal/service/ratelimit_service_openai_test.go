@@ -293,6 +293,9 @@ func TestNormalizedCodexLimits(t *testing.T) {
 	if normalized.Reset5hSeconds == nil || *normalized.Reset5hSeconds != 17369 {
 		t.Errorf("expected Reset5hSeconds=17369, got %v", normalized.Reset5hSeconds)
 	}
+	if !normalized.Has5hWindow || !normalized.Has7dWindow {
+		t.Errorf("expected both normalized windows to be marked available: %#v", normalized)
+	}
 }
 
 func TestNormalizedCodexLimits_OnlyPrimaryData(t *testing.T) {
@@ -324,6 +327,12 @@ func TestNormalizedCodexLimits_OnlyPrimaryData(t *testing.T) {
 	}
 	if normalized.Reset5hSeconds != nil {
 		t.Errorf("expected Reset5hSeconds=nil, got %v", *normalized.Reset5hSeconds)
+	}
+	if normalized.Has5hWindow {
+		t.Errorf("expected 5h window unavailable when only primary is present")
+	}
+	if !normalized.Has7dWindow {
+		t.Errorf("expected 7d window available when only primary is present")
 	}
 }
 
@@ -401,6 +410,9 @@ func TestNormalizedCodexLimits_OnlySecondaryData(t *testing.T) {
 	// Primary (7d) should be nil
 	if normalized.Used7dPercent != nil {
 		t.Errorf("expected Used7dPercent=nil, got %v", *normalized.Used7dPercent)
+	}
+	if !normalized.Has5hWindow || normalized.Has7dWindow {
+		t.Errorf("expected only 5h window available when only secondary is present: %#v", normalized)
 	}
 }
 

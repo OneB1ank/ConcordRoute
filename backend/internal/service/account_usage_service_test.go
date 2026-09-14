@@ -1419,7 +1419,7 @@ func TestCodexWindowStatsStart(t *testing.T) {
 	}
 }
 
-func TestCodexWindowStatsStartsKeepsSevenDayContainingFiveHour(t *testing.T) {
+func TestCodexWindowStatsStartsUsesIndependentBoundaries(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	fiveReset := now.Add(-time.Minute)
@@ -1432,7 +1432,8 @@ func TestCodexWindowStatsStartsKeepsSevenDayContainingFiveHour(t *testing.T) {
 	if !fiveStart.Equal(fiveReset) {
 		t.Fatalf("five-hour start = %v, want reset boundary %v", fiveStart, fiveReset)
 	}
-	if sevenStart.After(fiveStart) {
-		t.Fatalf("seven-day start %v must not be after five-hour start %v", sevenStart, fiveStart)
+	wantSevenStart := sevenReset.Add(-7 * 24 * time.Hour)
+	if !sevenStart.Equal(wantSevenStart) {
+		t.Fatalf("seven-day start = %v, want independent reset boundary %v", sevenStart, wantSevenStart)
 	}
 }

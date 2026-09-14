@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -41,26 +42,43 @@ type CodexAppServerAttestationCollectorSession struct {
 	HeaderName  string    `json:"header_name"`
 }
 
+// CodexAttestationHandshakeMetadata 保存 app-server WebSocket 握手中观察到的
+// 非敏感传输元数据。它与协议帧分离，测试直接调用采集服务时可以省略。
+type CodexAttestationHandshakeMetadata struct {
+	HTTPProtocol string
+	Transport    string
+	UserAgent    string
+	Originator   string
+}
+
 // CodexAppServerAttestationCaptureRecord 只保存证明的可审计摘要，不保存
 // opaque proof 原文。这样管理员仍能确认真实客户端完成了协商与生成，
 // 但采集器不会变成长期凭据存储。
 type CodexAppServerAttestationCaptureRecord struct {
-	ID                 string    `json:"id"`
-	CapturedAt         time.Time `json:"captured_at"`
-	Event              string    `json:"event"`
-	APIKeyID           int64     `json:"api_key_id"`
-	AccountID          int64     `json:"account_id"`
-	ConnectionID       string    `json:"connection_id"`
-	SessionID          string    `json:"session_id,omitempty"`
-	ThreadID           string    `json:"thread_id,omitempty"`
-	ClientName         string    `json:"client_name,omitempty"`
-	ClientVersion      string    `json:"client_version,omitempty"`
-	RequestAttestation bool      `json:"request_attestation"`
-	InitializeID       string    `json:"initialize_id,omitempty"`
-	GenerateRequestID  uint64    `json:"generate_request_id,omitempty"`
-	Status             string    `json:"status"`
-	ProofLength        int       `json:"proof_length,omitempty"`
-	ProofSHA256        string    `json:"proof_sha256,omitempty"`
+	ID                  string    `json:"id"`
+	CapturedAt          time.Time `json:"captured_at"`
+	Event               string    `json:"event"`
+	APIKeyID            int64     `json:"api_key_id"`
+	AccountID           int64     `json:"account_id"`
+	ConnectionID        string    `json:"connection_id"`
+	SessionID           string    `json:"session_id,omitempty"`
+	ThreadID            string    `json:"thread_id,omitempty"`
+	ClientName          string    `json:"client_name,omitempty"`
+	ClientVersion       string    `json:"client_version,omitempty"`
+	JSONRPCVersion      string    `json:"jsonrpc_version,omitempty"`
+	CapabilityKeys      []string  `json:"capability_keys,omitempty"`
+	RequestAttestation  bool      `json:"request_attestation"`
+	InitializeID        string    `json:"initialize_id,omitempty"`
+	FrameSHA256         string    `json:"frame_sha256,omitempty"`
+	GenerateRequestID   uint64    `json:"generate_request_id,omitempty"`
+	GenerateResponseID  string    `json:"generate_response_id,omitempty"`
+	Status              string    `json:"status"`
+	ProofLength         int       `json:"proof_length,omitempty"`
+	ProofSHA256         string    `json:"proof_sha256,omitempty"`
+	HandshakeProtocol   string    `json:"handshake_protocol,omitempty"`
+	HandshakeTransport  string    `json:"handshake_transport,omitempty"`
+	HandshakeUserAgent  string    `json:"handshake_user_agent,omitempty"`
+	HandshakeOriginator string    `json:"handshake_originator,omitempty"`
 }
 
 type codexAttestationCollectorConnection struct {
@@ -70,6 +88,10 @@ type codexAttestationCollectorConnection struct {
 	clientVersion      string
 	requestAttestation bool
 	initializeID       string
+	jsonRPCVersion     string
+	capabilityKeys     []string
+	frameSHA256        string
+	handshake          CodexAttestationHandshakeMetadata
 }
 
 type codexAttestationCollectorSessionState struct {
@@ -213,6 +235,12 @@ func (c *CodexAppServerAttestationCollector) RecordInitialize(token string, key 
 
 // RecordInitializeForAPIKey 在管理员采集记录中同时保留 API Key 关联。
 func (c *CodexAppServerAttestationCollector) RecordInitializeForAPIKey(token string, apiKeyID int64, key liveattestation.SessionKey, raw []byte) error {
+	return c.RecordInitializeForAPIKeyWithMetadata(token, apiKeyID, key, raw, CodexAttestationHandshakeMetadata{})
+}
+
+// RecordInitializeForAPIKeyWithMetadata 同时记录 initialize 帧及安全的协议、握手摘要。
+// 原始帧只计算哈希而不保留，因此可以关联能力名称和精确帧，又不会持久化客户端载荷。
+func (c *CodexAppServerAttestationCollector) RecordInitializeForAPIKeyWithMetadata(token string, apiKeyID int64, key liveattestation.SessionKey, raw []byte, metadata CodexAttestationHandshakeMetadata) error {
 	if c == nil {
 		return errors.New("attestation collector is nil")
 	}
@@ -220,10 +248,13 @@ func (c *CodexAppServerAttestationCollector) RecordInitializeForAPIKey(token str
 	if err != nil {
 		return err
 	}
-	clientName, clientVersion, capability, initializeID, err := parseCollectorInitialize(raw)
+	clientName, clientVersion, capability, initializeID, jsonRPCVersion, capabilityKeys, err := parseCollectorInitialize(raw)
 	if err != nil {
 		return err
 	}
+	metadata = normalizeCollectorHandshakeMetadata(metadata)
+	frameDigest := sha256.Sum256(raw)
+	frameSHA256 := hex.EncodeToString(frameDigest[:])
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	state, err := c.sessionLocked(token, time.Now())
@@ -235,19 +266,24 @@ func (c *CodexAppServerAttestationCollector) RecordInitializeForAPIKey(token str
 		apiKeyID: apiKeyID,
 		key:      normalized, clientName: clientName, clientVersion: clientVersion,
 		requestAttestation: capability, initializeID: initializeID,
+		jsonRPCVersion: jsonRPCVersion, capabilityKeys: append([]string(nil), capabilityKeys...),
+		frameSHA256: frameSHA256, handshake: metadata,
 	}
 	c.appendRecordLocked(state, &CodexAppServerAttestationCaptureRecord{
 		Event: "initialize", APIKeyID: apiKeyID, AccountID: 0,
 		ConnectionID: normalized.ConnectionID, SessionID: normalized.SessionID,
 		ThreadID: normalized.ThreadID, ClientName: clientName, ClientVersion: clientVersion,
-		RequestAttestation: capability, InitializeID: initializeID,
+		JSONRPCVersion: jsonRPCVersion, CapabilityKeys: append([]string(nil), capabilityKeys...),
+		RequestAttestation: capability, InitializeID: initializeID, FrameSHA256: frameSHA256,
+		HandshakeProtocol: metadata.HTTPProtocol, HandshakeTransport: metadata.Transport,
+		HandshakeUserAgent: metadata.UserAgent, HandshakeOriginator: metadata.Originator,
 		Status: map[bool]string{true: "negotiated", false: "not_requested"}[capability],
 	})
 	return nil
 }
 
 // RecordGenerateResponse 记录成功或 malformed 的 attestation/generate 响应。
-// 成功时仅写入 token 长度和 SHA-256，不把 token 原文落入内存记录。
+// 成功时仅写入 headerValue 长度和 SHA-256，不把 headerValue 原文落入内存记录。
 func (c *CodexAppServerAttestationCollector) RecordGenerateResponse(token string, key liveattestation.SessionKey, requestID uint64, raw []byte) error {
 	return c.RecordGenerateResponseForAPIKey(token, 0, key, requestID, raw)
 }
@@ -272,13 +308,19 @@ func (c *CodexAppServerAttestationCollector) RecordGenerateResponseForAPIKey(tok
 	if !ok || (apiKeyID > 0 && connection.apiKeyID > 0 && connection.apiKeyID != apiKeyID) {
 		return errors.New("attestation collector connection was not initialized")
 	}
+	c.bindCollectorConnectionAccountLocked(state, normalized.ConnectionID, normalized.AccountID)
 	record := &CodexAppServerAttestationCaptureRecord{
 		Event: "generate", APIKeyID: apiKeyID, AccountID: normalized.AccountID, ConnectionID: normalized.ConnectionID,
 		SessionID: normalized.SessionID, ThreadID: normalized.ThreadID,
 		ClientName: connection.clientName, ClientVersion: connection.clientVersion,
+		JSONRPCVersion: connection.jsonRPCVersion, CapabilityKeys: append([]string(nil), connection.capabilityKeys...),
 		RequestAttestation: connection.requestAttestation, InitializeID: connection.initializeID,
-		GenerateRequestID: requestID,
+		GenerateRequestID: requestID, GenerateResponseID: rawJSONRPCID(raw),
+		HandshakeProtocol: connection.handshake.HTTPProtocol, HandshakeTransport: connection.handshake.Transport,
+		HandshakeUserAgent: connection.handshake.UserAgent, HandshakeOriginator: connection.handshake.Originator,
 	}
+	frameDigest := sha256.Sum256(raw)
+	record.FrameSHA256 = hex.EncodeToString(frameDigest[:])
 	if parseErr != nil {
 		record.Status = "malformed_response"
 	} else {
@@ -315,14 +357,32 @@ func (c *CodexAppServerAttestationCollector) RecordGenerateFailureForAPIKey(toke
 	if !ok || (apiKeyID > 0 && connection.apiKeyID > 0 && connection.apiKeyID != apiKeyID) {
 		return errors.New("attestation collector connection was not initialized")
 	}
+	c.bindCollectorConnectionAccountLocked(state, normalized.ConnectionID, normalized.AccountID)
 	c.appendRecordLocked(state, &CodexAppServerAttestationCaptureRecord{
 		Event: "generate", APIKeyID: apiKeyID, AccountID: normalized.AccountID, ConnectionID: normalized.ConnectionID,
 		SessionID: normalized.SessionID, ThreadID: normalized.ThreadID,
 		ClientName: connection.clientName, ClientVersion: connection.clientVersion,
+		JSONRPCVersion: connection.jsonRPCVersion, CapabilityKeys: append([]string(nil), connection.capabilityKeys...),
 		RequestAttestation: connection.requestAttestation, InitializeID: connection.initializeID,
 		GenerateRequestID: requestID, Status: collectorStatusName(status),
+		HandshakeProtocol: connection.handshake.HTTPProtocol, HandshakeTransport: connection.handshake.Transport,
+		HandshakeUserAgent: connection.handshake.UserAgent, HandshakeOriginator: connection.handshake.Originator,
 	})
 	return nil
+}
+
+// bindCollectorConnectionAccountLocked 在首次观察到账号作用域的 generate 请求后，
+// 回填该连接选中的账号。initialize 帧早于账号选择到达，因此初始记录的 account_id=0；
+// 在此建立关联可补全审计链路，同时不保存额外客户端载荷。
+func (c *CodexAppServerAttestationCollector) bindCollectorConnectionAccountLocked(state *codexAttestationCollectorSessionState, connectionID string, accountID int64) {
+	if state == nil || accountID <= 0 {
+		return
+	}
+	for _, record := range state.records {
+		if record != nil && record.Event == "initialize" && record.ConnectionID == connectionID && record.AccountID == 0 {
+			record.AccountID = accountID
+		}
+	}
 }
 
 func (c *CodexAppServerAttestationCollector) statusLocked() CodexAppServerAttestationCollectorStatus {
@@ -367,29 +427,92 @@ func keyForCollector(key liveattestation.SessionKey) (liveattestation.SessionKey
 	return key.NormalizedForCollector()
 }
 
-func parseCollectorInitialize(raw []byte) (string, string, bool, string, error) {
+func parseCollectorInitialize(raw []byte) (string, string, bool, string, string, []string, error) {
+	capability, capabilityErr := liveattestation.ParseInitializeRequest(raw)
+	if capabilityErr != nil {
+		return "", "", false, "", "", nil, capabilityErr
+	}
 	var message struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params struct {
+		ID      json.RawMessage `json:"id"`
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  struct {
 			ClientInfo struct {
 				Name    string `json:"name"`
 				Version string `json:"version"`
 			} `json:"clientInfo"`
-			Capabilities struct {
-				RequestAttestation bool `json:"requestAttestation"`
-			} `json:"capabilities"`
+			Capabilities map[string]json.RawMessage `json:"capabilities"`
 		} `json:"params"`
 	}
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return "", "", false, "", fmt.Errorf("decode initialize: %w", err)
+		return "", "", false, "", "", nil, fmt.Errorf("decode initialize: %w", err)
+	}
+	if message.JSONRPC != "" && message.JSONRPC != "2.0" {
+		return "", "", false, "", "", nil, errors.New("unsupported JSON-RPC version")
 	}
 	if message.Method != "initialize" {
-		return "", "", false, "", errors.New("collector requires initialize")
+		return "", "", false, "", "", nil, errors.New("collector requires initialize")
 	}
 	initializeID := strings.TrimSpace(string(message.ID))
+	capabilityKeys := make([]string, 0, len(message.Params.Capabilities))
+	requestAttestation := capability
+	for name, value := range message.Params.Capabilities {
+		capabilityKeys = append(capabilityKeys, name)
+		if name == "requestAttestation" {
+			var declared bool
+			if err := json.Unmarshal(value, &declared); err != nil {
+				return "", "", false, "", "", nil, fmt.Errorf("decode requestAttestation capability: %w", err)
+			}
+			requestAttestation = declared
+		}
+	}
+	sort.Strings(capabilityKeys)
 	return message.Params.ClientInfo.Name, message.Params.ClientInfo.Version,
-		message.Params.Capabilities.RequestAttestation, initializeID, nil
+		requestAttestation, initializeID, message.JSONRPC, capabilityKeys, nil
+}
+
+func normalizeCollectorHandshakeMetadata(metadata CodexAttestationHandshakeMetadata) CodexAttestationHandshakeMetadata {
+	metadata.HTTPProtocol = normalizeCollectorMetadataValue(metadata.HTTPProtocol)
+	metadata.Transport = normalizeCollectorMetadataValue(metadata.Transport)
+	metadata.UserAgent = normalizeCollectorMetadataValue(metadata.UserAgent)
+	metadata.Originator = normalizeCollectorMetadataValue(metadata.Originator)
+	return metadata
+}
+
+func normalizeCollectorMetadataValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 512 {
+		return ""
+	}
+	for _, r := range value {
+		if r == 0 || r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return value
+}
+
+func rawJSONRPCID(raw []byte) string {
+	var message struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(raw, &message) != nil || len(message.ID) == 0 || bytes.Equal(bytes.TrimSpace(message.ID), []byte("null")) {
+		return ""
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(message.ID))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	default:
+		return ""
+	}
 }
 
 func collectorStatusName(status liveattestation.AttestationStatus) string {

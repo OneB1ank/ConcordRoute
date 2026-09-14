@@ -34,7 +34,7 @@ type ModelContextMetadata struct {
 // intentionally not used as max_context_window.
 func ModelContextMetadataForID(modelID string) (ModelContextMetadata, bool) {
 	switch strings.ToLower(strings.TrimSpace(modelID)) {
-	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review":
+	case "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review":
 		return ModelContextMetadata{ContextWindow: 272000, MaxContextWindow: 872000, EffectiveContextWindowPercent: 95}, true
 	case "gpt-6-astra":
 		// The bundled pricing catalog declares a 1,050,000-token hard input

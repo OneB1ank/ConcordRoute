@@ -22,7 +22,7 @@ func TestCodexAttestationContextOnlyAppliesToNegotiatedOAuthSession(t *testing.T
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`)))
 
 	requestContext := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
 		Key: key, Envelope: `{"v":1,"s":0,"t":"v1.client-token"}`,
@@ -46,7 +46,7 @@ func TestCodexAttestationRequiresChatGPTAuthMode(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"token":"v1.client-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"headerValue":"v1.client-token"}}`)))
 
 	ctx := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
 		Key: key, Envelope: `{"v":1,"s":0,"t":"v1.client-token"}`,
@@ -77,7 +77,7 @@ func TestCodexAttestationContextRejectsCrossAccountAndUntrustedHeader(t *testing
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`)))
 
 	requestContext := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
 		Key: liveattestation.SessionKey{AccountID: 99, ConnectionID: "conn-1"},
@@ -122,7 +122,7 @@ func TestCodexAttestationDoesNotOverrideOutboundUAOrOriginator(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"token":"v1.identity-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":1,"result":{"headerValue":"v1.identity-token"}}`)))
 
 	ctx := WithCodexAttestationRequestContext(context.Background(), CodexAttestationRequestContext{
 		Key: key, Envelope: `{"v":1,"s":0,"t":"v1.identity-token"}`,
@@ -226,7 +226,7 @@ func TestBuildUpstreamRequestUsesOnlyNegotiatedClientAttestation(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`)))
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -268,7 +268,7 @@ func TestCodexAppServerAttestationAdapterRelaysClientToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, payload)
 	require.Positive(t, requestID)
-	require.NoError(t, adapter.AcceptGenerateResponse([]byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.client-token"}}`)))
+	require.NoError(t, adapter.AcceptGenerateResponse([]byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.client-token"}}`)))
 
 	requestContext, err := adapter.RequestContext()
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestCodexAttestationContextUsesCapturedEnvelopeAfterStoreChanges(t *testing
 	require.NoError(t, err)
 	adapter, err := svc.NewCodexAppServerAttestationAdapter(key)
 	require.NoError(t, err)
-	require.NoError(t, adapter.AcceptGenerateResponse([]byte(`{"id":1,"result":{"token":"opaque-a"}}`)))
+	require.NoError(t, adapter.AcceptGenerateResponse([]byte(`{"id":1,"result":{"headerValue":"opaque-a"}}`)))
 	requestContext, err := adapter.RequestContext()
 	require.NoError(t, err)
 
@@ -300,7 +300,7 @@ func TestCodexAttestationContextUsesCapturedEnvelopeAfterStoreChanges(t *testing
 	// captured for the in-flight upstream request.
 	_, _, err = store.BeginGenerate(key)
 	require.NoError(t, err)
-	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":2,"result":{"token":"opaque-b"}}`)))
+	require.NoError(t, store.AcceptGenerateResponse(key, []byte(`{"id":2,"result":{"headerValue":"opaque-b"}}`)))
 
 	headers := make(http.Header)
 	svc.applyCodexClientAttestation(
@@ -323,7 +323,7 @@ func TestCodexAppServerAttestationAdapterAllowsRemoteBridgeLatency(t *testing.T)
 
 	header, err := adapter.GenerateForRequestWithTimeout(context.Background(), func(_ context.Context, _ []byte) ([]byte, error) {
 		time.Sleep(150 * time.Millisecond)
-		return []byte(`{"id":1,"result":{"token":"v1.remote-token"}}`), nil
+		return []byte(`{"id":1,"result":{"headerValue":"v1.remote-token"}}`), nil
 	}, 500*time.Millisecond)
 	require.NoError(t, err)
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.remote-token"}`, header)
@@ -341,7 +341,7 @@ func TestCodexAppServerAttestationAdapterGeneratesJustInTimeHeader(t *testing.T)
 	header, err := adapter.GenerateForRequest(context.Background(), func(_ context.Context, payload []byte) ([]byte, error) {
 		require.Contains(t, string(payload), `"method":"attestation/generate"`)
 		require.Contains(t, string(payload), `"params":{}`)
-		return []byte(`{"jsonrpc":"2.0","id":1,"result":{"token":"v1.jit-token"}}`), nil
+		return []byte(`{"jsonrpc":"2.0","id":1,"result":{"headerValue":"v1.jit-token"}}`), nil
 	})
 	require.NoError(t, err)
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.jit-token"}`, header)
@@ -388,7 +388,7 @@ func TestCodexAppServerAttestationAdapterMapsLateSuccessToTimeout(t *testing.T) 
 	require.NoError(t, err)
 	header, err := adapter.GenerateForRequestWithTimeout(context.Background(), func(_ context.Context, _ []byte) ([]byte, error) {
 		time.Sleep(10 * time.Millisecond)
-		return []byte(`{"id":1,"result":{"token":"late-token"}}`), nil
+		return []byte(`{"id":1,"result":{"headerValue":"late-token"}}`), nil
 	}, time.Millisecond)
 	require.NoError(t, err)
 	require.Equal(t, `{"v":1,"s":1}`, header)
@@ -422,7 +422,7 @@ func TestCodexAppServerAttestationAdapterMapsMismatchedResponseIDToMalformedStat
 	_, err = adapter.ObserveInitialize([]byte(`{"id":1,"method":"initialize","params":{"capabilities":{"requestAttestation":true}}}`))
 	require.NoError(t, err)
 	header, err := adapter.GenerateForRequestWithTimeout(context.Background(), func(_ context.Context, _ []byte) ([]byte, error) {
-		return []byte(`{"id":999,"result":{"token":"v1.wrong-id"}}`), nil
+		return []byte(`{"id":999,"result":{"headerValue":"v1.wrong-id"}}`), nil
 	}, time.Second)
 	require.NoError(t, err)
 	require.Equal(t, `{"v":1,"s":4}`, header)

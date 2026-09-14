@@ -31,8 +31,11 @@ type InitializeCapabilities struct {
 }
 
 // AttestationGenerateResponse 是客户端对 attestation/generate 的响应。
+//
+// Codex app-server 协议将此字段命名为 headerValue。它是预编码的不透明值，
+// app-server 随后会把它放入 x-oai-attestation 信封的 t 字段，不是通用令牌字段。
 type AttestationGenerateResponse struct {
-	Token string `json:"token"`
+	HeaderValue string `json:"headerValue"`
 }
 
 // ParseInitializeRequest 判断一条 JSON-RPC initialize 是否声明 requestAttestation。
@@ -78,8 +81,8 @@ func BuildAttestationGenerateRequest(requestID uint64) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// ParseAttestationGenerateResponse 提取客户端 token。调用方应先校验 pending
-// request ID，再把 token 交给 NormalizeClientEnvelope 封装。
+// ParseAttestationGenerateResponse 提取客户端 headerValue。调用方应先校验
+// pending request ID，再把该 opaque 值交给 NormalizeClientEnvelope 封装。
 func ParseAttestationGenerateResponse(raw []byte) (json.RawMessage, string, error) {
 	var message JSONRPCMessage
 	if err := decodeJSONObject(raw, &message); err != nil {
@@ -101,13 +104,13 @@ func ParseAttestationGenerateResponse(raw []byte) (json.RawMessage, string, erro
 	if err := json.Unmarshal(message.Result, &result); err != nil {
 		return append(json.RawMessage(nil), message.ID...), "", fmt.Errorf("decode attestation result: %w", err)
 	}
-	if result.Token == "" {
-		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response token is empty")
+	if result.HeaderValue == "" {
+		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response headerValue is empty")
 	}
-	if len(result.Token) > maxClientAttestationTokenBytes {
-		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response token exceeds size limit")
+	if len(result.HeaderValue) > maxClientAttestationTokenBytes {
+		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response headerValue exceeds size limit")
 	}
-	return append(json.RawMessage(nil), message.ID...), result.Token, nil
+	return append(json.RawMessage(nil), message.ID...), result.HeaderValue, nil
 }
 
 func decodeJSONObject(raw []byte, target any) error {

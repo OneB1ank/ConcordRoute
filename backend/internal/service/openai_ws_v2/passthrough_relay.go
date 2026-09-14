@@ -753,7 +753,7 @@ func observeUpstreamMessage(
 	if turnTiming != nil && turnTiming.firstTokenMs == nil || responseID != "" && turnTiming == nil {
 		needsFirstToken = true
 	}
-	visibleOutput := needsFirstToken && openai.StreamDataStartsVisibleOutput(string(message), eventType)
+	visibleOutput := needsFirstToken && openai.StreamDataStartsVisibleOutputBytes(message, eventType)
 	if state.firstTokenMs == nil && visibleOutput {
 		ms := int(now.Sub(startAt).Milliseconds())
 		if ms < 0 {

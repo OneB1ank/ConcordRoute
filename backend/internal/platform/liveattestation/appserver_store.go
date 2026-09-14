@@ -192,13 +192,14 @@ func (s *AppServerAttestationStore) BeginGenerateWithTimeout(key SessionKey, tim
 	return payload, id, nil
 }
 
-// AcceptGenerateResponse 校验 pending request ID，并保存客户端返回的真实 token。
+// AcceptGenerateResponse 校验 pending request ID，并保存客户端返回的真实
+// headerValue（opaque x-oai-attestation 值）。
 func (s *AppServerAttestationStore) AcceptGenerateResponse(key SessionKey, raw []byte) error {
 	_, err := s.AcceptGenerateResponseWithHeader(key, raw)
 	return err
 }
 
-// AcceptGenerateResponseWithHeader validates and stores the client token,
+// AcceptGenerateResponseWithHeader 校验并保存客户端返回的 headerValue，
 // returning the exact envelope committed under the same lock. Callers that
 // attach the result to a single upstream request should use this method so a
 // concurrent generate cannot replace the value between validation and use.
