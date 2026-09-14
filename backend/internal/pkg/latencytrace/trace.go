@@ -67,7 +67,13 @@ func allowed(phase string) bool {
 		"account_slot_started", "account_slot_done", "retry_wait_started", "retry_wait_done",
 		"token_get_started", "token_get_done", "token_cache_read_started", "token_cache_read_done",
 		"token_cache_hit", "token_cache_miss", "token_refresh_started", "token_refresh_done",
-		"token_lock_wait_started", "token_lock_wait_done":
+		"token_lock_wait_started", "token_lock_wait_done",
+		"identity_lock_wait_started", "identity_lock_wait_done",
+		"identity_binding_read_started", "identity_binding_read_done",
+		"identity_binding_merge_started", "identity_binding_merge_done",
+		"identity_binding_write_started", "identity_binding_write_done",
+		"request_body_read_started", "request_body_read_done",
+		"api_key_auth_started", "api_key_auth_done":
 		return true
 	}
 	return false
@@ -128,6 +134,18 @@ func operationPhases(phase string) (string, string) {
 		return "token_refresh_started", "token_refresh_done"
 	case "token_lock_wait":
 		return "token_lock_wait_started", "token_lock_wait_done"
+	case "identity_lock_wait":
+		return "identity_lock_wait_started", "identity_lock_wait_done"
+	case "identity_binding_read":
+		return "identity_binding_read_started", "identity_binding_read_done"
+	case "identity_binding_merge":
+		return "identity_binding_merge_started", "identity_binding_merge_done"
+	case "identity_binding_write":
+		return "identity_binding_write_started", "identity_binding_write_done"
+	case "request_body_read":
+		return "request_body_read_started", "request_body_read_done"
+	case "api_key_auth":
+		return "api_key_auth_started", "api_key_auth_done"
 	default:
 		return "", ""
 	}

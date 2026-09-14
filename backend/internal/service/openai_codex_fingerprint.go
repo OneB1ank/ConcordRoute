@@ -16,11 +16,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"golang.org/x/sync/semaphore"
 )
 
 // codexFingerprintIDsContextKey 保存单次透传尝试的收敛 ID。请求体与请求头必须
@@ -200,6 +202,8 @@ const (
 	codexIdentityBindingMaxEntries    = 1024
 	codexTurnLineageBindingIdleTTL    = 30 * 24 * time.Hour
 	codexTurnLineageBindingMaxEntries = 8192
+	// 等锁和存储共享预算；超时返回错误，不以跳过落库继续转发换取低延迟。
+	codexIdentityPersistenceTimeout = 5 * time.Second
 )
 
 // CodexIdentityBindingsExtraKey stores complete UUIDv7 values keyed by a
@@ -225,7 +229,7 @@ type codexIdentityBinding struct {
 	LastUsedAtMS int64  `json:"last_used_at_ms"`
 }
 
-var codexIdentityBindingLocks sync.Map    // account ID -> *sync.Mutex
+var codexIdentityBindingLocks sync.Map    // account ID -> *codexIdentityMutex
 var codexIdentityPersistedHashes sync.Map // account ID -> sha256 of bindings JSON
 var codexIdentityHotCache sync.Map        // account+seed -> codexIdentityHotBinding
 var codexIdentityHotCacheOps atomic.Uint64
@@ -391,15 +395,26 @@ func loadCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs) (codexP
 	return entry, true
 }
 
-func codexIdentityBindingLock(accountID int64) *sync.Mutex {
+// codexIdentityMutex 保持生成与持久化共用的账号互斥域，持久化等待支持取消。
+type codexIdentityMutex struct {
+	gate *semaphore.Weighted
+}
+
+func (m *codexIdentityMutex) Lock()   { _ = m.gate.Acquire(context.Background(), 1) }
+func (m *codexIdentityMutex) Unlock() { m.gate.Release(1) }
+func (m *codexIdentityMutex) LockContext(ctx context.Context) error {
+	return m.gate.Acquire(ctx, 1)
+}
+
+func codexIdentityBindingLock(accountID int64) *codexIdentityMutex {
 	if existing, ok := codexIdentityBindingLocks.Load(accountID); ok {
-		if mutex, ok := existing.(*sync.Mutex); ok {
+		if mutex, ok := existing.(*codexIdentityMutex); ok {
 			return mutex
 		}
 	}
-	created := &sync.Mutex{}
+	created := &codexIdentityMutex{gate: semaphore.NewWeighted(1)}
 	actual, _ := codexIdentityBindingLocks.LoadOrStore(accountID, created)
-	if mutex, ok := actual.(*sync.Mutex); ok {
+	if mutex, ok := actual.(*codexIdentityMutex); ok {
 		return mutex
 	}
 	return created
@@ -687,6 +702,7 @@ var codexUUIDv7BindingStores = []codexUUIDv7BindingStore{
 }
 
 // persistCodexIdentityBindings 一次性持久化账号身份和 Cockpit 回合图绑定。
+// @project-doc docs/interfaces/openai_upstream.md#codex_identity_persistence
 // 哈希门控让无变化的热路径保持只读，账号锁和写前合并避免并发快照互相覆盖。
 func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, account *Account) (err error) {
 	defer func() {
@@ -700,8 +716,15 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	if repo == nil || account == nil || account.ID == 0 {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, codexIdentityPersistenceTimeout)
+	defer cancel()
 	lock := codexIdentityBindingLock(account.ID)
-	lock.Lock()
+	finishWait := latencytrace.Start(ctx, "identity_lock_wait")
+	err = lock.LockContext(ctx)
+	finishWait(err)
+	if err != nil {
+		return fmt.Errorf("wait for codex identity persistence: %w", err)
+	}
 	defer lock.Unlock()
 	if account.Extra == nil {
 		return nil
@@ -717,12 +740,20 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 		return nil
 	}
 
-	// 写入前只读取一次最新账号行，两类存储分别合并并按各自策略裁剪。
-	latest, err := repo.GetByID(ctx, account.ID)
+	// 生产仓储只读取绑定所需的账号 ID/Extra；旧适配器仍保持原有读写契约。
+	finishRead := latencytrace.Start(ctx, "identity_binding_read")
+	var latest *Account
+	if reader, ok := repo.(CodexIdentityBindingsReader); ok {
+		latest, err = reader.GetCodexIdentityBindings(ctx, account.ID)
+	} else {
+		latest, err = repo.GetByID(ctx, account.ID)
+	}
+	finishRead(err)
 	if err != nil {
 		return fmt.Errorf("load latest account for codex identity bindings: %w", err)
 	}
 	nowMS := time.Now().UnixMilli()
+	finishMerge := latencytrace.Start(ctx, "identity_binding_merge")
 	updates := make(map[string]any, len(codexUUIDv7BindingStores))
 	for _, store := range codexUUIDv7BindingStores {
 		if _, exists := account.Extra[store.extraKey]; !exists {
@@ -743,6 +774,7 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	}
 	// 过期或损坏的集合仍以空对象落库，确保旧值实际被清除。
 	encoded, err := json.Marshal(updates)
+	finishMerge(err)
 	if err != nil {
 		return fmt.Errorf("marshal codex UUIDv7 bindings: %w", err)
 	}
@@ -752,7 +784,10 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	if previous, ok := codexIdentityPersistedHashes.Load(hashKey); ok && previous == hashString {
 		return nil
 	}
-	if err := repo.UpdateExtra(ctx, account.ID, updates); err != nil {
+	finishWrite := latencytrace.Start(ctx, "identity_binding_write")
+	err = repo.UpdateExtra(ctx, account.ID, updates)
+	finishWrite(err)
+	if err != nil {
 		return fmt.Errorf("persist codex identity bindings: %w", err)
 	}
 	codexIdentityPersistedHashes.Store(hashKey, hashString)

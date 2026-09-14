@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -25,10 +26,13 @@ const (
 // ReadRequestBodyWithPrealloc reads request body with preallocated buffer based
 // on content length, transparently decoding any Content-Encoding the upstream
 // client used to compress the body (zstd, gzip, deflate).
-func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
+func ReadRequestBodyWithPrealloc(req *http.Request) (body []byte, err error) {
 	if req == nil || req.Body == nil {
 		return nil, nil
 	}
+	// 只在请求已有诊断上下文时记读取/解压区间，不保存正文或改变读取方式。
+	finishRead := latencytrace.Start(req.Context(), "request_body_read")
+	defer func() { finishRead(err) }()
 
 	capHint := requestBodyReadInitCap
 	if req.ContentLength > 0 {

@@ -81,6 +81,8 @@ func TestDeriveStableUUIDv7ForAccount_PersistsCompleteValueAcrossRestart(t *test
 	fresh := &Account{ID: account.ID, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: restoredExtra}
 	codexFallbackUUIDv7 = sync.Map{}
 	codexIdentityPersistedHashes = sync.Map{}
+	// 真正模拟进程重启，避免热缓存掩盖完整 UUID 没有落库的回归。
+	codexIdentityHotCache = sync.Map{}
 	second := deriveStableUUIDv7ForAccount(fresh, seed)
 	assert.Equal(t, first, second, "同一种子在重启/新实例后应复用完整 UUIDv7")
 }

@@ -175,6 +175,31 @@ func (s *AccountRepoSuite) TestGetByID_NotFound() {
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+// 真实 PostgreSQL 往返校验窄读取仍读取当前 Extra，且不携带完整账号关系。
+func (s *AccountRepoSuite) TestGetCodexIdentityBindings_DurableRoundTrip() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "bindings-roundtrip"})
+	values := map[string]any{
+		service.CodexIdentityBindingsExtraKey:    map[string]any{"stable": "unchanged"},
+		service.CodexTurnLineageBindingsExtraKey: map[string]any{"turn": "same-turn"},
+	}
+	s.Require().NoError(s.repo.UpdateExtra(s.ctx, account.ID, values))
+	got, err := s.repo.GetCodexIdentityBindings(s.ctx, account.ID)
+	s.Require().NoError(err)
+	for key, value := range values {
+		s.Require().Equal(value, got.Extra[key])
+	}
+	s.Require().Nil(got.Credentials)
+	s.Require().Nil(got.Proxy)
+	s.Require().Empty(got.Groups)
+	// 新仓储实例无进程缓存，仍从同一数据库读取相同绑定。
+	freshRepo := newAccountRepositoryWithSQL(s.client, nil, nil)
+	restored, err := freshRepo.GetCodexIdentityBindings(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(got, restored)
+	_, err = freshRepo.GetCodexIdentityBindings(s.ctx, -1)
+	s.Require().ErrorIs(err, service.ErrAccountNotFound)
+}
+
 func (s *AccountRepoSuite) TestUpdate() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "original"})
 

@@ -117,7 +117,10 @@ HTTP Responses、透传和原始 Chat 同时输出 `ttft_attempts`：每次实�
 同一诊断开关现在还输出两组有界事件，不新增上游探测：
 
 - `ttft_operations.events`：请求级 token 获取、cache read/hit/miss、刷新调用、刷新锁竞争等待、
-  用户/账号槽位、账号选择及同账号重试退避。每次发生都记录，不复用第一次的时间戳。
+  用户/账号槽位、账号选择及同账号重试退避；另外区分 `api_key_auth`、`request_body_read`、
+  `identity_lock_wait` 和 `identity_binding_read/merge/write`。每次发生都记录，不复用第一次的时间戳。
+  认证结束记录在下游 handler 前；请求体读取包含解压、不包含后续 JSON 规范化。
+  认证内部的 Body 读取与认证区间可能重叠，不能直接相加。
 - `ttft_attempts[].transport.events`：该次 Do 内的主机校验、客户端池条目获取、连接获取与复用、
   本地 DNS/TCP、标准 TLS、自定义 TLS、代理协商、请求头/请求体写完和首响应字节。
 

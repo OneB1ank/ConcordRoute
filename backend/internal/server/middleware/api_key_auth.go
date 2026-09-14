@@ -10,6 +10,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ctxkey"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ip"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"github.com/TokenFlux/TokenRouter/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,15 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 // 批任务管理允许已耗尽额度的 Key 取回或清理自己的既有任务。
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 认证结束必须在 Next 前记录，避免把后续模型等待混进认证耗时。
+		finishAuth := latencytrace.Start(c.Request.Context(), "api_key_auth")
+		defer func() {
+			if c.IsAborted() {
+				finishAuth(service.ErrAPIKeyNotFound)
+			} else {
+				finishAuth(nil)
+			}
+		}()
 		// ── 1. 提取 API Key ──────────────────────────────────────────
 		if rejectInvalidAuthAbuse(c, apiKeyService) {
 			AbortWithError(c, http.StatusTooManyRequests, "INVALID_AUTH_RATE_LIMITED", "Too many invalid authentication attempts; retry later")
@@ -222,6 +232,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			c.Set(string(ContextKeyUserRole), apiKey.User.Role)
 			setGroupContext(c, apiKey.Group)
 			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
+			finishAuth(nil)
 			c.Next()
 			return
 		}
@@ -321,6 +332,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		setGroupContext(c, apiKey.Group)
 		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 
+		finishAuth(nil)
 		c.Next()
 	}
 }

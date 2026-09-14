@@ -200,3 +200,16 @@ func TestTraceOperationDurationAndCancellation(t *testing.T) {
 	require.True(t, events[1].Failed)
 	require.GreaterOrEqual(t, events[1].AtMS-events[0].AtMS, int64(35))
 }
+
+func TestTracePersistenceAndIngressDisabledHaveNoSamplingAllocations(t *testing.T) {
+	ctx := context.Background()
+	allocations := testing.AllocsPerRun(100, func() {
+		for _, phase := range []string{
+			"identity_lock_wait", "identity_binding_read", "identity_binding_merge",
+			"identity_binding_write", "request_body_read", "api_key_auth",
+		} {
+			Start(ctx, phase)(nil)
+		}
+	})
+	require.Zero(t, allocations, "关闭诊断时新增阶段不创建采样对象")
+}
