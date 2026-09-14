@@ -50,8 +50,9 @@ type codexAppServerBridge struct {
 	// business request; the proof is never sent with the wrong credentials.
 	boundAccountID atomic.Int64
 
-	writeMu   sync.Mutex
-	roundMu   sync.Mutex
+	lockInit  sync.Once
+	writeMu   *contextMutex
+	roundMu   *contextMutex
 	pendingMu sync.Mutex
 	pending   map[string]chan []byte
 
@@ -60,6 +61,14 @@ type codexAppServerBridge struct {
 	initialized   atomic.Bool
 	closed        chan struct{}
 	closeOnce     sync.Once
+}
+
+// 锁按需初始化，兼容未建立网络连接的协议测试及零值构造路径。
+func (b *codexAppServerBridge) initLocks() {
+	b.lockInit.Do(func() {
+		b.writeMu = newContextMutex()
+		b.roundMu = newContextMutex()
+	})
 }
 
 type codexAppServerBridgeRegistry struct {
@@ -208,10 +217,20 @@ func (b *codexAppServerBridge) write(ctx context.Context, payload []byte) error 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	b.writeMu.Lock()
-	defer b.writeMu.Unlock()
 	writeCtx, cancel := context.WithTimeout(ctx, codexAppServerBridgeMessageTimeout)
 	defer cancel()
+	b.initLocks()
+	if err := writeCtx.Err(); err != nil {
+		return err
+	}
+	// 写锁等待也计入当前 RPC 的剩余预算，避免绕开证明请求的总超时。
+	if err := b.writeMu.Lock(writeCtx); err != nil {
+		return err
+	}
+	defer b.writeMu.Unlock()
+	if err := writeCtx.Err(); err != nil {
+		return err
+	}
 	return b.conn.Write(writeCtx, coderws.MessageText, payload)
 }
 
@@ -424,11 +443,30 @@ func (s *OpenAIGatewayService) bindCodexAppServerAttestationContextForAPIKey(ctx
 		// x-oai-attestation in this case and proceeds with the request.
 		return ctx, nil
 	}
-	bridge.roundMu.Lock()
-	defer bridge.roundMu.Unlock()
 	if account.ID <= 0 {
 		return ctx, nil
 	}
+	if bound := bridge.boundAccountID.Load(); bound != 0 && bound != account.ID {
+		return ctx, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// 两秒预算覆盖排队和完整 RPC；保留原始业务 ctx，避免成功后附带已取消的子上下文。
+	roundCtx, cancel := context.WithTimeout(ctx, codexAppServerBridgeAttestationTimeout)
+	defer cancel()
+	bridge.initLocks()
+	if roundCtx.Err() != nil {
+		return ctx, nil
+	}
+	if err := bridge.roundMu.Lock(roundCtx); err != nil {
+		return ctx, nil
+	}
+	defer bridge.roundMu.Unlock()
+	if roundCtx.Err() != nil || bridge.closedState() {
+		return ctx, nil
+	}
+	// 排队期间其它请求可能完成账号绑定，拿锁后必须再次校验。
 	if bound := bridge.boundAccountID.Load(); bound != 0 && bound != account.ID {
 		return ctx, nil
 	}
@@ -444,7 +482,7 @@ func (s *OpenAIGatewayService) bindCodexAppServerAttestationContextForAPIKey(ctx
 		return ctx, nil
 	}
 	adapter.SetCollector(s.codexAttestationCollector, bridge.collectorToken, bridge.apiKeyID)
-	if _, err := adapter.GenerateForRequestWithTimeout(ctx, bridge.roundTrip, codexAppServerBridgeAttestationTimeout); err != nil {
+	if _, err := adapter.GenerateForRequestWithTimeout(roundCtx, bridge.roundTrip, codexAppServerBridgeAttestationTimeout); err != nil {
 		return ctx, nil
 	}
 	requestCtx, err := adapter.RequestContext()

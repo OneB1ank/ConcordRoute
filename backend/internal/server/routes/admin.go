@@ -109,7 +109,7 @@ func RegisterAdminRoutes(
 
 		// Codex app-server 设备证明采集；旧测试装配若未提供该可选处理器，
 		// 仍保留其余管理路由。
-		if h != nil && h.Admin != nil && h.Admin.CodexAttestationCollector != nil {
+		if h.Admin.CodexAttestationCollector != nil {
 			registerCodexAttestationCollectorRoutes(admin, h)
 		}
 

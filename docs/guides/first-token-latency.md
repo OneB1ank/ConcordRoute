@@ -17,10 +17,11 @@
 | 指标 | 实际含义 |
 | --- | --- |
 | TTFB | 首个响应字节到达；可能只有 HTTP 头、SSE 心跳或响应创建通知 |
-| 本项目首内容/TTFT | 当前转发尝试开始至首次识别到有内容的模型事件；内容可为文本、思考摘要、工具参数、音频或图像，不仅是最终答案 |
+| 本项目首内容/TTFT | 当前转发尝试开始至首个有内容事件的计时点；HTTP Responses/原始 Chat 以网关写出为准，WS/其它协议仍按各自事件计时；内容不仅是最终答案 |
 | 用户端首内容耗时 | 从客户端发起调用到客户端收到可展示内容，还包含客户端网络、入口处理、调度等待、之前失败尝试、回程和客户端解析 |
 
 HTTP 的 `startTime` 在转发方法内建立，WS 按各自转发尝试/轮次建立。
+HTTP 的 Flush 完成不代表入口反代已经释放缓冲，也不代表客户端已经收到或渲染。
 现有 `FirstTokenMs` 不是完整端到端监控，早于转发入口的鉴权、排队和跨账号失败尝试未必包含在内。
 本轮没有改变计时起点，避免把客户端耗时混入调度器使用的账号反馈。
 
@@ -93,13 +94,88 @@ go test -tags unit ./internal/service -run '^$' \
 - `request_received`、`auth_complete`、`routing_complete`、`forward_started`；
 - `request_body_read`、`content_moderation_started`、`content_moderation_done`；
 - `upstream_do_started`、`upstream_headers_received`、`first_upstream_byte`；
-- `first_sse_event`、`first_visible_output`、`first_downstream_flush`、`stream_completed`、`request_completed`。
+- `first_sse_event`、`first_content_received`；
+- `first_content_flush_started`、`first_content_flush_completed`；
+- `first_visible_output`、`first_downstream_flush`、`stream_completed`、`request_completed`。
 
-用相邻时间点相减即可区分鉴权/排队、连接与上游响应头、SSE 解析以及下游写出。
-例如 `first_upstream_byte` 接近 `upstream_headers_received` 而两者都远晚于
-`upstream_do_started`，优先检查代理、DNS、TCP/TLS 或上游排队；若
-`first_visible_output` 明显晚于 `first_sse_event`，则是上游先发生命周期事件，
-不是网关把首字节吞掉。
+HTTP Responses、透传和原始 Chat 同时输出 `ttft_attempts`：每次实际上游 Do 独立编号，
+关联账号 ID 和 `stages_ms`，同账号重试也独立记录。最多保留最近 64 次，编号不重置。
+这些毫秒仍相对请求入口，方便比较尝试之间的等待；旧连接迟到的 trace 回调只记到旧尝试。
+平面的 `ttft_stages_ms` 保留请求级前置阶段的首次值，上游/流阶段仅来自最后一次尝试，
+不把失败尝试的完成时间混入成功尝试。涉及重试的归因应读取 `ttft_attempts`，不要跨尝试做差。
+
+在同一次尝试内，`first_content_received` 表示解析识别到首个可用内容，
+在下游写出之前记录；到 `first_content_flush_completed` 的间隔包含网关缓冲、处理和下游写出等待。
+`first_content_flush_started`/`completed` 单独覆盖首内容所在的 flush。
+`first_visible_output` 保持既有首字口径；断连补样本分支不保证出现 flush-completed。
+`first_downstream_flush` 可能只是更早的结构帧，不能当成首内容到达。
+若 `first_upstream_byte` 很晚，应继续区分连接、代理和上游响应头等待；
+仅凭该字段仍无法单独量出 DNS/TCP/TLS 或模型排队。
+
+### 连接与请求操作明细
+
+同一诊断开关现在还输出两组有界事件，不新增上游探测：
+
+- `ttft_operations.events`：请求级 token 获取、cache read/hit/miss、刷新调用、刷新锁竞争等待、
+  用户/账号槽位、账号选择及同账号重试退避。每次发生都记录，不复用第一次的时间戳。
+- `ttft_attempts[].transport.events`：该次 Do 内的主机校验、客户端池条目获取、连接获取与复用、
+  本地 DNS/TCP、标准 TLS、自定义 TLS、代理协商、请求头/请求体写完和首响应字节。
+
+每条事件使用固定 `phase` 和相对请求入口的 `at_ms`；完成时 `failed=true` 表示有错误，
+但不记录错误原文。`connection_got` 还携带 `reused`、`was_idle` 和 `idle_ms`。
+每个事件列表最多 128 条，超量通过 `dropped` 显式标记；上游尝试仍最多保留最近 64 次。
+关闭诊断不创建采样状态、不挂新增网络回调。事件不携带主机、IP、凭据、证明、Header 或正文，
+不会修改 UA/TLS 模板、连接池键、Cockpit、UUID、缓存键、重试次数、等待预算和计费。
+
+判读顺序：
+
+| 区间 | 能解释的等待 | 边界 |
+| --- | --- | --- |
+| `account_selection` / `user_slot` / `account_slot` 起止 | 选择、并发槽位获取及相关处理 | 不等于上游推理，部分阶段早于列表 TTFT 起点 |
+| `token_get` / `token_refresh` / `token_lock_wait` 起止 | 凭据获取、刷新调用和锁竞争等待 | 刷新调用可能包含内部锁/存储，区间会嵌套 |
+| `host_validation` / `client_acquire` 起止 | 目标校验及客户端池条目获取 | 不等于 Transport 的连接获取 |
+| `connection_get` → `connection_got` | 连接池等待或新建连接的总等待 | 新连接可能包含 DNS/TCP/代理/TLS，勿再次相加 |
+| `request_headers_written` → `request_written` | Header 回调之后的请求体读取、编码及写出 | Header 回调时仍可能在缓冲区，不是纯网络上传 |
+| 成功的 `request_written` → 最终响应头/`first_content_received` | 请求发完后的等待 | 混合代理、网络、上游排队/处理，不能单独归因于模型 |
+| `first_content_received` → `first_content_flush_completed` | 网关缓冲/处理和下游写出 | 客户端收到及渲染仍需客户端侧时间 |
+
+HTTP/HTTPS 自定义代理分别记录 CONNECT 协商和代理自身 TLS；
+SOCKS 的 `proxy_tunnel` 包含到代理的连接及 SOCKS 协商，代理端解析目标 DNS 的耗时也在其中。
+自定义 uTLS 使用 `tls_client_handshake`，只观察握手，不改 ClientHello；原生标准 TLS 使用 `tls`。
+原生 HTTP CONNECT 没有独立协商回调时只体现于连接获取总区间，不凭缺省字段宣称 0ms。
+网络重试/双栈拨号可产生重复或重叠事件，保留顺序但不提供每条底层连接的独立 ID；
+不要把首次 start 与另一连接的 done 配成单次耗时。复用连接、IP 字面量及远端 DNS
+可能根本不触发本地 DNS/TLS 回调，缺省是“没有该项观测”，不是耗时为零。
+
+这些新增接线覆盖 HTTP Responses、HTTP passthrough 和原始 Chat 出站；
+WS 可共享部分请求级操作，但不代表 WS 全帧网络观测已补齐。
+已有访问日志输出/落库开关仍生效，诊断开关不强制开启系统日志落库。
+排障时短期开启并利用正常流量采样，完成后关闭，避免长期增加日志量。
+
+### 诊断自身的开销边界
+
+- 默认关闭；关闭时不分配采样状态或安装新增网络 trace，固定操作的空结束回调无分配。
+- 开启后只在当前请求内存中记录时间点。锁属于当前请求/尝试，不使用跨请求的采样全局锁；
+  每个事件列表有数量上限，不在事件回调中写文件、访问数据库或向上游发送探测。
+- 固定操作名使用常量，不重复拼接起止后缀；已规范化的阶段名直接复用，
+  避免流式响应反复标记首 Flush 时持续制造临时字符串。异常名称保留原有裁剪/清洗规则。
+- 诊断快照随访问日志在处理器返回后构造，不逐 token 输出日志。Info 关闭且没有可输出的
+  Gin Warn 错误时，跳过字段构造和序列化；入口拒绝统计、允许输出的错误日志保持原行为。
+- Ops 系统日志落库仍是既有有界异步队列；标准输出/文件日志仍可能同步写入。
+  慢磁盘或日志收集端背压可能延迟请求收尾，并在高并发下间接占用资源，因此不承诺零开销。
+  “日志在首内容 Flush 后写”也不代表客户端已收到首字或请求已结束。
+
+开关成本与序列化成本分别由 `BenchmarkTraceOperation`、`BenchmarkTraceRequest`、
+`BenchmarkTTFTRepeatedFlush`、`BenchmarkTTFTDiagnosticsRequest` 和
+`BenchmarkLoggerTTFTOverhead` 覆盖。示例命令：
+
+```bash
+go test -tags unit ./internal/pkg/latencytrace ./internal/service ./internal/server/middleware \
+  -run '^$' -bench 'BenchmarkTrace|BenchmarkTTFT|BenchmarkLoggerTTFT' -benchmem -count=3
+```
+
+基准只衡量本机模拟状态、回调和日志编码（输出到 Discard），不是线上首字、磁盘吞吐或网络
+p95 的测量。上线短期诊断仍需观察 CPU、GC、日志速率和丢弃计数，取到样本后关闭。
 
 先把同一个请求的以下时间对齐，再决定调整哪个环节：
 

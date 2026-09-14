@@ -54,6 +54,13 @@ func Logger() gin.HandlerFunc {
 			}
 		}
 
+		// 在构造诊断快照和 With 序列化之前检查级别，避免关闭 Info 后仍支付完整日志成本。
+		// 入口拒绝统计已在上方执行；存在 Gin 错误时继续保留允许的 Warn 日志。
+		l := logger.FromContext(c.Request.Context())
+		if !l.Core().Enabled(zap.InfoLevel) && (len(c.Errors) == 0 || !l.Core().Enabled(zap.WarnLevel)) {
+			return
+		}
+
 		fields := []zap.Field{
 			zap.String("component", "http.access"),
 			zap.Int("status_code", statusCode),
@@ -81,8 +88,14 @@ func Logger() gin.HandlerFunc {
 		if stages := service.TTFTStageTimingSnapshot(c, endTime); len(stages) > 0 {
 			fields = append(fields, zap.Any("ttft_stages_ms", stages))
 		}
+		if attempts := service.TTFTAttemptTimingSnapshots(c); len(attempts) > 0 {
+			fields = append(fields, zap.Any("ttft_attempts", attempts))
+		}
+		if operations := service.TTFTRequestOperationSnapshot(c); operations != nil && len(operations.Events) > 0 {
+			fields = append(fields, zap.Any("ttft_operations", operations))
+		}
 
-		l := logger.FromContext(c.Request.Context()).With(fields...)
+		l = l.With(fields...)
 		l.Info("http request completed", zap.Time("completed_at", endTime))
 
 		if len(c.Errors) > 0 {

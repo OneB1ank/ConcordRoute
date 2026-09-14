@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 	"strings"
 	"time"
 
@@ -877,18 +876,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		proxyURL := resolveAccountProxyURL(account)
-		// httptrace distinguishes a cold/proxy/TLS wait from upstream model
-		// scheduling. It records only transport phase timestamps.
-		upstreamTrace := &httptrace.ClientTrace{
-			GotFirstResponseByte: func() { MarkTTFTStage(c, "first_upstream_byte") },
-		}
-		upstreamReq = upstreamReq.WithContext(httptrace.WithClientTrace(upstreamReq.Context(), upstreamTrace))
+		// 回调固定绑定本次尝试；首字节等待本身仍混合连接与上游处理时间。
+		markUpstreamStage := BeginTTFTUpstreamAttempt(c, account.ID)
+		upstreamReq = withTTFTUpstreamTrace(c, upstreamReq, markUpstreamStage)
 
 		upstreamStart := time.Now()
-		MarkTTFTStage(c, "upstream_do_started")
+		markUpstreamStage("upstream_do_started")
 		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch))
 		if resp != nil {
-			MarkTTFTStage(c, "upstream_headers_received")
+			markUpstreamStage("upstream_headers_received")
 		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {

@@ -260,7 +260,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
-	defer MarkTTFTStage(c, "stream_completed")
+	markStreamStage := beginTTFTStream(c, account)
+	defer markStreamStage("stream_completed")
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
@@ -310,10 +311,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if clientDisconnected || !clientOutputStarted {
 			return
 		}
-		c.Writer.Flush()
-		MarkTTFTStage(c, "first_downstream_flush")
 		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
-			MarkTTFTStage(c, "first_visible_output")
+			markStreamStage("first_content_flush_started")
+		}
+		c.Writer.Flush()
+		markStreamStage("first_downstream_flush")
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			markStreamStage("first_content_flush_completed")
+			markStreamStage("first_visible_output")
 			recordFirstTokenMs(&firstTokenMs, startTime)
 			firstVisibleOutputPendingFlush = false
 		}
@@ -325,7 +330,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			if !firstSSEEventObserved {
 				firstSSEEventObserved = true
-				MarkTTFTStage(c, "first_sse_event")
+				markStreamStage("first_sse_event")
 			}
 			trimmedPayload := strings.TrimSpace(payload)
 			if trimmedPayload != "[DONE]" {
@@ -334,6 +339,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 				streamAccumulator.ObservePayload(payload)
 				if firstTokenMs == nil && openAIChatStreamHasVisibleOutput(payload) {
+					markStreamStage("first_content_received")
 					firstVisibleOutputPendingFlush = true
 				}
 			}
@@ -371,10 +377,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 			}
 			if !clientDisconnected {
-				c.Writer.Flush()
-				MarkTTFTStage(c, "first_downstream_flush")
 				if firstVisibleOutputPendingFlush && firstTokenMs == nil {
-					MarkTTFTStage(c, "first_visible_output")
+					markStreamStage("first_content_flush_started")
+				}
+				c.Writer.Flush()
+				markStreamStage("first_downstream_flush")
+				if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+					markStreamStage("first_content_flush_completed")
+					markStreamStage("first_visible_output")
 					recordFirstTokenMs(&firstTokenMs, startTime)
 					firstVisibleOutputPendingFlush = false
 				}

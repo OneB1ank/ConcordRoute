@@ -520,6 +520,8 @@ export default {
         overdraftRecoverAt: '预计恢复',
         estimatedWeeklyTotal: '预估周额度 ≈ {amount}',
         estimatedWeeklyTotalHint: '≈ 表示预估值；根据当前 7 天窗口的已用费用和使用率计算，会随窗口数据更新而变化。',
+        localFiveHourStats: '近5h',
+        localFiveHourStatsHint: '本地最近 5 小时该账号所有会话的请求、Token 和 A/U 费用累计，按已记录用量统计；与上游额度百分比及重置时间独立。',
         statsTitle: '5小时窗口用量统计',
         statsTitleDaily: '每日用量统计',
         geminiProDaily: 'Pro',

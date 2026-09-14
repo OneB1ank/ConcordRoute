@@ -88,7 +88,7 @@ func (p *linuxProvider) Generate(ctx context.Context) (string, error) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return "", errors.New("Linux attestation helper timed out")
+			return "", errors.New("linux attestation helper timed out")
 		}
 		reason := strings.TrimSpace(stderr.String())
 		if len(reason) > 240 {
@@ -97,11 +97,11 @@ func (p *linuxProvider) Generate(ctx context.Context) (string, error) {
 		if reason == "" {
 			reason = err.Error()
 		}
-		return "", fmt.Errorf("Linux attestation helper failed: %s", reason)
+		return "", fmt.Errorf("linux attestation helper failed: %s", reason)
 	}
 	header, err := NormalizeClientEnvelope(strings.TrimSpace(stdout.String()))
 	if err != nil {
-		return "", fmt.Errorf("Linux attestation helper returned invalid envelope: %w", err)
+		return "", fmt.Errorf("linux attestation helper returned invalid envelope: %w", err)
 	}
 	return header, nil
 }

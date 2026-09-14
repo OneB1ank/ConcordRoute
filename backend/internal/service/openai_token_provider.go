@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 )
 
 const (
@@ -144,7 +146,11 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 
 	// 1) Try cache first.
 	if p.tokenCache != nil {
-		if token, err := p.tokenCache.GetAccessToken(ctx, cacheKey); err == nil && strings.TrimSpace(token) != "" {
+		finishCacheRead := latencytrace.Start(ctx, "token_cache_read")
+		cachedToken, cacheErr := p.tokenCache.GetAccessToken(ctx, cacheKey)
+		finishCacheRead(cacheErr)
+		if token, err := cachedToken, cacheErr; err == nil && strings.TrimSpace(token) != "" {
+			latencytrace.Mark(ctx, "token_cache_hit", nil)
 			slog.Debug("openai_token_cache_hit", "account_id", account.ID)
 			return token, nil
 		} else if err != nil {
@@ -153,6 +159,7 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 	}
 
 	slog.Debug("openai_token_cache_miss", "account_id", account.ID)
+	latencytrace.Mark(ctx, "token_cache_miss", nil)
 
 	// 2) Refresh if needed (pre-expiry skew).
 	expiresAt := account.GetCredentialAsTime("expires_at")
@@ -172,7 +179,9 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 		p.metrics.refreshRequests.Add(1)
 		p.metrics.touchNow()
 
+		finishRefresh := latencytrace.Start(ctx, "token_refresh")
 		result, err := p.refreshAPI.RefreshIfNeeded(ctx, account, p.executor, openAITokenRefreshSkew)
+		finishRefresh(err)
 		if err != nil {
 			if p.refreshPolicy.OnRefreshError == ProviderRefreshErrorReturn {
 				return "", err
@@ -300,7 +309,10 @@ func (p *OpenAITokenProvider) disableAccountMissingRefreshToken(account *Account
 	)
 }
 
-func (p *OpenAITokenProvider) waitForTokenAfterLockRace(ctx context.Context, cacheKey string) (string, error) {
+func (p *OpenAITokenProvider) waitForTokenAfterLockRace(ctx context.Context, cacheKey string) (resultToken string, resultErr error) {
+	// 锁竞争等待单独计时，刷新策略、随机退避和实际返回值保持原样。
+	finish := latencytrace.Start(ctx, "token_lock_wait")
+	defer func() { finish(resultErr) }()
 	wait := openAILockInitialWait
 	totalWaitMs := int64(0)
 	for i := 0; i < openAILockMaxAttempts; i++ {

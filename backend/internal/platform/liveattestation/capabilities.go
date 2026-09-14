@@ -61,11 +61,12 @@ func CurrentCapabilityStatus(ctx context.Context) CapabilityStatus {
 		return status
 	}
 	status.LiveDeviceCheckServer = true
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		status.ServerAttestationProvider = "linux_external_helper"
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		status.ServerAttestationProvider = "macos_devicecheck"
-	} else {
+	default:
 		status.ServerAttestationProvider = "platform_provider"
 	}
 	status.LiveAttestationMode = "server_and_client_relay"

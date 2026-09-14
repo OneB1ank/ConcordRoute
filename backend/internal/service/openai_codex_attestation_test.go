@@ -212,7 +212,7 @@ func TestCodexAttestationClientTokenRemainsOpaqueWhenRelayed(t *testing.T) {
 }
 func TestWithCodexAttestationRequestContextAcceptsNilParentContext(t *testing.T) {
 	value := CodexAttestationRequestContext{Key: liveattestation.SessionKey{AccountID: 42, ConnectionID: "conn-nil"}}
-	ctx := WithCodexAttestationRequestContext(nil, value)
+	ctx := WithCodexAttestationRequestContext(nil, value) //nolint:staticcheck // 专项验证公开辅助方法接受缺省父上下文的兼容契约。
 	got, ok := codexAttestationContextFrom(ctx)
 	require.True(t, ok)
 	require.Equal(t, value.Key, got.Key)

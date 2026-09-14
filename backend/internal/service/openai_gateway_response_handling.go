@@ -49,7 +49,8 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
-	defer MarkTTFTStage(c, "stream_completed")
+	markStreamStage := beginTTFTStream(c, account)
+	defer markStreamStage("stream_completed")
 	firstOutputTimeout := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
 		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
@@ -112,7 +113,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 	var firstTokenMs *int
 	// SSE 载荷只有在事件边界完成 flush 后才对客户端可见。待确认标记与 firstTokenMs 分离，
-	// 使持久化 TTFT 表示下游真实可见的写入时刻。
+	// 使持久化 TTFT 表示网关写出时刻，而非承诺客户端已经收到。
 	firstVisibleOutputPendingFlush := false
 	firstSSEEventObserved := false
 	firstOutputProgressObserved := false
@@ -139,6 +140,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		return int64(bufferedWriter.Buffered())
 	}
 	flushBuffered := func() error {
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			markStreamStage("first_content_flush_started")
+		}
 		if firstOutputStage != nil && !firstOutputProgressObserved && !firstOutputStage.closed {
 			if err := firstOutputStage.CommitTo(w); err != nil {
 				return err
@@ -149,9 +153,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 		}
 		flusher.Flush()
-		MarkTTFTStage(c, "first_downstream_flush")
+		markStreamStage("first_downstream_flush")
 		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
-			MarkTTFTStage(c, "first_visible_output")
+			markStreamStage("first_content_flush_completed")
+			markStreamStage("first_visible_output")
 			recordFirstTokenMs(&firstTokenMs, startTime)
 			firstVisibleOutputPendingFlush = false
 		}
@@ -274,7 +279,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
 			// 可见事件已写入但客户端在 SSE 空行 flush 前断连时，仍保留该样本。
-			MarkTTFTStage(c, "first_visible_output")
+			markStreamStage("first_visible_output")
 			recordFirstTokenMs(&firstTokenMs, startTime)
 			firstVisibleOutputPendingFlush = false
 		}
@@ -469,7 +474,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			if !firstSSEEventObserved {
 				firstSSEEventObserved = true
-				MarkTTFTStage(c, "first_sse_event")
+				markStreamStage("first_sse_event")
 			}
 
 			// Replace model in response if needed.
@@ -638,6 +643,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType)
+			if startsVisibleOutput {
+				// 单独记录解析到首内容的时间，包含正文的写出阻塞不会混入该阶段。
+				markStreamStage("first_content_received")
+			}
 			if guardFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsVisibleOutput = eventStartsVisibleOutput || startsVisibleOutput

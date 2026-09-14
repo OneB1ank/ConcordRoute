@@ -226,18 +226,16 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		}
 		// 若存在 app-server bridge，Live 创建也先绑定同一条真实 JSON-RPC
 		// attestation/generate 通道，随后复用其客户端证明。
-		attemptCtx := ctx
-		if boundCtx, bindErr := s.bindCodexAppServerAttestationContextForAPIKey(
+		attemptCtx, bindErr := s.bindCodexAppServerAttestationContextForAPIKey(
 			ctx,
 			identity.APIKeyID,
 			account,
 			strings.TrimSpace(gjson.GetBytes(request.Session, "session_id").String()),
 			strings.TrimSpace(gjson.GetBytes(request.Session, "thread_id").String()),
-		); bindErr != nil {
+		)
+		if bindErr != nil {
 			selection.ReleaseFunc()
 			return nil, bindErr
-		} else {
-			attemptCtx = boundCtx
 		}
 		// 优先使用该 OAuth 账号对应客户端/app-server 的真实 envelope。
 		// 支持的 macOS 部署仍可使用平台提供器；Linux 承接 Windows 客户端时

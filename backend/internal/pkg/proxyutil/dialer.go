@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"golang.org/x/net/proxy"
 )
 
@@ -70,7 +71,12 @@ func ConfigureTransportProxy(transport *http.Transport, proxyURL *url.URL) error
 		}
 		// 优先使用支持 context 的 DialContext，以支持请求取消和超时
 		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
-			transport.DialContext = contextDialer.DialContext
+			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				finish := latencytrace.Start(ctx, "proxy_tunnel")
+				conn, err := contextDialer.DialContext(ctx, network, addr)
+				finish(err)
+				return conn, err
+			}
 		} else {
 			// 回退路径：如果 dialer 不支持 ContextDialer，则包装为简单的 DialContext
 			// 注意：此回退不支持请求取消和超时控制

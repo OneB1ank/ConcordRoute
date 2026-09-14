@@ -2293,7 +2293,7 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 	return progress
 }
 
-// codexWindowStatsStart 按 Codex 上游返回的重置时间对齐本地用量统计窗口。
+// codexWindowStatsStart 对齐具有上游配额周期的统计窗口（当前用于 7d）。
 //
 // 当 reset_at 刚刚过去时，窗口已经在该时间点开启了新周期；回退到
 // now-window 会把上一周期的尾部日志错误地计入当前窗口。对较旧的过期
@@ -2318,10 +2318,12 @@ func codexWindowStatsStart(progress *UsageProgress, fallbackWindow time.Duration
 	return now.Add(-fallbackWindow)
 }
 
-// codexWindowStatsStarts 根据对应上游窗口独立计算本地聚合起点。固定周窗口可能在
-// 滚动 5 小时窗口之后开始，强制周窗口包含 5 小时窗口会在周重置后重复统计用量。
-func codexWindowStatsStarts(fiveHour, sevenDay *UsageProgress, now time.Time) (time.Time, time.Time) {
-	fiveHourStart := codexWindowStatsStart(fiveHour, 5*time.Hour, now)
+// codexWindowStatsStarts 将本地近 5h 账务与上游配额重置解耦。零秒 reset 会随
+// 每次响应推进，若用于本地起点就只剩最新一笔；按账号从已落库记录重新汇总即可，
+// 不按会话截断，也不在进程内累加。7d 仍独立对齐上游周周期，避免周重置后重复统计。
+func codexWindowStatsStarts(_ *UsageProgress, sevenDay *UsageProgress, now time.Time) (time.Time, time.Time) {
+	now = now.UTC()
+	fiveHourStart := now.Add(-5 * time.Hour)
 	sevenDayStart := codexWindowStatsStart(sevenDay, 7*24*time.Hour, now)
 	return fiveHourStart, sevenDayStart
 }

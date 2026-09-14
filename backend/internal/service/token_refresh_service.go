@@ -1473,6 +1473,8 @@ func isNonRetryableRefreshError(err error) bool {
 }
 
 // ensureOpenAIPrivacy 是历史兼容辅助方法；后台令牌刷新不再调用它。
+//
+//nolint:unused // 保留兼容辅助方法和 unit 回归，不恢复自动隐私设置。
 func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *Account) {
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return
@@ -1522,6 +1524,8 @@ func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *
 }
 
 // ensureAntigravityPrivacy 是历史兼容辅助方法；后台令牌刷新不再调用它。
+//
+//nolint:unused // 保留兼容辅助方法，不恢复自动隐私设置。
 func (s *TokenRefreshService) ensureAntigravityPrivacy(ctx context.Context, account *Account) {
 	if account.Platform != PlatformAntigravity || account.Type != AccountTypeOAuth {
 		return

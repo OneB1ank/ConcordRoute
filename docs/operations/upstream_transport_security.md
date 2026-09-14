@@ -58,9 +58,20 @@ Header override 只对 Anthropic/OpenAI 的 API Key 账号，以及 Grok 的 API
 
 构建器通常先写入平台认证、客户端身份和会话头，再在末尾应用允许的 override；因此允许项可以有意覆盖 User-Agent 等内置头，而禁止项不会遮蔽真实凭据或固定会话身份。新增转发路径时必须复用同一套过滤与应用函数，不能直接遍历原始 credentials。
 
+OpenAI 的 `User-Agent`、`Originator`、`Version`、`codex_version` 由统一身份策略管理，
+运行时忽略通用 override 提供的这四个头。保存路径按账号平台拒绝后三者，UA 的旧保存兼容行为保持不变。
+非 OpenAI 平台仍可配置这些通用头，不受 Codex 专用名单影响；创建、复制、编辑及混合平台批量更新都按实际平台校验，
+批量校验在任何写操作前完成。认证、传输控制和非法 Header 的通用防护不变。
+
 代理 URL、API Key、OAuth token、AWS/Google 凭据和 TLS 采集内容不得进入普通错误、Ops body 或前端公开设置。错误日志只记录代理/TLS/profile ID、目标 host、阶段和脱敏分类。
 
 ## 诊断与降级
+
+首字诊断通过请求 context 传递只读耗时采样器，标准 Transport 使用 httptrace，
+自定义 HTTP/HTTPS/SOCKS 隧道与 uTLS 握手补充固定阶段事件。不会重建或修改 ClientHello、
+UA、ALPN、超时、连接池隔离键及代理选择，也不在 HTTP 请求里追加诊断头。
+网络回调固定绑定原 Do，即使迟到也不会进入后一次尝试；关闭诊断不附加网络采样回调。
+代理端 DNS 不虚构成本地 DNS 阶段，SOCKS tunnel 与 TCP/TLS 等嵌套区间不得重复相加。
 
 排障顺序应区分 DNS/目标拒绝、代理连接、代理认证、TLS 握手、HTTP 协商、上游状态码和响应解析。代理健康测试成功不证明特定 TLS profile/目标可用；账号测试失败也不应立刻把共享代理永久判死。
 

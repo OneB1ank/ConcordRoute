@@ -18,6 +18,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ip"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/openai"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/tlsfingerprint"
@@ -1350,7 +1351,10 @@ func hashSensitiveValueForLog(raw string) string {
 }
 
 // GetAccessToken gets the access token for an OpenAI account
-func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Account) (string, string, error) {
+func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Account) (token string, authType string, resultErr error) {
+	// 包含影子账号读取及 provider 等待，不保存 token 或凭据来源内容。
+	finish := latencytrace.Start(ctx, "token_get")
+	defer func() { finish(resultErr) }()
 	if account.IsShadow() {
 		credAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil {

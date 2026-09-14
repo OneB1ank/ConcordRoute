@@ -3,18 +3,20 @@
     <!-- Window stats row (above progress bar) -->
     <div
       v-if="windowStats && hasVisibleStats(windowStats)"
+      data-testid="window-stats"
+      :title="statsHint"
       class="mb-0.5 flex items-center"
     >
       <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
         <span
-          v-if="statsOnly"
+          v-if="statsOnly || statsLabel"
           :class="[
-            wideLabel ? 'w-[48px]' : 'w-[32px]',
+            statsLabel ? 'min-w-[32px]' : (wideLabel ? 'w-[48px]' : 'w-[32px]'),
             'shrink-0 whitespace-nowrap rounded px-1 text-center text-[10px] font-medium',
             labelClass
           ]"
         >
-          {{ label }}
+          {{ statsLabel || label }}
         </span>
         <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
           {{ formatRequests }} req
@@ -112,6 +114,9 @@ const props = defineProps<{
   resetsAt?: string | null
   color: 'indigo' | 'emerald' | 'purple' | 'amber'
   windowStats?: WindowStats | null
+  // 本地累计与上游配额周期可能不同，允许调用方显式标注统计范围。
+  statsLabel?: string
+  statsHint?: string
   overdraftStats?: WindowStats | null
   showNowWhenIdle?: boolean
   statsOnly?: boolean

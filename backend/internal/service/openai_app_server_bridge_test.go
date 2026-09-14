@@ -28,14 +28,14 @@ func TestCodexAppServerBridgeRoundTripBindsAttestationContext(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		_ = svc.ServeCodexAppServerBridge(ctx, 42, conn, "session-a", "thread-a")
 	}))
 	defer server.Close()
 
 	client, _, err := coderws.Dial(ctx, "ws"+server.URL[len("http"):], nil)
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 
 	initialize := []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex","version":"0.153.4"},"capabilities":{"requestAttestation":true}}}`)
 	require.NoError(t, client.Write(ctx, coderws.MessageText, initialize))
@@ -108,7 +108,7 @@ func TestCodexAppServerBridgeRoundTripBindsAttestationContext(t *testing.T) {
 	_, otherBound := codexAttestationContextFrom(otherContext)
 	require.False(t, otherBound)
 
-	client.Close(coderws.StatusNormalClosure, "done")
+	require.NoError(t, client.Close(coderws.StatusNormalClosure, "done"))
 	deadline := time.Now().Add(time.Second)
 	for liveattestation.AppServerAttestationTransportEnabled() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -134,7 +134,7 @@ func TestCodexAppServerBridgeAcceptsHTTP11WebSocketUpgrade(t *testing.T) {
 	// 与界面展示的采集器地址保持一致。
 	client, _, err := coderws.Dial(ctx, server.URL, nil)
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 	select {
 	case proto := <-seen:
 		require.Equal(t, "HTTP/1.1", proto)
@@ -160,7 +160,7 @@ func TestCodexAppServerBridgeCollectorCapturesRealRoundTripSummary(t *testing.T)
 		if acceptErr != nil {
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		_ = svc.serveCodexAppServerBridge(ctx, 42, conn, "session-capture", "thread-capture", CodexAttestationHandshakeMetadata{
 			HTTPProtocol: r.Proto,
 			Transport:    "websocket",
@@ -175,7 +175,7 @@ func TestCodexAppServerBridgeCollectorCapturesRealRoundTripSummary(t *testing.T)
 		"originator": {"codex_cli_rs"},
 	}})
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-tui","version":"0.153.4"},"capabilities":{"requestAttestation":true}}}`)))
 	_, _, err = client.Read(ctx)
 	require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestCodexAppServerBridgeHandlerCapturesOfficialHeaderValue(t *testing.T) {
 		"originator": {"codex_cli_rs"},
 	}})
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-tui","version":"0.153.4"},"capabilities":{"requestAttestation":true}}}`)))
 	_, _, err = client.Read(ctx)
 	require.NoError(t, err)
@@ -301,14 +301,14 @@ func TestCodexAppServerBridgeDoesNotRegisterUnnegotiatedConnection(t *testing.T)
 		if err != nil {
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		_ = svc.ServeCodexAppServerBridge(ctx, 77, conn, "session-no-proof", "thread-no-proof")
 	}))
 	defer server.Close()
 
 	client, _, err := coderws.Dial(ctx, "ws"+server.URL[len("http"):], nil)
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"id":1,"method":"initialize","params":{"capabilities":{"requestAttestation":false}}}`)))
 	_, _, err = client.Read(ctx)
 	require.NoError(t, err)
@@ -335,14 +335,14 @@ func TestCodexAppServerBridgeRejectsInitializeWithoutRequestID(t *testing.T) {
 			errCh <- err
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		errCh <- svc.ServeCodexAppServerBridge(ctx, 78, conn, "", "")
 	}))
 	defer server.Close()
 
 	client, _, err := coderws.Dial(ctx, "ws"+server.URL[len("http"):], nil)
 	require.NoError(t, err)
-	defer client.CloseNow()
+	defer func() { _ = client.CloseNow() }()
 	require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"method":"initialize","params":{"capabilities":{"requestAttestation":true}}}`)))
 	select {
 	case err := <-errCh:

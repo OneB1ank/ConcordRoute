@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
 )
@@ -189,11 +190,14 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 	// Step 2: Establish SOCKS5 tunnel to target
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
 	var conn net.Conn
+	// 此区间包含到代理的连接及 SOCKS 协商；TCP/DNS 回调另外记录，区间不直接相加。
+	finishTunnel := latencytrace.Start(ctx, "proxy_tunnel")
 	if contextDialer, ok := socksDialer.(proxy.ContextDialer); ok {
 		conn, err = contextDialer.DialContext(ctx, network, addr)
 	} else {
 		conn, err = socksDialer.Dial(network, addr)
 	}
+	finishTunnel(err)
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)
@@ -245,7 +249,10 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 			}
 		}
 		tlsConn := stdtls.Client(conn, proxyTLSConfig)
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
+		finishProxyTLS := latencytrace.Start(ctx, "proxy_tls")
+		proxyTLSErr := tlsConn.HandshakeContext(ctx)
+		finishProxyTLS(proxyTLSErr)
+		if err := proxyTLSErr; err != nil {
 			_ = conn.Close()
 			slog.Debug("tls_fingerprint_https_proxy_handshake_failed", "error", err)
 			return nil, fmt.Errorf("handshake with HTTPS proxy: %w", err)
@@ -271,7 +278,9 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	}
 
 	slog.Debug("tls_fingerprint_http_proxy_sending_connect", "target", addr)
+	finishTunnel := latencytrace.Start(ctx, "proxy_tunnel")
 	if err := req.Write(conn); err != nil {
+		finishTunnel(err)
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_write_failed", "error", err)
 		return nil, fmt.Errorf("write CONNECT request: %w", err)
@@ -281,6 +290,7 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, req)
 	if err != nil {
+		finishTunnel(err)
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_read_response_failed", "error", err)
 		return nil, fmt.Errorf("read CONNECT response: %w", err)
@@ -289,10 +299,12 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	// same conn that will be used for the TLS handshake.
 
 	if resp.StatusCode != http.StatusOK {
+		finishTunnel(http.ErrNotSupported)
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed_status", "status_code", resp.StatusCode, "status", resp.Status)
 		return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
 	}
+	finishTunnel(nil)
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
 	// Step 4: Perform TLS handshake on the tunnel with utls fingerprint
@@ -332,7 +344,11 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 
 	handshakeCtx, cancel := context.WithTimeout(ctx, defaultTLSFingerprintHandshakeTimeout)
 	defer cancel()
-	if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
+	// 自定义 DialTLSContext 不自动产生标准 TLS trace；只补观测，不改 ClientHello/ALPN。
+	finishTLS := latencytrace.Start(ctx, "tls_client_handshake")
+	handshakeErr := tlsConn.HandshakeContext(handshakeCtx)
+	finishTLS(handshakeErr)
+	if err := handshakeErr; err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("TLS handshake failed: %w", err)
 	}

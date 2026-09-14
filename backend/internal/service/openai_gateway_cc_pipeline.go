@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 	"strings"
 	"time"
 
@@ -228,13 +227,12 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	account.ApplyHeaderOverrides(upstreamReq.Header)
 
 	proxyURL := resolveAccountProxyURL(account)
-	upstreamReq = upstreamReq.WithContext(httptrace.WithClientTrace(upstreamReq.Context(), &httptrace.ClientTrace{
-		GotFirstResponseByte: func() { MarkTTFTStage(c, "first_upstream_byte") },
-	}))
-	MarkTTFTStage(c, "upstream_do_started")
+	markUpstreamStage := BeginTTFTUpstreamAttempt(c, account.ID)
+	upstreamReq = withTTFTUpstreamTrace(c, upstreamReq, markUpstreamStage)
+	markUpstreamStage("upstream_do_started")
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
 	if resp != nil {
-		MarkTTFTStage(c, "upstream_headers_received")
+		markUpstreamStage("upstream_headers_received")
 	}
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)

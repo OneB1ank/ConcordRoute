@@ -379,7 +379,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		SkipDefaultGroupBind:  true,
 		SkipMixedChannelCheck: true,
 	}
-	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
+	if err := NormalizeHeaderOverrideCredentialsForPlatform(input.Credentials, input.Platform); err != nil {
 		return nil, err
 	}
 	duplicate, err := buildAccountForCreate(input, input.Extra)
@@ -560,7 +560,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	}
 
 	// 校验并规范化请求头覆写配置（header 名小写化、格式检查）
-	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
+	if err := NormalizeHeaderOverrideCredentialsForPlatform(input.Credentials, input.Platform); err != nil {
 		return nil, err
 	}
 	// OAuth 兑换后不得持久化临时 SSO 或密码。
@@ -654,7 +654,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		// 全对象 PUT 编辑时不会再带回 token，避免覆盖时清空已有凭证。
 		account.Credentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
 		// 校验并规范化请求头覆写配置（header 名小写化、格式检查）
-		if err := NormalizeHeaderOverrideCredentials(account.Credentials); err != nil {
+		if err := NormalizeHeaderOverrideCredentialsForPlatform(account.Credentials, account.Platform); err != nil {
 			return nil, err
 		}
 		// 移除不得与 OAuth token 一同保存的 SSO 和密码残留。
@@ -989,6 +989,10 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 			for key, value := range input.Credentials {
 				prospective.Credentials[key] = value
+			}
+			// 混合平台批量更新在任何落库前逐账号验证，不扩大 Codex 头保护范围。
+			if err := NormalizeHeaderOverrideCredentialsForPlatform(prospective.Credentials, prospective.Platform); err != nil {
+				return nil, err
 			}
 			if err := validateGeminiThirdPartyBaseURL(&prospective); err != nil {
 				return nil, err

@@ -82,6 +82,35 @@ describe('AccountUsageCell', () => {
     })
   })
 
+  it('OpenAI 近五小时账务使用独立标签，完整传递后端累计值和额度快照', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 0, resets_at: null, remaining_seconds: 0,
+        window_stats: { requests: 7, tokens: 481500, cost: 1.42, user_cost: 1.42 }
+      },
+      seven_day: null
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 2991, platform: 'openai', type: 'oauth' }) },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['statsLabel', 'statsHint', 'windowStats', 'utilization'],
+            template: '<div data-test="local-stats">{{ statsLabel }}|{{ statsHint }}|{{ windowStats.requests }}|{{ windowStats.tokens }}|{{ utilization }}</div>'
+          },
+          OpenAIQuotaResetCell: true
+        }
+      }
+    })
+    await flushPromises()
+    const row = wrapper.get('[data-test="local-stats"]')
+    expect(row.text()).toContain('admin.accounts.usageWindow.localFiveHourStats')
+    expect(row.text()).toContain('admin.accounts.usageWindow.localFiveHourStatsHint')
+    expect(row.text()).toContain('|7|481500|0')
+    expect(getUsage).toHaveBeenCalledWith(2991)
+    wrapper.unmount()
+  })
+
   it('renders eligible Ollama Cloud state inside the unified usage cell', () => {
     const wrapper = mount(AccountUsageCell, {
       props: {

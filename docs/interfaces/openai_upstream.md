@@ -21,6 +21,10 @@ OAuth 账号可受 Codex CLI-only、允许客户端、agent identity、privacy s
 
 ### 客户端 Attestation 协商
 
+远程证明桥的两秒预算覆盖互斥排队与完整 RPC，等待写锁也服从剩余预算。
+取消请求或预算耗尽按原有可选证明策略退出，业务请求保留原始上下文；
+账号不匹配时先跳过，拿到锁后再次校验绑定，避免排队期间串用账号。
+
 Codex app-server 的 `initialize.params.capabilities.requestAttestation=true` 会话由网关短时记录，并按 API Key、连接、账号、session/thread 隔离。客户端通过独立的 `GET /backend-api/codex/app-server` WebSocket 接入 JSON-RPC bridge；首帧必须是 `initialize`，随后上游请求由该 bridge 发出与 Codex 源码一致的 just-in-time `attestation/generate`：`{"jsonrpc":"2.0","id":N,"method":"attestation/generate","params":{}}`。响应按 JSON-RPC ID 匹配，只接受 `v1.*` opaque token，再封装为 `{"v":1,"s":0,"t":"..."}`。超时、请求失败、取消和 malformed response 分别形成 `s=1/2/3/4`，不合成 token；Responses HTTP、Responses WebSocket 和 Live 创建都会复用同一条已协商连接。`app_server_attestation_transport` 是运行时字段：没有已完成协商的 bridge 时为 `false`，至少一条活动 bridge 完成 initialize 后为 `true`，全部断开后恢复 `false`。未建立 bridge 时，Responses、passthrough 和 WebSocket 会剥离公网请求直接携带的 `x-oai-attestation`，Live 带有未协商 envelope 时直接返回 attestation unavailable，不回退到其它来源。只有完成能力协商、ID 匹配、短 TTL 未过期的内部 context 才能把证明绑定到上游请求。Linux 服务端不生成伪造 DeviceCheck 证明；配置真实 Linux helper 或接入真实 app-server bridge 后，才会启用对应服务端路径。Windows UA/TLS 模板只表示客户端身份与连接特征，不代表证明已经生成。证明状态仅短 TTL 保存在内存；Live Sideband 只保存加密后的会话 envelope，不写入账号凭据或普通日志。
 
 管理员可显式开启 app-server 证明采集器：`POST /admin/codex-attestation-collector/start` 后创建 `POST /admin/codex-attestation-collector/sessions`，将返回的 `collector_token` 作为 `collector_token` 查询参数或 `X-Codex-Attestation-Collector-Token` 握手头附加到 app-server WebSocket。管理页面会同时显示完整 WebSocket 地址，并提供显式删除当前采集会话的操作。采集器只记录 `initialize` 能力、`attestation/generate` 状态、请求 ID、客户端版本、连接/session/thread 关联以及 proof 长度和 SHA-256；`GET /admin/codex-attestation-collector/sessions/:token/captures` 不返回 opaque proof 原文。会话默认 30 分钟、每会话最多 100 条，停止采集会立即清除内存摘要；采集 token 不是上游认证凭据，也不能写入账号、TLS 模板或全局配置。采集器只覆盖证明层；账号现有 Codex 收敛策略和 TLS 模板/路由继续由各自配置决定，不在采集器内切换。

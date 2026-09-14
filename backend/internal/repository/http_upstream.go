@@ -27,6 +27,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/proxyurl"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/proxyutil"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/servertiming"
@@ -196,7 +197,10 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 //   - inFlight > 0 的客户端不会被淘汰，确保活跃请求不被中断
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	applyGrokCLIProxyHeaders(req)
-	if err := s.validateRequestHost(req); err != nil {
+	finishValidation := observeUpstreamPhase(req, "host_validation")
+	validationErr := s.validateRequestHost(req)
+	finishValidation(validationErr)
+	if err := validationErr; err != nil {
 		return nil, err
 	}
 	profile := service.HTTPUpstreamProfileDefault
@@ -205,7 +209,9 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	}
 
 	// 获取或创建对应的客户端，并标记请求占用
+	finishAcquire := observeUpstreamPhase(req, "client_acquire")
 	entry, err := s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, profile)
+	finishAcquire(err)
 	if err != nil {
 		return nil, err
 	}
@@ -264,11 +270,16 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 	slog.Debug("tls_fingerprint_enabled", "account_id", accountID, "target", targetHost, "proxy", proxyInfo, "profile", profile.Name)
 
-	if err := s.validateRequestHost(req); err != nil {
+	finishValidation := observeUpstreamPhase(req, "host_validation")
+	validationErr := s.validateRequestHost(req)
+	finishValidation(validationErr)
+	if err := validationErr; err != nil {
 		return nil, err
 	}
 
+	finishAcquire := observeUpstreamPhase(req, "client_acquire")
 	entry, err := s.acquireClientWithTLS(proxyURL, accountID, accountConcurrency, profile, upstreamProfile)
+	finishAcquire(err)
 	if err != nil {
 		slog.Debug("tls_fingerprint_acquire_client_failed", "account_id", accountID, "error", err)
 		return nil, err
@@ -294,6 +305,14 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	})
 
 	return resp, nil
+}
+
+// 获取客户端池条目与 Transport 获取连接是两段不同操作，分别观察且保持错误原样。
+func observeUpstreamPhase(req *http.Request, phase string) func(error) {
+	if req == nil {
+		return latencytrace.Start(context.Background(), phase)
+	}
+	return latencytrace.Start(req.Context(), phase)
 }
 
 // httpClientForUpstreamRequest 为禁止重定向的凭据探测复制客户端，避免修改共享连接池客户端。

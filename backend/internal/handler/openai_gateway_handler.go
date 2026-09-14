@@ -15,6 +15,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/ip"
+	"github.com/TokenFlux/TokenRouter/internal/pkg/latencytrace"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logger"
 	middleware2 "github.com/TokenFlux/TokenRouter/internal/server/middleware"
 	"github.com/TokenFlux/TokenRouter/internal/service"
@@ -43,6 +44,9 @@ type OpenAIGatewayHandler struct {
 }
 
 var errOpenAIWSLocalRoutingRejected = errors.New("local websocket routing rejected")
+
+// 仅供诊断标记失败，不向客户端或调度器返回此错误。
+var errTTFTSlotNotAcquired = errors.New("slot not acquired")
 
 // newOpenAIWSLocalRoutingRejectedError 标记请求在本地路由阶段被拒绝，避免把未发送到上游的错误归咎于账号。
 func newOpenAIWSLocalRoutingRejectedError(model string, err error) error {
@@ -525,6 +529,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		finishSelection := latencytrace.Start(c.Request.Context(), "account_selection")
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			selectionCtx,
 			apiKey.GroupID,
@@ -538,6 +543,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			false,
 			requestPlatform,
 		)
+		finishSelection(err)
 		service.SetOpenAIFinalGroupFromSelection(c, selection, scheduleDecision)
 		if err != nil {
 			if failoverClientGone(c) {
@@ -685,10 +691,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
 								zap.Duration("retry_delay", retryDelay),
 							)
+							finishRetryWait := latencytrace.Start(c.Request.Context(), "retry_wait")
 							select {
 							case <-c.Request.Context().Done():
+								finishRetryWait(c.Request.Context().Err())
 								return
 							case <-time.After(retryDelay):
+								finishRetryWait(nil)
 							}
 							continue
 						}
@@ -1098,6 +1107,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		finishSelection := latencytrace.Start(c.Request.Context(), "account_selection")
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAndRoutingModel(
 			c.Request.Context(),
 			apiKey.GroupID,
@@ -1112,6 +1122,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			false,
 			requestPlatform,
 		)
+		finishSelection(err)
 		service.SetOpenAIFinalGroupFromSelection(c, selection, scheduleDecision)
 		if err != nil {
 			if failoverClientGone(c) {
@@ -1241,10 +1252,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
 								zap.Duration("retry_delay", retryDelay),
 							)
+							finishRetryWait := latencytrace.Start(c.Request.Context(), "retry_wait")
 							select {
 							case <-c.Request.Context().Done():
+								finishRetryWait(c.Request.Context().Err())
 								return
 							case <-time.After(retryDelay):
+								finishRetryWait(nil)
 							}
 							continue
 						}
@@ -1475,8 +1489,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	reqStream bool,
 	streamStarted *bool,
 	reqLog *zap.Logger,
-) (func(), bool) {
+) (release func(), acquired bool) {
 	ctx := c.Request.Context()
+	finish := latencytrace.Start(ctx, "user_slot")
+	defer func() {
+		if acquired {
+			finish(nil)
+		} else {
+			finish(errTTFTSlotNotAcquired)
+		}
+	}()
 	service.MarkTTFTStage(c, "user_slot_wait_started")
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, reqStream, streamStarted)
 	if err != nil {
@@ -1496,7 +1518,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	reqStream bool,
 	streamStarted *bool,
 	reqLog *zap.Logger,
-) (func(), bool) {
+) (release func(), acquired bool) {
+	// 每次重新调度的等待独立成对保存，不复用第一次获取槽位的时间戳。
+	finish := latencytrace.Start(c.Request.Context(), "account_slot")
+	defer func() {
+		if acquired {
+			finish(nil)
+		} else {
+			finish(errTTFTSlotNotAcquired)
+		}
+	}()
 	if selection == nil || selection.Account == nil {
 		markOpsRoutingCapacityLimited(c)
 		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)

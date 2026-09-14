@@ -51,9 +51,6 @@ var headerOverrideBlockedNames = map[string]struct{}{
 	"x-goog-api-key":           {},
 	"cookie":                   {},
 	"accept-encoding":          {},
-	"originator":               {},
-	"version":                  {},
-	"codex_version":            {},
 	"sec-websocket-key":        {},
 	"sec-websocket-version":    {},
 	"sec-websocket-extensions": {},
@@ -123,7 +120,7 @@ func (a *Account) GetHeaderOverrides() map[string]string {
 		// 非 JSON 反序列化产物（如直接注入的 map[string]string）：直接解析，不缓存
 		overrides := resolveHeaderOverrides(stringMappingFromRaw(a.Credentials[credKeyHeaderOverrides]))
 		if a.Platform == PlatformOpenAI {
-			delete(overrides, "user-agent")
+			removeManagedCodexHeaderOverrides(overrides)
 		}
 		return overrides
 	}
@@ -147,7 +144,7 @@ func (a *Account) GetHeaderOverrides() map[string]string {
 
 	overrides := resolveHeaderOverrides(stringMappingFromRaw(rawMapping))
 	if a.Platform == PlatformOpenAI {
-		delete(overrides, "user-agent")
+		removeManagedCodexHeaderOverrides(overrides)
 	}
 	if !rawSigReady {
 		rawSig = modelMappingSignature(rawMapping)
@@ -180,6 +177,32 @@ func resolveHeaderOverrides(raw map[string]string) map[string]string {
 		return nil
 	}
 	return result
+}
+
+// 账号平台已确定后再过滤 Codex 专用头，避免影响其它平台的通用版本配置。
+func removeManagedCodexHeaderOverrides(overrides map[string]string) {
+	for name := range overrides {
+		if isManagedCodexIdentityOverrideName(name) {
+			delete(overrides, name)
+		}
+	}
+}
+
+// NormalizeHeaderOverrideCredentialsForPlatform 保留通用校验，并限定平台专用保护范围。
+func NormalizeHeaderOverrideCredentialsForPlatform(credentials map[string]any, platform string) error {
+	if err := NormalizeHeaderOverrideCredentials(credentials); err != nil {
+		return err
+	}
+	if platform == PlatformOpenAI {
+		for name := range stringMappingFromRaw(credentials[credKeyHeaderOverrides]) {
+			// UA 沿用原有保存兼容行为，但运行时仍由统一策略管理。
+			if name != "user-agent" && isManagedCodexIdentityOverrideName(name) {
+				return infraerrors.Newf(http.StatusBadRequest, "INVALID_HEADER_OVERRIDE",
+					"header %q is not allowed to be overridden", name)
+			}
+		}
+	}
+	return nil
 }
 
 // HeaderOverrideValue 返回指定 header（小写名）的生效覆写值。

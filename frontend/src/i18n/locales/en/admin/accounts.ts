@@ -1679,6 +1679,8 @@ export default {
         overdraftRecoverAt: 'Expected recovery',
         estimatedWeeklyTotal: 'Estimated weekly quota ≈ {amount}',
         estimatedWeeklyTotalHint: '≈ indicates an estimate; it is calculated from the current 7-day cost and utilization and changes as the window updates.',
+        localFiveHourStats: 'Last 5h',
+        localFiveHourStatsHint: 'Local requests, tokens, and A/U costs recorded for this account across all sessions in the last 5 hours; independent of upstream quota utilization and reset time.',
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',
         geminiProDaily: 'Pro',

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 	"sort"
 	"strconv"
 	"strings"
@@ -242,13 +241,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
-		upstreamReq = upstreamReq.WithContext(httptrace.WithClientTrace(upstreamReq.Context(), &httptrace.ClientTrace{
-			GotFirstResponseByte: func() { MarkTTFTStage(c, "first_upstream_byte") },
-		}))
-		MarkTTFTStage(c, "upstream_do_started")
+		markUpstreamStage := BeginTTFTUpstreamAttempt(c, account.ID)
+		upstreamReq = withTTFTUpstreamTrace(c, upstreamReq, markUpstreamStage)
+		markUpstreamStage("upstream_do_started")
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
 		if resp != nil {
-			MarkTTFTStage(c, "upstream_headers_received")
+			markUpstreamStage("upstream_headers_received")
 		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
@@ -1347,7 +1345,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
-	defer MarkTTFTStage(c, "stream_completed")
+	markStreamStage := beginTTFTStream(c, account)
+	defer markStreamStage("stream_completed")
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
 	c.Header("Content-Type", "text/event-stream")
@@ -1391,17 +1390,21 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if clientDisconnected {
 			// 断连前已写入可见事件。即使客户端未观察到最终 flush，仍保留样本供计费和调度使用。
 			if firstVisibleOutputPendingFlush && firstTokenMs == nil {
-				MarkTTFTStage(c, "first_visible_output")
+				markStreamStage("first_visible_output")
 				recordFirstTokenMs(&firstTokenMs, startTime)
 				firstVisibleOutputPendingFlush = false
 			}
 			flushPending = false
 			return
 		}
-		flusher.Flush()
-		MarkTTFTStage(c, "first_downstream_flush")
 		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
-			MarkTTFTStage(c, "first_visible_output")
+			markStreamStage("first_content_flush_started")
+		}
+		flusher.Flush()
+		markStreamStage("first_downstream_flush")
+		if firstVisibleOutputPendingFlush && firstTokenMs == nil {
+			markStreamStage("first_content_flush_completed")
+			markStreamStage("first_visible_output")
 			recordFirstTokenMs(&firstTokenMs, startTime)
 			firstVisibleOutputPendingFlush = false
 		}
@@ -1437,6 +1440,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
+		// 返回结构会复制首字指针；EOF/错误收尾须先 flush，避免 defer 赋值晚于复制。
+		flushPendingOutput()
 		responseBindingEvent := successfulTerminalEvent
 		if upstreamTransportFailed || clientDisconnected {
 			responseBindingEvent = ""
@@ -1459,7 +1464,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			if !firstSSEEventObserved {
 				firstSSEEventObserved = true
-				MarkTTFTStage(c, "first_sse_event")
+				markStreamStage("first_sse_event")
 			}
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
@@ -1624,6 +1629,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
 			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType) {
+				markStreamStage("first_content_received")
 				firstVisibleOutputPendingFlush = true
 			}
 			if eventType != "response.failed" {

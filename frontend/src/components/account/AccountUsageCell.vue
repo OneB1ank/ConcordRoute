@@ -144,6 +144,8 @@
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
           :overdraft-stats="codexOverdraftStatsFor(usageInfo.five_hour)"
+          :stats-label="t('admin.accounts.usageWindow.localFiveHourStats')"
+          :stats-hint="t('admin.accounts.usageWindow.localFiveHourStatsHint')"
           :show-now-when-idle="true"
           :stats-only="usageInfo.five_hour.local_only"
           color="indigo"

@@ -22,6 +22,31 @@ describe('UsageProgressBar', () => {
     vi.useRealTimers()
   })
 
+  it('本地近五小时累计与上游额度百分比分开展示，刷新不会再次累加', async () => {
+    const wrapper = mount(UsageProgressBar, {
+      props: {
+        label: '5h',
+        utilization: 0,
+        color: 'indigo',
+        showNowWhenIdle: true,
+        statsLabel: '近5h',
+        statsHint: '按账号累计最近五小时，与上游额度独立',
+        windowStats: { requests: 7, tokens: 481500, cost: 1.42, user_cost: 1.42 }
+      }
+    })
+    const row = wrapper.get('[data-testid="window-stats"]')
+    expect(row.text()).toContain('近5h')
+    expect(row.text()).toContain('7 req')
+    expect(row.attributes('title')).toContain('与上游额度独立')
+    expect(wrapper.text()).toContain('0%')
+    await wrapper.setProps({
+      windowStats: { requests: 8, tokens: 491500, cost: 1.5, user_cost: 1.5 }
+    })
+    expect(row.text()).toContain('8 req')
+    expect(row.text()).not.toContain('15 req')
+    expect(wrapper.text()).toContain('0%')
+  })
+
   it('showNowWhenIdle=true 且利用率为 0 时显示“现在”', () => {
     const wrapper = mount(UsageProgressBar, {
       props: {

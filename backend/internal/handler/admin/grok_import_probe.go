@@ -1,3 +1,4 @@
+//nolint:unused // 历史探测调度器仅供 unit 兼容测试；生产只使用账号构造函数，不接线自动探测。
 package admin
 
 import (

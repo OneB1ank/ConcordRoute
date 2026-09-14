@@ -1429,8 +1429,8 @@ func TestCodexWindowStatsStartsUsesIndependentBoundaries(t *testing.T) {
 		&UsageProgress{ResetsAt: &sevenReset},
 		now,
 	)
-	if !fiveStart.Equal(fiveReset) {
-		t.Fatalf("five-hour start = %v, want reset boundary %v", fiveStart, fiveReset)
+	if !fiveStart.Equal(now.Add(-5 * time.Hour)) {
+		t.Fatalf("five-hour start = %v, want local rolling start %v", fiveStart, now.Add(-5*time.Hour))
 	}
 	wantSevenStart := sevenReset.Add(-7 * 24 * time.Hour)
 	if !sevenStart.Equal(wantSevenStart) {

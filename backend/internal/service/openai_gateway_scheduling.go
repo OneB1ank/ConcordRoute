@@ -738,13 +738,14 @@ func codexQuotaWindowAvailable(extra map[string]any, window string) bool {
 		"codex_" + window + "_window_minutes",
 	}
 	// 旧快照只有 primary/secondary 名称；缺少显式存在性标记时保留历史映射。
-	if window == "5h" {
+	switch window {
+	case "5h":
 		keys = append(keys,
 			"codex_secondary_used_percent",
 			"codex_secondary_reset_after_seconds",
 			"codex_secondary_window_minutes",
 		)
-	} else if window == "7d" {
+	case "7d":
 		keys = append(keys,
 			"codex_primary_used_percent",
 			"codex_primary_reset_after_seconds",
