@@ -1,8 +1,12 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+
+	coderws "github.com/coder/websocket"
 )
 
 // codexWebSocketFingerprintState 记录原始帧的会话边界，不用可能不同的握手别名作比较。
@@ -20,6 +24,37 @@ func newCodexWebSocketFingerprintState(account *Account, ids *codexFingerprintID
 		account: account, current: ids,
 		clientSessionID: source.originalSessionID, clientThreadID: source.threadID,
 	}
+}
+
+// 帧推进与必要的窗口提交共用取消预算；失败不提交连接状态或泄露锁所有权副本。
+func (state *codexWebSocketFingerprintState) prepare(ctx context.Context, repo AccountRepository, body []byte) (*codexFingerprintIDs, error) {
+	next := *state
+	ids, err := withCodexIdentityPreparation(ctx, state.account, func(ctx context.Context, local *Account) (*codexFingerprintIDs, error) {
+		next.account = local
+		current, err := next.advance(body)
+		if err != nil {
+			return nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, err.Error(), err)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if current != nil && state.current != nil && current.windowID != state.current.windowID {
+			if err := persistCodexIdentityBindings(ctx, repo, local, current); err != nil {
+				return nil, fmt.Errorf("persist websocket Codex fingerprint bindings: %w", err)
+			}
+		}
+		return current, nil
+	})
+	if err != nil {
+		var closeErr *OpenAIWSClientCloseError
+		if errors.As(err, &closeErr) {
+			return nil, err
+		}
+		return nil, NewOpenAIWSClientCloseError(coderws.StatusInternalError, "prepare websocket Codex fingerprint bindings failed", err)
+	}
+	next.account = state.account
+	*state = next
+	return ids, nil
 }
 
 func (state *codexWebSocketFingerprintState) advance(body []byte) (*codexFingerprintIDs, error) {

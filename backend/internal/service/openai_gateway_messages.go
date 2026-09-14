@@ -51,14 +51,11 @@ func (s *OpenAIGatewayService) prepareMessagesCodexFingerprint(
 	// Ensure an explicitly configured device ID is available before resolving the
 	// single snapshot; this is idempotent and does not overwrite client metadata.
 	applyCodexClientMetadata(reqBody, fingerprintAccount)
-	ids := bindCodexFingerprintIDsToAccount(
-		resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, reqBody),
-		account,
-	)
-	// Persist newly-created UUIDv7 bindings so a restart does not split this
-	// conversation into a different cache identity.
-	if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-		return nil, promptCacheKey, fmt.Errorf("persist Codex fingerprint bindings: %w", err)
+	ids, err := prepareCodexFingerprint(ctx, s.accountRepo, fingerprintAccount, func(local *Account) *codexFingerprintIDs {
+		return bindCodexFingerprintIDsToAccount(resolveCodexFingerprintIDsFromRequest(local, clientHeaders, reqBody), account)
+	})
+	if err != nil {
+		return nil, promptCacheKey, fmt.Errorf("prepare Codex fingerprint bindings: %w", err)
 	}
 	if ids == nil {
 		return body, promptCacheKey, nil

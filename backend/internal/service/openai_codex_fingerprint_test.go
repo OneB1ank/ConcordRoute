@@ -189,7 +189,7 @@ func TestPruneCodexIdentityBindings_ExpiresIdleAndKeepsHotCacheConsistent(t *tes
 	codexIdentityHotCache.Store(oldKey, codexIdentityHotBinding{UUID: oldUUID, LastUsedAtMS: now})
 	codexIdentityHotCache.Store(keepKey, codexIdentityHotBinding{UUID: keepUUID, LastUsedAtMS: now})
 
-	changed := pruneCodexIdentityBindings(bindings, now, keepKey)
+	changed := pruneCodexUUIDv7Bindings(bindings, now, keepKey, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries)
 	require.True(t, changed)
 	_, exists := bindings[oldKey]
 	assert.False(t, exists)
@@ -211,7 +211,7 @@ func TestPruneCodexIdentityBindings_UsesLRUAndProtectsCurrentSeed(t *testing.T) 
 		bindings[key] = codexIdentityBinding{UUID: newCodexUUIDv7().String(), CreatedAtMS: now - int64(codexIdentityBindingMaxEntries-i+1), LastUsedAtMS: now - int64(codexIdentityBindingMaxEntries-i+1)}
 	}
 	currentKey := fmt.Sprintf("seed-%04d", codexIdentityBindingMaxEntries)
-	pruneCodexIdentityBindings(bindings, now, currentKey)
+	pruneCodexUUIDv7Bindings(bindings, now, currentKey, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries)
 	require.Len(t, bindings, codexIdentityBindingMaxEntries)
 	_, exists := bindings[oldestKey]
 	assert.False(t, exists)
@@ -1270,7 +1270,6 @@ func TestResolveConvergedIDs_MissingSeedDoesNotFallbackToLocalID(t *testing.T) {
 	assert.Empty(t, resolveConvergedInstallationID(account))
 	assert.Empty(t, resolveConvergedSessionID(account))
 	assert.Empty(t, resolveConvergedThreadID(account, "client-session"))
-	assert.Empty(t, resolveConvergedPromptCacheKey(account, "cache-key"))
 	assert.Nil(t, resolveCodexFingerprintIDsFromRequest(account, http.Header{"session-id": []string{"client-session"}}))
 
 	account.Extra = map[string]any{"openai_device_id": "explicit-device"}
@@ -1299,19 +1298,26 @@ func TestResolveConvergedThreadID_EmptySession(t *testing.T) {
 	assert.Equal(t, "", resolveConvergedThreadID(account, ""))
 }
 
-// --- resolveConvergedPromptCacheKey ---
-
-func TestResolveConvergedPromptCacheKey_StableAndIsolated(t *testing.T) {
-	accountA := newTestOAuthAccount(1, nil)
-	accountB := newTestOAuthAccount(2, nil)
-
-	a1 := resolveConvergedPromptCacheKey(accountA, "cache-A")
-	a2 := resolveConvergedPromptCacheKey(accountA, "cache-A")
-	assert.Equal(t, a1, a2, "同账号同缓存键应稳定")
-	assert.NotEqual(t, a1, resolveConvergedPromptCacheKey(accountA, "cache-B"), "不同对话应隔离")
-	assert.NotEqual(t, a1, resolveConvergedPromptCacheKey(accountB, "cache-A"), "不同账号应隔离")
-	_, err := uuid.Parse(a1)
-	require.NoError(t, err)
+// 覆盖实际请求入口：显式键由客户端持有，账号隔离作用于会话而非重新派生缓存键。
+func TestCockpitExplicitCacheKeyPreservesValueAcrossAccounts(t *testing.T) {
+	accountA := newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	accountB := newTestOAuthAccount(2, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	body := map[string]any{
+		"prompt_cache_key": " cache-A ",
+		"client_metadata":  map[string]any{"session_id": "stable-session", "thread_id": "stable-thread"},
+	}
+	a := resolveCodexFingerprintIDsFromRequest(accountA, nil, body)
+	b := resolveCodexFingerprintIDsFromRequest(accountB, nil, body)
+	require.NotNil(t, a)
+	require.NotNil(t, b)
+	assert.Equal(t, " cache-A ", a.promptCacheKey)
+	assert.Equal(t, a.promptCacheKey, b.promptCacheKey)
+	assert.NotEqual(t, a.sessionID, b.sessionID)
+	body["prompt_cache_key"] = " cache-B "
+	next := resolveCodexFingerprintIDsFromRequest(accountA, nil, body)
+	assert.Equal(t, a.sessionID, next.sessionID)
+	assert.Equal(t, a.threadID, next.threadID)
+	assert.Equal(t, " cache-B ", next.promptCacheKey)
 }
 
 // --- off 模式：resolveCodexFingerprintIDsFromRequest 返回 nil ---

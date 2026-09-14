@@ -144,3 +144,61 @@ func TestOpenAILocalFiveHourBoundariesAndNewUsage(t *testing.T) {
 	require.InDelta(t, 0.7, info.FiveHour.WindowStats.Cost, 1e-9)
 	require.InDelta(t, 0.9, info.FiveHour.WindowStats.UserCost, 1e-9)
 }
+
+// 周窗口刚重置时，滚动 5h 包含上周尾部，两个窗口不是包含关系；
+// 用用户报告的金额复现，防止为使 7d >= 5h 而错误补加上周消费或裁掉 5h。
+func TestOpenAILocalFiveHourWeeklyResetCostComparison(t *testing.T) {
+	now := time.Date(2026, 9, 15, 4, 0, 0, 0, time.UTC)
+	repo := &rollingFiveHourUsageRepo{usageBatchLogRepoStub: &usageBatchLogRepoStub{}}
+	for i := 0; i < 16; i++ {
+		at, tokens, cost := now.Add(-time.Duration(i+1)*time.Minute), 140000, 0.19
+		switch i {
+		case 13:
+			tokens = 180000
+		case 14:
+			at, tokens, cost = now.Add(-2*time.Hour), 100000, 1.16
+		case 15:
+			at, tokens, cost = now.Add(-3*time.Hour), 100000, 1.17
+		}
+		session := fmt.Sprintf("comparison-session-%d", i%3)
+		repo.rows = append(repo.rows, UsageLog{
+			AccountID: 42, UserID: int64(i%2 + 1), APIKeyID: int64(i%2 + 1),
+			SessionID: &session, CreatedAt: at, InputTokens: tokens,
+			TotalCost: cost, ActualCost: cost,
+		})
+	}
+	for _, tc := range []struct {
+		name           string
+		resetOffset    time.Duration
+		weeklyRequests int64
+		weeklyTokens   int64
+		weeklyCost     float64
+	}{
+		{"weekly_reset_one_hour_ago", 7*24*time.Hour - time.Hour, 14, 2000000, 2.66},
+		{"weekly_reset_six_hours_ago", 7*24*time.Hour - 6*time.Hour, 16, 2200000, 4.99},
+		{"recent_expired_snapshot", -time.Hour, 14, 2000000, 2.66},
+		{"stale_snapshot_rolling_fallback", -8 * 24 * time.Hour, 16, 2200000, 4.99},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reset := now.Add(tc.resetOffset)
+			info := &UsageInfo{SevenDay: &UsageProgress{Utilization: 1, ResetsAt: &reset}}
+			svc := &AccountUsageService{usageLogRepo: repo}
+			// 重读应重新汇总同一批账务，既不重复累加，也不为了展示“对齐”修改金额。
+			for i := 0; i < 2; i++ {
+				svc.addOpenAIWindowStats(context.Background(), &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth}, info, now)
+				require.Equal(t, int64(16), info.FiveHour.WindowStats.Requests)
+				require.Equal(t, int64(2200000), info.FiveHour.WindowStats.Tokens)
+				require.InDelta(t, 4.99, info.FiveHour.WindowStats.Cost, 1e-9)
+				require.InDelta(t, 4.99, info.FiveHour.WindowStats.UserCost, 1e-9)
+				require.Equal(t, tc.weeklyRequests, info.SevenDay.WindowStats.Requests)
+				require.Equal(t, tc.weeklyTokens, info.SevenDay.WindowStats.Tokens)
+				require.InDelta(t, tc.weeklyCost, info.SevenDay.WindowStats.Cost, 1e-9)
+				require.InDelta(t, tc.weeklyCost, info.SevenDay.WindowStats.UserCost, 1e-9)
+				require.Equal(t, 1.0, info.SevenDay.Utilization)
+			}
+			t.Logf("5h=%d req A/U=%.2f/%.2f; 7d=%d req A/U=%.2f/%.2f",
+				info.FiveHour.WindowStats.Requests, info.FiveHour.WindowStats.Cost, info.FiveHour.WindowStats.UserCost,
+				info.SevenDay.WindowStats.Requests, info.SevenDay.WindowStats.Cost, info.SevenDay.WindowStats.UserCost)
+		})
+	}
+}

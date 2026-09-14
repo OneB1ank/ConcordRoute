@@ -152,3 +152,65 @@ func TestRelayTTFTWaitsForVisibleContent(t *testing.T) {
 		})
 	}
 }
+
+// 工具发现采用对象参数；WS 必须与 HTTP 同口径，且不得改写任何转发帧。
+func TestRelayTTFTToolSearchObjectArguments(t *testing.T) {
+	const item = `{"type":"tool_search_call","status":"completed","execution":"client","arguments":{"query":"synthetic tool","limit":1}}`
+	for _, mode := range []string{"item_done", "terminal_only", "empty"} {
+		t.Run(mode, func(t *testing.T) {
+			frames := []passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"resp_tool"}}`)},
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_item.added","response_id":"resp_tool","item":{"type":"tool_search_call","status":"in_progress","arguments":{}}}`)},
+			}
+			output := "[]"
+			if mode != "empty" {
+				output = "[" + item + "]"
+			}
+			if mode == "item_done" {
+				frames = append(frames, passthroughTestFrame{msgType: coderws.MessageText,
+					payload: []byte(`{"type":"response.output_item.done","response_id":"resp_tool","item":` + item + `}`)})
+			}
+			frames = append(frames, passthroughTestFrame{msgType: coderws.MessageText,
+				payload: []byte(`{"type":"response.completed","response":{"id":"resp_tool","output":` + output + `,"usage":{"input_tokens":350,"output_tokens":28}}}`)})
+			upstream := newPassthroughTestFrameConn(frames, true)
+			client := newPassthroughTestFrameConn(nil, false)
+			base := time.Unix(1000, 0)
+			var clockMs atomic.Int64
+			var turn RelayTurnResult
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			result, exit := Relay(ctx, client, upstream,
+				[]byte(`{"type":"response.create","model":"test-model","input":[]}`),
+				RelayOptions{
+					Now: func() time.Time { return base.Add(time.Duration(clockMs.Load()) * time.Millisecond) },
+					OnUpstreamEvent: func(eventType string, _ []byte) {
+						if eventType == "response.output_item.done" {
+							clockMs.Store(500)
+						}
+						if eventType == "response.completed" {
+							clockMs.Store(800)
+						}
+					},
+					OnTurnComplete: func(r RelayTurnResult) { turn = r },
+				})
+			require.Nil(t, exit)
+			require.EqualValues(t, len(frames), result.UpstreamToClientFrames)
+			require.Equal(t, 350, result.Usage.InputTokens)
+			require.Equal(t, 28, result.Usage.OutputTokens)
+			written := client.Writes()
+			require.Equal(t, frames, written, "统计修正不应改写或丢弃工具调用与用量")
+			if mode == "empty" {
+				require.Nil(t, result.FirstTokenMs)
+				require.Nil(t, turn.FirstTokenMs)
+			} else {
+				want := 500
+				if mode == "terminal_only" {
+					want = 800
+				}
+				require.NotNil(t, result.FirstTokenMs)
+				require.Equal(t, want, *result.FirstTokenMs)
+				require.Equal(t, result.FirstTokenMs, turn.FirstTokenMs)
+			}
+		})
+	}
+}

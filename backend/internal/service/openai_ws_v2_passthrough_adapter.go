@@ -1186,16 +1186,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if policyErr == nil && blocked == nil && isResponseCreate {
 				out = s.prepareCodexQuotaOverdraftWebSocketFrame(ctx, account, out)
 				if firstFingerprintIDs != nil {
-					previousWindow := currentFingerprintIDs.windowID
 					var identityErr error
-					currentFingerprintIDs, identityErr = fingerprintState.advance(out)
+					currentFingerprintIDs, identityErr = fingerprintState.prepare(ctx, s.accountRepo, out)
 					if identityErr != nil {
-						return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, identityErr.Error(), identityErr)
-					}
-					if currentFingerprintIDs.windowID != previousWindow {
-						if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-							return payload, nil, fmt.Errorf("persist websocket Codex fingerprint bindings: %w", err)
-						}
+						return payload, nil, identityErr
 					}
 					fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(out, currentFingerprintIDs)
 					if fingerprintErr != nil {

@@ -22,20 +22,20 @@ describe('UsageProgressBar', () => {
     vi.useRealTimers()
   })
 
-  it('本地近五小时累计与上游额度百分比分开展示，刷新不会再次累加', async () => {
+  it('累计行不重复显示五小时标签，刷新不会再次累加', async () => {
     const wrapper = mount(UsageProgressBar, {
       props: {
         label: '5h',
         utilization: 0,
         color: 'indigo',
         showNowWhenIdle: true,
-        statsLabel: '近5h',
         statsHint: '按账号累计最近五小时，与上游额度独立',
         windowStats: { requests: 7, tokens: 481500, cost: 1.42, user_cost: 1.42 }
       }
     })
     const row = wrapper.get('[data-testid="window-stats"]')
-    expect(row.text()).toContain('近5h')
+    expect(row.text()).not.toContain('5h')
+    expect(wrapper.text()).toContain('5h')
     expect(row.text()).toContain('7 req')
     expect(row.attributes('title')).toContain('与上游额度独立')
     expect(wrapper.text()).toContain('0%')

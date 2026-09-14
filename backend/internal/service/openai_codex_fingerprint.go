@@ -313,15 +313,16 @@ func resolveCodexTurnStartedAt(account *Account, mode codexFingerprintMode, sess
 	codexTurnStartedBindings.Lock()
 	defer codexTurnStartedBindings.Unlock()
 	cutoff := now - codexIdentityBindingIdleTTL.Milliseconds()
+	// 热命中只检查目标的 TTL；过期清理和容量整理留给新回合，避免每次扫全局表。
+	if entry, ok := codexTurnStartedBindings.items[key]; ok && (entry.LastUsedAt == 0 || entry.LastUsedAt >= cutoff) {
+		entry.LastUsedAt = now
+		codexTurnStartedBindings.items[key] = entry
+		return entry.Value
+	}
 	for candidate, entry := range codexTurnStartedBindings.items {
 		if entry.LastUsedAt > 0 && entry.LastUsedAt < cutoff {
 			delete(codexTurnStartedBindings.items, candidate)
 		}
-	}
-	if entry, ok := codexTurnStartedBindings.items[key]; ok {
-		entry.LastUsedAt = now
-		codexTurnStartedBindings.items[key] = entry
-		return entry.Value
 	}
 	value := now
 	if providedPresent {
@@ -475,7 +476,7 @@ func parseCodexIdentityBinding(raw any) (codexIdentityBinding, bool) {
 	switch value := raw.(type) {
 	case string:
 		if parsed, err := uuid.Parse(value); err == nil && parsed.Version() == uuid.Version(7) && parsed.Variant() == uuid.RFC4122 {
-			return codexIdentityBinding{UUID: parsed.String()}, true
+			return codexIdentityBinding{UUID: canonicalCodexBindingUUID(value, parsed)}, true
 		}
 	case map[string]any:
 		candidate, _ := value["uuid"].(string)
@@ -485,7 +486,7 @@ func parseCodexIdentityBinding(raw any) (codexIdentityBinding, bool) {
 		}
 		created, _ := value["created_at_ms"].(float64)
 		lastUsed, _ := value["last_used_at_ms"].(float64)
-		return codexIdentityBinding{UUID: parsed.String(), CreatedAtMS: int64(created), LastUsedAtMS: int64(lastUsed)}, true
+		return codexIdentityBinding{UUID: canonicalCodexBindingUUID(candidate, parsed), CreatedAtMS: int64(created), LastUsedAtMS: int64(lastUsed)}, true
 	case codexIdentityBinding:
 		parsed, err := uuid.Parse(value.UUID)
 		if err == nil && parsed.Version() == uuid.Version(7) && parsed.Variant() == uuid.RFC4122 {
@@ -493,6 +494,23 @@ func parseCodexIdentityBinding(raw any) (codexIdentityBinding, bool) {
 		}
 	}
 	return codexIdentityBinding{}, false
+}
+
+// 数据库通常已保存规范 UUID；校验后复用字符串，只有历史非规范写法才重新格式化。
+func canonicalCodexBindingUUID(value string, parsed uuid.UUID) string {
+	if len(value) == 36 && value[8] == '-' && value[13] == '-' && value[18] == '-' && value[23] == '-' {
+		canonical := true
+		for i := range value {
+			if value[i] >= 'A' && value[i] <= 'F' {
+				canonical = false
+				break
+			}
+		}
+		if canonical {
+			return value
+		}
+	}
+	return parsed.String()
 }
 
 // deriveStableUUIDv7ForAccount first consults the account's durable binding.
@@ -516,14 +534,21 @@ func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, 
 	if account == nil || seed == "" {
 		return deriveStableUUIDv7(seed)
 	}
-	lock := codexIdentityBindingLock(account.ID)
-	lock.Lock()
-	defer lock.Unlock()
+	if !account.codexIdentityLockHeld {
+		lock := codexIdentityBindingLock(account.ID)
+		lock.Lock()
+		defer lock.Unlock()
+	}
 	key := codexIdentitySeedKey(seed)
 	bindings := readCodexUUIDv7Bindings(account, extraKey)
 	nowMS := time.Now().UnixMilli()
 	if bindings != nil {
-		pruneCodexUUIDv7Bindings(bindings, nowMS, key, idleTTL, maxEntries)
+		// 活跃目标且集合未超限时无需完整裁剪；缺省/过期目标和提交仍执行原有清理。
+		binding, valid := parseCodexIdentityBinding(bindings[key])
+		lastUsed := codexIdentityBindingRecency(binding)
+		if !valid || (lastUsed > 0 && nowMS-lastUsed >= idleTTL.Milliseconds()) || len(bindings) > maxEntries {
+			pruneCodexUUIDv7Bindings(bindings, nowMS, key, idleTTL, maxEntries)
+		}
 		if binding, ok := parseCodexIdentityBinding(bindings[key]); ok {
 			if binding.CreatedAtMS == 0 {
 				binding.CreatedAtMS = nowMS
@@ -568,22 +593,8 @@ func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, 
 	return value
 }
 
-// pruneCodexIdentityBindings applies a sliding idle TTL and true LRU cap to
-// durable server-derived identities.  The durable account map is authoritative;
-// entries removed here are also removed from the process-local hot cache so an
-// evicted identity cannot be resurrected after the next request.
-func pruneCodexIdentityBindings(bindings map[string]any, nowMS int64, protectedKey string) bool {
-	return pruneCodexUUIDv7Bindings(
-		bindings,
-		nowMS,
-		protectedKey,
-		codexIdentityBindingIdleTTL,
-		codexIdentityBindingMaxEntries,
-	)
-}
-
 // pruneCodexUUIDv7Bindings 对指定绑定集合执行滑动过期和 LRU 容量控制。
-func pruneCodexUUIDv7Bindings(bindings map[string]any, nowMS int64, protectedKey string, idleTTL time.Duration, maxEntries int) bool {
+func pruneCodexUUIDv7Bindings(bindings map[string]any, nowMS int64, protectedKey string, idleTTL time.Duration, maxEntries int, snapshots ...*codexFingerprintSnapshotBindings) bool {
 	if len(bindings) == 0 {
 		return false
 	}
@@ -594,6 +605,16 @@ func pruneCodexUUIDv7Bindings(bindings map[string]any, nowMS int64, protectedKey
 			delete(bindings, key)
 			changed = true
 			continue
+		}
+		// 必须在过期或容量淘汰前记住引用，之后的提交才能识别快照依赖消失。
+		if len(snapshots) > 0 && snapshots[0] != nil {
+			snapshot := snapshots[0]
+			if _, used := snapshot.values[binding.UUID]; used {
+				if snapshot.bindings == nil {
+					snapshot.bindings = make(map[string]string)
+				}
+				snapshot.bindings[key] = binding.UUID
+			}
 		}
 		lastUsed := binding.LastUsedAtMS
 		if lastUsed == 0 {
@@ -609,6 +630,10 @@ func pruneCodexUUIDv7Bindings(bindings map[string]any, nowMS int64, protectedKey
 			binding.LastUsedAtMS = nowMS
 			bindings[key] = binding
 			changed = true
+		}
+		// 同次提交后续合并直接使用类型化值，JSON 载体保持相同字段与数值。
+		if _, typed := raw.(codexIdentityBinding); !typed {
+			bindings[key] = binding
 		}
 	}
 	for len(bindings) > maxEntries {
@@ -703,8 +728,8 @@ var codexUUIDv7BindingStores = []codexUUIDv7BindingStore{
 
 // persistCodexIdentityBindings 一次性持久化账号身份和 Cockpit 回合图绑定。
 // @project-doc docs/interfaces/openai_upstream.md#codex_identity_persistence
-// 哈希门控让无变化的热路径保持只读，账号锁和写前合并避免并发快照互相覆盖。
-func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, account *Account) (err error) {
+// 与最新持久化值逐项比较让无变化的热路径保持只读，账号锁和写前合并协调并发快照。
+func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, account *Account, snapshots ...*codexFingerprintIDs) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			// Lightweight unit-test repositories and optional deployments may not
@@ -716,16 +741,19 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	if repo == nil || account == nil || account.ID == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, codexIdentityPersistenceTimeout)
-	defer cancel()
-	lock := codexIdentityBindingLock(account.ID)
-	finishWait := latencytrace.Start(ctx, "identity_lock_wait")
-	err = lock.LockContext(ctx)
-	finishWait(err)
-	if err != nil {
-		return fmt.Errorf("wait for codex identity persistence: %w", err)
+	if !account.codexIdentityLockHeld {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, codexIdentityPersistenceTimeout)
+		defer cancel()
+		lock := codexIdentityBindingLock(account.ID)
+		finishWait := latencytrace.Start(ctx, "identity_lock_wait")
+		err = lock.LockContext(ctx)
+		finishWait(err)
+		if err != nil {
+			return fmt.Errorf("wait for codex identity persistence: %w", err)
+		}
+		defer lock.Unlock()
 	}
-	defer lock.Unlock()
 	if account.Extra == nil {
 		return nil
 	}
@@ -755,6 +783,11 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	nowMS := time.Now().UnixMilli()
 	finishMerge := latencytrace.Start(ctx, "identity_binding_merge")
 	updates := make(map[string]any, len(codexUUIDv7BindingStores))
+	snapshotValues := codexFingerprintSnapshotValues(snapshots)
+	var snapshotSelections map[string]string
+	var hotUpdates []codexIdentityHotUpdate
+	hotPrefix := strconv.FormatInt(codexIdentityOwnerID(account), 10) + ":"
+	matchesDurable := true
 	for _, store := range codexUUIDv7BindingStores {
 		if _, exists := account.Extra[store.extraKey]; !exists {
 			continue
@@ -763,14 +796,51 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 		if bindings == nil {
 			bindings = make(map[string]any)
 		}
-		pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries)
-		if latestBindings := readCodexUUIDv7Bindings(latest, store.extraKey); latestBindings != nil {
-			pruneCodexUUIDv7Bindings(latestBindings, nowMS, "", store.idleTTL, store.maxEntries)
+		snapshotBindings := codexFingerprintSnapshotBindings{values: snapshotValues}
+		if pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries, &snapshotBindings) {
+			matchesDurable = false
+		}
+		latestBindings := readCodexUUIDv7Bindings(latest, store.extraKey)
+		if latestBindings != nil {
+			if pruneCodexUUIDv7Bindings(latestBindings, nowMS, "", store.idleTTL, store.maxEntries) {
+				matchesDurable = false
+			}
 			bindings = mergeCodexIdentityBindings(latestBindings, bindings)
 			pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries)
 		}
+		if latestBindings == nil || len(latestBindings) != len(bindings) {
+			matchesDurable = false
+		}
+		// 比较最新数据库值时同时收集缓存变更；成功后不再完整遍历一次集合。
+		for key, raw := range bindings {
+			binding, _ := parseCodexIdentityBinding(raw)
+			durable, valid := parseCodexIdentityBinding(latestBindings[key])
+			if !valid || durable != binding {
+				matchesDurable = false
+			}
+			hotUpdates = collectCodexIdentityHotUpdate(hotUpdates, hotPrefix+key, binding)
+		}
+		snapshotSelections = collectCodexFingerprintSnapshotChanges(snapshotBindings.bindings, bindings, snapshotSelections)
 		account.Extra[store.extraKey] = bindings
 		updates[store.extraKey] = bindings
+	}
+	reconciled, err := reconcileCodexFingerprintSnapshots(snapshots, snapshotSelections)
+	if err != nil {
+		finishMerge(err)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		finishMerge(err)
+		return err
+	}
+	hashKey := strconv.FormatInt(account.ID, 10)
+	// 保留首次成功登记；后续已与最新数据库完全一致时，不再序列化整份集合算哈希。
+	// 判定仍以本次数据库读取为准，不以历史哈希掩盖其他实例写入。
+	if _, committed := codexIdentityPersistedHashes.Load(hashKey); committed && matchesDurable {
+		finishMerge(nil)
+		publishCodexIdentityHotBindings(hotUpdates)
+		commitCodexFingerprintSnapshots(snapshots, reconciled)
+		return nil
 	}
 	// 过期或损坏的集合仍以空对象落库，确保旧值实际被清除。
 	encoded, err := json.Marshal(updates)
@@ -779,11 +849,7 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 		return fmt.Errorf("marshal codex UUIDv7 bindings: %w", err)
 	}
 	hash := sha256.Sum256(encoded)
-	hashKey := fmt.Sprintf("%d", account.ID)
 	hashString := fmt.Sprintf("%x", hash[:])
-	if previous, ok := codexIdentityPersistedHashes.Load(hashKey); ok && previous == hashString {
-		return nil
-	}
 	finishWrite := latencytrace.Start(ctx, "identity_binding_write")
 	err = repo.UpdateExtra(ctx, account.ID, updates)
 	finishWrite(err)
@@ -791,6 +857,8 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 		return fmt.Errorf("persist codex identity bindings: %w", err)
 	}
 	codexIdentityPersistedHashes.Store(hashKey, hashString)
+	publishCodexIdentityHotBindings(hotUpdates)
+	commitCodexFingerprintSnapshots(snapshots, reconciled)
 	return nil
 }
 
@@ -1190,19 +1258,6 @@ func resolveCodexRootTurnID(originalRootTurnID, parentTurnID, turnID string) str
 		return turnID
 	}
 	return originalRootTurnID
-}
-
-// resolveConvergedPromptCacheKey 按账号和客户端原始缓存键稳定派生上游缓存键。
-// 相同账号的相同对话保持稳定，不同账号或不同对话互相隔离。
-func resolveConvergedPromptCacheKey(account *Account, promptCacheKey string) string {
-	if account == nil || strings.TrimSpace(promptCacheKey) == "" {
-		return ""
-	}
-	seed := resolveCodexFingerprintSeed(account)
-	if seed == "" {
-		return ""
-	}
-	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-prompt-cache-key:v3:%s:%s", seed, strings.TrimSpace(promptCacheKey)))
 }
 
 // resolveOfficialCockpitPromptCacheKey 对齐 Codex 默认规则：显式缓存键原样保留，
@@ -2475,6 +2530,15 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["thread_id"] = ids.threadID
 	if shouldWriteCodexTurnID(ids) {
 		existing["turn_id"] = ids.turnID
+		// 平铺开始时间也是已支持的输入载体。只对已有有效值同步生命周期时间，
+		// 保留字符串/数字类别；缺失或异常字段不补造、不改变原有类型处理。
+		if _, present := extractCodexTurnStartedAtField(existing, "turn_started_at_unix_ms"); present {
+			if _, isString := existing["turn_started_at_unix_ms"].(string); isString {
+				existing["turn_started_at_unix_ms"] = strconv.FormatInt(ids.turnStartedAtUnixMS, 10)
+			} else {
+				existing["turn_started_at_unix_ms"] = ids.turnStartedAtUnixMS
+			}
+		}
 	} else if ids.mode == codexFingerprintCockpit {
 		delete(existing, "turn_id")
 	}

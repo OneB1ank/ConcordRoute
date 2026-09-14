@@ -17,8 +17,8 @@ import (
 const (
 	schedulerBucketSetKey          = "sched:buckets"
 	schedulerOutboxWatermarkKey    = "sched:outbox:watermark"
-	schedulerAccountPrefix         = "sched:acc:"
-	schedulerAccountMetaPrefix     = "sched:meta:"
+	schedulerAccountPrefix         = "sched:acc:v2:"
+	schedulerAccountMetaPrefix     = "sched:meta:v2:"
 	schedulerAccountLastUsedPrefix = "sched:acc:last_used:"
 	schedulerActivePrefix          = "sched:active:"
 	schedulerReadyPrefix           = "sched:ready:"
@@ -594,7 +594,11 @@ func (c *schedulerCache) SetAccount(ctx context.Context, account *service.Accoun
 		return err
 	}
 	if len(accountIDs) == 0 {
-		return c.DeleteAccount(ctx, account.ID)
+		// 编码失败属于缓存驱逐，不是数据库删除；保留版本下界，允许之后正确快照修复。
+		id := strconv.FormatInt(account.ID, 10)
+		return evictSchedulerAccountScript.Run(ctx, c.rdb, []string{
+			schedulerAccountKey(id), schedulerAccountMetaKey(id), schedulerLastUsedKey(id), schedulerAccountRevisionKey(id),
+		}, schedulerAccountRevision(account.UpdatedAt)).Err()
 	}
 	return nil
 }
@@ -604,7 +608,9 @@ func (c *schedulerCache) DeleteAccount(ctx context.Context, accountID int64) err
 		return nil
 	}
 	id := strconv.FormatInt(accountID, 10)
-	return c.rdb.Del(ctx, schedulerAccountKey(id), schedulerAccountMetaKey(id), schedulerLastUsedKey(id)).Err()
+	return deleteSchedulerAccountScript.Run(ctx, c.rdb, []string{
+		schedulerAccountKey(id), schedulerAccountMetaKey(id), schedulerLastUsedKey(id), schedulerAccountRevisionKey(id),
+	}).Err()
 }
 
 func (c *schedulerCache) UpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {
@@ -807,8 +813,9 @@ func (c *schedulerCache) writeAccountIDs(ctx context.Context, accounts []service
 		}
 
 		id := strconv.FormatInt(account.ID, 10)
-		pipe.Set(ctx, schedulerAccountKey(id), fullPayload, 0)
-		pipe.Set(ctx, schedulerAccountMetaKey(id), metaPayload, 0)
+		writeSchedulerAccountScript.Eval(ctx, pipe, []string{
+			schedulerAccountKey(id), schedulerAccountMetaKey(id), schedulerAccountRevisionKey(id),
+		}, schedulerAccountRevision(account.UpdatedAt), fullPayload, metaPayload)
 		// 保持高频 LastUsedAt 旁路键不变，防止滞后的快照重建覆盖更新的调度时间。
 		accountIDs = append(accountIDs, account.ID)
 		pending++

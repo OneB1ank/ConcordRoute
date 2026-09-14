@@ -642,7 +642,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
-			startsVisibleOutput := openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType)
+			// 首内容已经完成写出后，不再为后续每个大事件重复进行首字分类。
+			startsVisibleOutput := firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType)
 			if startsVisibleOutput {
 				// 单独记录解析到首内容的时间，包含正文的写出阻塞不会混入该阶段。
 				markStreamStage("first_content_received")

@@ -428,12 +428,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if isCompactRequest {
 			// 旧 /responses/compact 不接受 client_metadata，但其 Header 仍属于同一
 			// Codex 会话。必须在 compact 归一化删除请求级字段前派生 ID，随后只改写 Header。
-			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRequestWithCarry(fingerprintAccount, clientHeaders, false, decoded),
-				account,
-			)
-			if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-				return nil, fmt.Errorf("persist Codex fingerprint bindings: %w", err)
+			fingerprintIDs, resolveErr = prepareCodexFingerprint(ctx, s.accountRepo, fingerprintAccount, func(local *Account) *codexFingerprintIDs {
+				return bindCodexFingerprintIDsToAccount(resolveCodexFingerprintIDsFromRequestWithCarry(local, clientHeaders, false, decoded), account)
+			})
+			if resolveErr != nil {
+				return nil, fmt.Errorf("prepare Codex fingerprint bindings: %w", resolveErr)
 			}
 		}
 		codexResult := codexTransformResult{}
@@ -454,12 +453,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if applyCodexClientMetadata(decoded, fingerprintAccount) {
 				markDecodedModified()
 			}
-			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRequest(fingerprintAccount, clientHeaders, decoded),
-				account,
-			)
-			if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-				return nil, fmt.Errorf("persist Codex fingerprint bindings: %w", err)
+			fingerprintIDs, resolveErr = prepareCodexFingerprint(ctx, s.accountRepo, fingerprintAccount, func(local *Account) *codexFingerprintIDs {
+				return bindCodexFingerprintIDsToAccount(resolveCodexFingerprintIDsFromRequest(local, clientHeaders, decoded), account)
+			})
+			if resolveErr != nil {
+				return nil, fmt.Errorf("prepare Codex fingerprint bindings: %w", resolveErr)
 			}
 			// Messages 兼容桥可能把 prompt_cache_key 从 Body 移到 Header；Cockpit
 			// 仍使用服务器派生的 session 作为上游缓存键。

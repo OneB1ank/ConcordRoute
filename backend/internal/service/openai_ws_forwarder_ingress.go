@@ -135,12 +135,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if c.Request != nil {
 			clientHeaders = c.Request.Header
 		}
-		firstFingerprintIDs = bindCodexFingerprintIDsToAccount(
-			resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, firstClientMessage),
-			account,
-		)
-		if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-			return fmt.Errorf("persist websocket Codex fingerprint bindings: %w", err)
+		firstFingerprintIDs, resolveErr = prepareCodexFingerprint(ctx, s.accountRepo, fingerprintAccount, func(local *Account) *codexFingerprintIDs {
+			return bindCodexFingerprintIDsToAccount(resolveCodexFingerprintIDsFromRawRequest(local, clientHeaders, firstClientMessage), account)
+		})
+		if resolveErr != nil {
+			return fmt.Errorf("prepare websocket Codex fingerprint bindings: %w", resolveErr)
 		}
 		stageCodexFingerprintIDs(c, firstFingerprintIDs)
 	}
@@ -486,20 +485,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// 握手保留首帧身份，现代客户端后续帧独立推进回合、窗口及显式缓存键。
 		if firstFingerprintIDs != nil {
 			if turn > 1 {
-				previousWindow := currentFingerprintIDs.windowID
 				var identityErr error
-				currentFingerprintIDs, identityErr = fingerprintState.advance(normalized)
+				currentFingerprintIDs, identityErr = fingerprintState.prepare(ctx, s.accountRepo, normalized)
 				if identityErr != nil {
-					return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, identityErr.Error(), identityErr)
-				}
-				if currentFingerprintIDs.windowID != previousWindow {
-					if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-						return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
-							coderws.StatusInternalError,
-							"persist websocket Codex fingerprint bindings failed",
-							err,
-						)
-					}
+					return openAIWSClientPayload{}, identityErr
 				}
 			}
 			fingerprinted, _, fingerprintErr := applyCodexFingerprintClientMetadataRaw(normalized, currentFingerprintIDs)

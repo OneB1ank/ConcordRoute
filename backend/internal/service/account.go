@@ -70,6 +70,13 @@ type Account struct {
 	GroupIDs      []int64
 	Groups        []*Group
 
+	// schedulerDBVerified 只标记本次选择已从数据库复核的完整快照，不进入缓存或 API。
+	// 避免最终水合又用旧 Redis 快照替换已经验证的账号。
+	schedulerDBVerified bool
+
+	// 仅用于同步身份准备操作的账号副本；锁所有权不进入缓存或持久化。
+	codexIdentityLockHeld bool
+
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
 	modelMappingCacheReady          bool

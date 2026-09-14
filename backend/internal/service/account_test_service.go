@@ -815,7 +815,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	payload := createOpenAITestPayload(upstreamTestModelID, prompt, isOAuth)
 	var fingerprintIDs *codexFingerprintIDs
 	if isOAuth {
-		fingerprintIDs = resolveCodexProbeFingerprintIDs(credentialAccount, codexProbePurposeAccountTest, upstreamTestModelID)
+		var identityErr error
+		fingerprintIDs, identityErr = prepareCodexProbeFingerprint(ctx, credentialAccount, codexProbePurposeAccountTest, upstreamTestModelID)
+		if identityErr != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to prepare Codex probe identity: %s", identityErr.Error()))
+		}
 		applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
 	}
 	payloadBytes, _ := json.Marshal(payload)
@@ -1153,7 +1157,11 @@ func (s *AccountTestService) testOpenAINativeCompactionV2Connection(c *gin.Conte
 	payload := createOpenAICompactProbePayload(testModelID, isOAuth)
 	var fingerprintIDs *codexFingerprintIDs
 	if isOAuth {
-		fingerprintIDs = resolveCodexProbeFingerprintIDs(credentialAccount, codexProbePurposeNativeCompactionV2, testModelID)
+		var identityErr error
+		fingerprintIDs, identityErr = prepareCodexProbeFingerprint(ctx, credentialAccount, codexProbePurposeNativeCompactionV2, testModelID)
+		if identityErr != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to prepare Codex probe identity: %s", identityErr.Error()))
+		}
 		applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
 	}
 	payloadBytes, _ := json.Marshal(payload)
@@ -2397,7 +2405,10 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
 	}
-	fingerprintIDs := resolveCodexProbeFingerprintIDs(credentialAccount, codexProbePurposeImageAccountTest, parsed.Model)
+	fingerprintIDs, err := prepareCodexProbeFingerprint(ctx, credentialAccount, codexProbePurposeImageAccountTest, parsed.Model)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to prepare Codex probe identity: %s", err.Error()))
+	}
 	responsesBody, _, err = applyCodexFingerprintClientMetadataRaw(responsesBody, fingerprintIDs)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to apply Codex probe identity: %s", err.Error()))

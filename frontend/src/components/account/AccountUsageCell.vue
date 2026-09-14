@@ -136,7 +136,7 @@
             {{ codexOverdraftStatus.detail }}
           </span>
         </div>
-        <!-- 5h/7d 均展示窗口统计；周总估算仍仅基于 7d。 -->
+        <!-- 5h/7d 统一使用窗口标签，累计行不重复标注；周总估算仍仅基于 7d。 -->
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
@@ -144,7 +144,6 @@
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
           :overdraft-stats="codexOverdraftStatsFor(usageInfo.five_hour)"
-          :stats-label="t('admin.accounts.usageWindow.localFiveHourStats')"
           :stats-hint="t('admin.accounts.usageWindow.localFiveHourStatsHint')"
           :show-now-when-idle="true"
           :stats-only="usageInfo.five_hour.local_only"
@@ -157,6 +156,7 @@
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
           :overdraft-stats="codexOverdraftStatsFor(usageInfo.seven_day)"
+          :stats-hint="t('admin.accounts.usageWindow.localSevenDayStatsHint')"
           :show-now-when-idle="true"
           :stats-only="usageInfo.seven_day.local_only"
           color="emerald"

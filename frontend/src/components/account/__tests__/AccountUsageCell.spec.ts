@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AccountUsageCell from '../AccountUsageCell.vue'
+import UsageProgressBar from '../UsageProgressBar.vue'
 import type { Account } from '@/types'
 
 const { getUsage } = vi.hoisted(() => ({
@@ -82,7 +83,7 @@ describe('AccountUsageCell', () => {
     })
   })
 
-  it('OpenAI 近五小时账务使用独立标签，完整传递后端累计值和额度快照', async () => {
+  it('OpenAI 五小时账务不加重复标签，保留统计说明和后端累计值', async () => {
     getUsage.mockResolvedValue({
       five_hour: {
         utilization: 0, resets_at: null, remaining_seconds: 0,
@@ -95,8 +96,8 @@ describe('AccountUsageCell', () => {
       global: {
         stubs: {
           UsageProgressBar: {
-            props: ['statsLabel', 'statsHint', 'windowStats', 'utilization'],
-            template: '<div data-test="local-stats">{{ statsLabel }}|{{ statsHint }}|{{ windowStats.requests }}|{{ windowStats.tokens }}|{{ utilization }}</div>'
+            props: ['label', 'statsLabel', 'statsHint', 'windowStats', 'utilization'],
+            template: '<div data-test="local-stats" :data-stats-label="statsLabel">{{ label }}|{{ statsHint }}|{{ windowStats.requests }}|{{ windowStats.tokens }}|{{ utilization }}</div>'
           },
           OpenAIQuotaResetCell: true
         }
@@ -104,11 +105,74 @@ describe('AccountUsageCell', () => {
     })
     await flushPromises()
     const row = wrapper.get('[data-test="local-stats"]')
-    expect(row.text()).toContain('admin.accounts.usageWindow.localFiveHourStats')
+    expect(row.attributes('data-stats-label')).toBeUndefined()
+    expect(row.text()).toContain('5h|')
     expect(row.text()).toContain('admin.accounts.usageWindow.localFiveHourStatsHint')
     expect(row.text()).toContain('|7|481500|0')
     expect(getUsage).toHaveBeenCalledWith(2991)
     wrapper.unmount()
+  })
+
+  it.each([false, true])('周刚重置时保留独立的 5h/7d 金额并说明范围（批量读取：%s）', async (managed) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-15T04:00:00Z'))
+    const data = {
+      five_hour: {
+        utilization: 0, resets_at: null, remaining_seconds: 0,
+        window_stats: { requests: 16, tokens: 2200000, cost: 4.99, user_cost: 4.99 }
+      },
+      seven_day: {
+        utilization: 1, resets_at: '2026-09-22T03:00:00Z', remaining_seconds: 601200,
+        window_stats: { requests: 14, tokens: 2000000, cost: 2.66, user_cost: 2.66 }
+      }
+    }
+    getUsage.mockResolvedValue(data)
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 2992 + Number(managed), platform: 'openai', type: 'oauth' }),
+        batchedUsage: managed ? data : undefined,
+        requestBatchedUsage: managed ? vi.fn() : undefined
+      },
+      global: { stubs: { OpenAIQuotaResetCell: true } }
+    })
+    try {
+      await flushPromises()
+      // 使用真实进度条组件，覆盖金额格式化与说明最终是否落到 DOM。
+      const bars = wrapper.findAllComponents(UsageProgressBar)
+      expect(bars).toHaveLength(2)
+      const five = bars[0].get('[data-testid="window-stats"]')
+      const seven = bars[1].get('[data-testid="window-stats"]')
+      expect(five.text()).toContain('16 req')
+      expect(five.text()).toContain('A $4.99')
+      expect(five.text()).toContain('U $4.99')
+      expect(seven.text()).toContain('14 req')
+      expect(seven.text()).toContain('A $2.66')
+      expect(seven.text()).toContain('U $2.66')
+      expect(seven.attributes('title')).toBe('admin.accounts.usageWindow.localSevenDayStatsHint')
+      expect(five.text()).not.toContain('近5h')
+      expect(bars[1].text()).toContain('6d 23h')
+      expect(wrapper.find('[data-testid="openai-weekly-estimate"]').exists()).toBe(false)
+      // 新增同一笔消费后两行各更新一次；不混用旧缓存，不在前端重复累加。
+      const refreshed = {
+        five_hour: { ...data.five_hour, window_stats: { requests: 17, tokens: 2300000, cost: 5.19, user_cost: 5.19 } },
+        seven_day: { ...data.seven_day, window_stats: { requests: 15, tokens: 2100000, cost: 2.86, user_cost: 2.86 } }
+      }
+      if (managed) {
+        await wrapper.setProps({ batchedUsage: refreshed })
+      } else {
+        getUsage.mockResolvedValue(refreshed)
+        await wrapper.setProps({ manualRefreshToken: 1 })
+      }
+      await flushPromises()
+      expect(five.text()).toContain('17 req')
+      expect(five.text()).toContain('A $5.19')
+      expect(seven.text()).toContain('15 req')
+      expect(seven.text()).toContain('A $2.86')
+      expect(getUsage).toHaveBeenCalledTimes(managed ? 0 : 2)
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('renders eligible Ollama Cloud state inside the unified usage cell', () => {

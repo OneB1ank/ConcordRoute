@@ -509,7 +509,11 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		"stream":       true,
 		"store":        false,
 	}
-	fingerprintIDs := resolveCodexProbeFingerprintIDs(account, codexProbePurposeQuotaOverdraft, upstreamModel)
+	fingerprintIDs, err := prepareCodexProbeFingerprint(ctx, account, codexProbePurposeQuotaOverdraft, upstreamModel)
+	if err != nil {
+		result.Status, result.ReasonCode = "inconclusive", "experimental_probe_unavailable"
+		return result
+	}
 	applyCodexFingerprintClientMetadata(payload, fingerprintIDs)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

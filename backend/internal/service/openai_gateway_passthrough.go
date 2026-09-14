@@ -88,12 +88,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if compactRequest {
 			// compact 归一化会删除 client_metadata（显式缓存键保留），先从原始请求
 			// 派生账号级 ID，发送时仅收敛 Header，不向不支持的 body schema 注入字段。
-			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body, false),
-				account,
-			)
-			if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-				return nil, fmt.Errorf("persist Codex fingerprint bindings: %w", err)
+			fingerprintIDs, resolveErr = prepareCodexFingerprint(ctx, s.accountRepo, fingerprintAccount, func(local *Account) *codexFingerprintIDs {
+				return bindCodexFingerprintIDsToAccount(resolveCodexFingerprintIDsFromRawRequest(local, clientHeaders, body, false), account)
+			})
+			if resolveErr != nil {
+				return nil, fmt.Errorf("prepare Codex fingerprint bindings: %w", resolveErr)
 			}
 		}
 
@@ -109,12 +108,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		// 透传与普通转换路径共享指纹收敛语义。只局部改写 client_metadata，
 		// 避免为大请求体做整包反序列化。
 		if !compactRequest {
-			fingerprintIDs = bindCodexFingerprintIDsToAccount(
-				resolveCodexFingerprintIDsFromRawRequest(fingerprintAccount, clientHeaders, body, true),
-				account,
-			)
-			if err := persistCodexIdentityBindings(ctx, s.accountRepo, fingerprintAccount); err != nil {
-				return nil, fmt.Errorf("persist Codex fingerprint bindings: %w", err)
+			fingerprintIDs, resolveErr = prepareCodexFingerprint(ctx, s.accountRepo, fingerprintAccount, func(local *Account) *codexFingerprintIDs {
+				return bindCodexFingerprintIDsToAccount(resolveCodexFingerprintIDsFromRawRequest(local, clientHeaders, body, true), account)
+			})
+			if resolveErr != nil {
+				return nil, fmt.Errorf("prepare Codex fingerprint bindings: %w", resolveErr)
 			}
 			if fingerprintIDs != nil {
 				updatedBody, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(body, fingerprintIDs)

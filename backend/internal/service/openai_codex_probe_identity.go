@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
@@ -15,6 +16,13 @@ const (
 )
 
 const codexProbeFingerprintSourceVersion = "codex-background-probe:v1"
+
+// 已有探测调用同样响应账号锁等待期间的取消；不新增探测或改变持久化策略。
+func prepareCodexProbeFingerprint(ctx context.Context, account *Account, purpose codexProbePurpose, model string) (*codexFingerprintIDs, error) {
+	return withCodexIdentityPreparation(ctx, account, func(_ context.Context, local *Account) (*codexFingerprintIDs, error) {
+		return resolveCodexProbeFingerprintIDs(local, purpose, model), nil
+	})
+}
 
 // resolveCodexProbeFingerprintIDs 为显式账号测试生成账号级身份。
 // installation/session 继续复用账号持久化种子，thread/cache key 按探测用途和
