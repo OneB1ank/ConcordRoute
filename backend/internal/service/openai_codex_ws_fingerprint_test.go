@@ -103,6 +103,21 @@ func TestCodexWebSocketFingerprintStateUsesHandshakeConversationHeaders(t *testi
 	require.ErrorContains(t, err, "reconnect")
 }
 
+func TestCodexWebSocketFingerprintStateSharesExplicitRootTopology(t *testing.T) {
+	account := newTestOAuthAccount(1217, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	rootID := "01994f42-8700-7000-8000-000000000001"
+	firstBody := []byte(fmt.Sprintf(`{"client_metadata":{"session_id":%q,"thread_id":%q}}`, rootID, rootID))
+	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, firstBody)
+	require.NotNil(t, first)
+	assert.Equal(t, first.sessionID, first.threadID)
+
+	state := newCodexWebSocketFingerprintState(account, first, nil, firstBody)
+	advanced, err := state.advance([]byte(`{"client_metadata":{"turn_id":"ws-root-turn"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, first.sessionID, advanced.sessionID)
+	assert.Equal(t, first.threadID, advanced.threadID)
+}
+
 // 后续 WS 帧省略回合和窗口号时，不得把握手快照中的字段回灌到该帧。
 func TestAdvanceCodexWebSocketFingerprintPreservesAbsentTurnAndWindowNumber(t *testing.T) {
 	account := newTestOAuthAccount(1214, map[string]any{codexFingerprintModeExtraKey: "cockpit"})

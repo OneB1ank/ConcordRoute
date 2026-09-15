@@ -496,6 +496,20 @@ func readCodexTurnLineageBindings(account *Account) map[string]any {
 	return readCodexUUIDv7Bindings(account, CodexTurnLineageBindingsExtraKey)
 }
 
+// ensureCodexUUIDv7Bindings 返回可写绑定集合，并在首次写入时挂到账号 Extra。
+func ensureCodexUUIDv7Bindings(account *Account, extraKey string) map[string]any {
+	bindings := readCodexUUIDv7Bindings(account, extraKey)
+	if bindings != nil {
+		return bindings
+	}
+	bindings = make(map[string]any)
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	account.Extra[extraKey] = bindings
+	return bindings
+}
+
 func parseCodexIdentityBinding(raw any) (codexIdentityBinding, bool) {
 	switch value := raw.(type) {
 	case string:
@@ -551,21 +565,11 @@ func deriveStableUUIDv7ForAccount(account *Account, seed string) string {
 	)
 }
 
-// deriveStableUUIDv7ForAccountStore 在指定账号级存储中维护 UUIDv7 绑定。
-// 独立存储共享锁和热缓存，但分别执行容量及过期策略。
-func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, idleTTL time.Duration, maxEntries int) string {
-	seed = strings.TrimSpace(seed)
-	if account == nil || seed == "" {
-		return deriveStableUUIDv7(seed)
-	}
-	if !account.codexIdentityLockHeld {
-		lock := codexIdentityBindingLock(account.ID)
-		lock.Lock()
-		defer lock.Unlock()
-	}
+// loadCodexUUIDv7Binding 从指定账号级存储或热缓存读取 UUIDv7 绑定。
+// 调用方持有账号锁；命中时继续沿用既有触摸、裁剪和回填规则。
+func loadCodexUUIDv7Binding(account *Account, seed, extraKey string, idleTTL time.Duration, maxEntries int, nowMS int64) (string, bool) {
 	key := codexIdentitySeedKey(seed)
 	bindings := readCodexUUIDv7Bindings(account, extraKey)
-	nowMS := time.Now().UnixMilli()
 	if bindings != nil {
 		// 活跃目标且集合未超限时无需完整裁剪；缺省/过期目标和提交仍执行原有清理。
 		binding, valid := parseCodexIdentityBinding(bindings[key])
@@ -591,39 +595,75 @@ func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, 
 			}
 			codexIdentityHotCache.Store(codexIdentityHotKey(account, seed), codexIdentityHotBinding{UUID: binding.UUID, LastUsedAtMS: nowMS})
 			sweepCodexIdentityHotCache()
-			return binding.UUID
+			return binding.UUID, true
 		}
 	}
 	hotKey := codexIdentityHotKey(account, seed)
 	if raw, ok := codexIdentityHotCache.Load(hotKey); ok {
 		if hot, valid := raw.(codexIdentityHotBinding); valid && hot.UUID != "" && (hot.LastUsedAtMS == 0 || nowMS-hot.LastUsedAtMS < codexIdentityHotCacheTTL.Milliseconds()) {
-			if bindings == nil {
-				bindings = make(map[string]any)
-				if account.Extra == nil {
-					account.Extra = make(map[string]any)
-				}
-				account.Extra[extraKey] = bindings
-			}
+			bindings = ensureCodexUUIDv7Bindings(account, extraKey)
 			bindings[key] = codexIdentityBinding{UUID: hot.UUID, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
 			account.codexIdentityBindingsDirty = true
 			codexIdentityHotCache.Store(hotKey, codexIdentityHotBinding{UUID: hot.UUID, LastUsedAtMS: nowMS})
-			return hot.UUID
+			return hot.UUID, true
 		}
 		codexIdentityHotCache.Delete(hotKey)
 	}
-	value := newCodexUUIDv7().String()
-	if bindings == nil {
-		bindings = make(map[string]any)
-		if account.Extra == nil {
-			account.Extra = make(map[string]any)
-		}
-		account.Extra[extraKey] = bindings
-	}
+	return "", false
+}
+
+// storeCodexUUIDv7Binding 写入已确定的完整 UUID，并复用既有裁剪和热缓存规则。
+func storeCodexUUIDv7Binding(account *Account, seed, extraKey, value string, idleTTL time.Duration, maxEntries int, nowMS int64) {
+	key := codexIdentitySeedKey(seed)
+	bindings := ensureCodexUUIDv7Bindings(account, extraKey)
 	bindings[key] = codexIdentityBinding{UUID: value, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
 	account.codexIdentityBindingsDirty = true
-	codexIdentityHotCache.Store(hotKey, codexIdentityHotBinding{UUID: value, LastUsedAtMS: nowMS})
+	codexIdentityHotCache.Store(codexIdentityHotKey(account, seed), codexIdentityHotBinding{UUID: value, LastUsedAtMS: nowMS})
 	pruneCodexUUIDv7Bindings(bindings, nowMS, key, idleTTL, maxEntries)
 	sweepCodexIdentityHotCache()
+}
+
+// storeCodexUUIDv7Alias 在容量裁剪前保护已有根键，再把另一命名空间绑定到同一 UUID。
+func storeCodexUUIDv7Alias(account *Account, existingSeed, aliasSeed, extraKey, value string, idleTTL time.Duration, maxEntries int, nowMS int64) {
+	bindings := ensureCodexUUIDv7Bindings(account, extraKey)
+	if maxEntries >= 1 {
+		pruneCodexUUIDv7Bindings(bindings, nowMS, codexIdentitySeedKey(existingSeed), idleTTL, maxEntries-1)
+	}
+	storeCodexUUIDv7Binding(account, aliasSeed, extraKey, value, idleTTL, maxEntries, nowMS)
+}
+
+// storeCodexUUIDv7Pair 为新根预留两个槽位后一次生成、双键写入，避免满容量时拆散共享关系。
+func storeCodexUUIDv7Pair(account *Account, firstSeed, secondSeed, extraKey, value string, idleTTL time.Duration, maxEntries int, nowMS int64) {
+	bindings := ensureCodexUUIDv7Bindings(account, extraKey)
+	if maxEntries >= 2 {
+		pruneCodexUUIDv7Bindings(bindings, nowMS, "", idleTTL, maxEntries-2)
+	}
+	binding := codexIdentityBinding{UUID: value, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
+	bindings[codexIdentitySeedKey(firstSeed)] = binding
+	bindings[codexIdentitySeedKey(secondSeed)] = binding
+	account.codexIdentityBindingsDirty = true
+	codexIdentityHotCache.Store(codexIdentityHotKey(account, firstSeed), codexIdentityHotBinding{UUID: value, LastUsedAtMS: nowMS})
+	codexIdentityHotCache.Store(codexIdentityHotKey(account, secondSeed), codexIdentityHotBinding{UUID: value, LastUsedAtMS: nowMS})
+	sweepCodexIdentityHotCache()
+}
+
+// deriveStableUUIDv7ForAccountStore 在指定账号级存储中维护 UUIDv7 绑定。
+func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, idleTTL time.Duration, maxEntries int) string {
+	seed = strings.TrimSpace(seed)
+	if account == nil || seed == "" {
+		return deriveStableUUIDv7(seed)
+	}
+	if !account.codexIdentityLockHeld {
+		lock := codexIdentityBindingLock(account.ID)
+		lock.Lock()
+		defer lock.Unlock()
+	}
+	nowMS := time.Now().UnixMilli()
+	if value, ok := loadCodexUUIDv7Binding(account, seed, extraKey, idleTTL, maxEntries, nowMS); ok {
+		return value
+	}
+	value := newCodexUUIDv7().String()
+	storeCodexUUIDv7Binding(account, seed, extraKey, value, idleTTL, maxEntries, nowMS)
 	return value
 }
 
@@ -1236,20 +1276,38 @@ func resolveConvergedSessionID(account *Account) string {
 // resolveConvergedCockpitSessionID derives one stable server-side session per
 // Cockpit conversation while keeping the installation identity account-scoped.
 func resolveConvergedCockpitSessionID(account *Account, conversationSeed string) string {
-	if account == nil || strings.TrimSpace(conversationSeed) == "" {
+	bindingSeed := codexCockpitSessionBindingSeed(account, conversationSeed)
+	if bindingSeed == "" {
+		return ""
+	}
+	return deriveStableUUIDv7ForAccount(account, bindingSeed)
+}
+
+func codexCockpitSessionBindingSeed(account *Account, conversationSeed string) string {
+	conversationSeed = strings.TrimSpace(conversationSeed)
+	if account == nil || conversationSeed == "" {
 		return ""
 	}
 	seed := resolveCodexFingerprintSeed(account)
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, strings.TrimSpace(conversationSeed)))
+	return fmt.Sprintf("sub2api:codex-cockpit-session-id:v2:%s:%s", seed, conversationSeed)
 }
 
 // resolveConvergedThreadID 按客户端原始 session-id 确定性派生 thread_id。
 // 每个真实 Codex 会话（不同客户端启动实例）获得一个独立线程，
 // 模拟正常用户 spawn 子代理或开多窗口的模式。
 func resolveConvergedThreadID(account *Account, clientSessionID string) string {
+	bindingSeed := codexThreadBindingSeed(account, clientSessionID)
+	if bindingSeed == "" {
+		return ""
+	}
+	return deriveStableUUIDv7ForAccount(account, bindingSeed)
+}
+
+func codexThreadBindingSeed(account *Account, clientSessionID string) string {
+	clientSessionID = strings.TrimSpace(clientSessionID)
 	if account == nil || clientSessionID == "" {
 		return ""
 	}
@@ -1257,7 +1315,39 @@ func resolveConvergedThreadID(account *Account, clientSessionID string) string {
 	if seed == "" {
 		return ""
 	}
-	return deriveStableUUIDv7ForAccount(account, fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID))
+	return fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID)
+}
+
+// resolveConvergedCockpitRootIDs 只为客户端明确声明的根线程共享 session/thread UUID。
+// 双边旧绑定若已经不同则原样保留，避免历史会话、窗口和缓存作用域在升级时旋转。
+func resolveConvergedCockpitRootIDs(account *Account, sessionSeed, threadSeed string) (string, string) {
+	sessionBindingSeed := codexCockpitSessionBindingSeed(account, sessionSeed)
+	threadBindingSeed := codexThreadBindingSeed(account, threadSeed)
+	if sessionBindingSeed == "" || threadBindingSeed == "" {
+		return "", ""
+	}
+	if !account.codexIdentityLockHeld {
+		lock := codexIdentityBindingLock(account.ID)
+		lock.Lock()
+		defer lock.Unlock()
+	}
+	nowMS := time.Now().UnixMilli()
+	sessionID, hasSession := loadCodexUUIDv7Binding(account, sessionBindingSeed, CodexIdentityBindingsExtraKey, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+	threadID, hasThread := loadCodexUUIDv7Binding(account, threadBindingSeed, CodexIdentityBindingsExtraKey, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+	switch {
+	case hasSession && hasThread:
+		return sessionID, threadID
+	case hasSession:
+		storeCodexUUIDv7Alias(account, sessionBindingSeed, threadBindingSeed, CodexIdentityBindingsExtraKey, sessionID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+		return sessionID, sessionID
+	case hasThread:
+		storeCodexUUIDv7Alias(account, threadBindingSeed, sessionBindingSeed, CodexIdentityBindingsExtraKey, threadID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+		return threadID, threadID
+	default:
+		sharedID := newCodexUUIDv7().String()
+		storeCodexUUIDv7Pair(account, sessionBindingSeed, threadBindingSeed, CodexIdentityBindingsExtraKey, sharedID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+		return sharedID, sharedID
+	}
 }
 
 // resolveConvergedCockpitTurnID 在账号和根 session 作用域内，
@@ -1387,6 +1477,15 @@ func resolveCockpitThreadSeed(source codexFingerprintSource) string {
 		source.originalSessionID,
 		source.promptCacheKey,
 	)
+}
+
+// isExplicitCodexRootThread 仅接受客户端同时给出的同值 session/thread。
+// 缺少 thread 时仍走旧兼容派生，避免把服务端回退值误判为官方根拓扑。
+func isExplicitCodexRootThread(source codexFingerprintSource, ids *codexFingerprintIDs) bool {
+	if ids == nil || strings.TrimSpace(source.threadID) == "" || strings.TrimSpace(source.parentThreadID) != "" {
+		return false
+	}
+	return ids.originalSessionID != "" && ids.originalSessionID == ids.originalThreadID
 }
 
 // codexFingerprintSource 保存客户端原始身份字段，供不同模式选择派生种子。
@@ -1552,15 +1651,18 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		// prompt_cache_key remains the one client-controlled cache identity.
 		sessionSeed := resolveCockpitSessionSeed(source)
 		threadSeed := resolveCockpitThreadSeed(source)
-		ids.sessionID = resolveConvergedCockpitSessionID(account, sessionSeed)
+		if isExplicitCodexRootThread(source, ids) {
+			ids.sessionID, ids.threadID = resolveConvergedCockpitRootIDs(account, sessionSeed, threadSeed)
+		} else {
+			ids.sessionID = resolveConvergedCockpitSessionID(account, sessionSeed)
+			ids.threadID = resolveConvergedThreadID(account, threadSeed)
+		}
 		if ids.sessionID == "" {
 			ids.sessionID = resolveConvergedSessionID(account)
 		}
 		if ids.sessionID == "" {
 			return nil
 		}
-
-		ids.threadID = resolveConvergedThreadID(account, threadSeed)
 		if ids.threadID == "" {
 			ids.threadID = ids.sessionID
 		}

@@ -323,6 +323,191 @@ func TestCockpitIdentityGraph_RootAndChildTopology(t *testing.T) {
 	assert.Equal(t, childIDs.sessionID, childIDs.promptCacheKey)
 }
 
+func TestCockpitIdentityGraph_NewExplicitRootSharesSessionAndThread(t *testing.T) {
+	account := newTestOAuthAccount(1901, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientSessionID:   rootOriginal,
+		originalSessionID: rootOriginal,
+		threadID:          rootOriginal,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, root)
+	requireCodexUUIDv7(t, root.sessionID)
+	assert.Equal(t, root.sessionID, root.threadID, "新根线程应复用同一个官方拓扑 UUID")
+
+	childOriginal := uuid.Must(uuid.NewV7()).String()
+	child := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientSessionID:   rootOriginal,
+		originalSessionID: rootOriginal,
+		threadID:          childOriginal,
+		parentThreadID:    rootOriginal,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, child)
+	assert.Equal(t, root.sessionID, child.sessionID)
+	assert.Equal(t, root.threadID, child.parentThreadID)
+	assert.NotEqual(t, root.threadID, child.threadID)
+}
+
+func TestCockpitIdentityGraph_LegacyDistinctRootBindingsRemainStable(t *testing.T) {
+	account := newTestOAuthAccount(1902, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	legacySession := resolveConvergedCockpitSessionID(account, rootOriginal)
+	legacyThread := resolveConvergedThreadID(account, rootOriginal)
+	require.NotEqual(t, legacySession, legacyThread)
+
+	root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientSessionID:   rootOriginal,
+		originalSessionID: rootOriginal,
+		threadID:          rootOriginal,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, root)
+	assert.Equal(t, legacySession, root.sessionID)
+	assert.Equal(t, legacyThread, root.threadID)
+}
+
+func TestCockpitIdentityGraph_OneSidedRootBindingConvergesWithoutRotation(t *testing.T) {
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+
+	t.Run("session exists", func(t *testing.T) {
+		account := newTestOAuthAccount(1903, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+		existing := resolveConvergedCockpitSessionID(account, rootOriginal)
+		root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+			clientSessionID:   rootOriginal,
+			originalSessionID: rootOriginal,
+			threadID:          rootOriginal,
+		}, codexFingerprintCockpit)
+		require.NotNil(t, root)
+		assert.Equal(t, existing, root.sessionID)
+		assert.Equal(t, existing, root.threadID)
+	})
+
+	t.Run("thread exists", func(t *testing.T) {
+		account := newTestOAuthAccount(1904, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+		existing := resolveConvergedThreadID(account, rootOriginal)
+		root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+			clientSessionID:   rootOriginal,
+			originalSessionID: rootOriginal,
+			threadID:          rootOriginal,
+		}, codexFingerprintCockpit)
+		require.NotNil(t, root)
+		assert.Equal(t, existing, root.sessionID)
+		assert.Equal(t, existing, root.threadID)
+	})
+}
+
+func TestCockpitIdentityGraph_SharedRootPersistsAcrossRestart(t *testing.T) {
+	account := newTestOAuthAccount(1905, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	repo := &codexIdentityPersistenceRepo{account: account}
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientSessionID:   rootOriginal,
+		originalSessionID: rootOriginal,
+		threadID:          rootOriginal,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, root)
+	require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account, root))
+
+	encoded, err := json.Marshal(account.Extra)
+	require.NoError(t, err)
+	var restoredExtra map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &restoredExtra))
+	fresh := &Account{ID: account.ID, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: restoredExtra}
+	codexIdentityHotCache = sync.Map{}
+	codexIdentityPersistedHashes = sync.Map{}
+	restored := resolveCodexFingerprintIDsWithSource(fresh, codexFingerprintSource{
+		clientSessionID:   rootOriginal,
+		originalSessionID: rootOriginal,
+		threadID:          rootOriginal,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, restored)
+	assert.Equal(t, root.sessionID, restored.sessionID)
+	assert.Equal(t, root.threadID, restored.threadID)
+	assert.Equal(t, restored.sessionID, restored.threadID)
+}
+
+func TestCockpitIdentityGraph_SharedRootRequiresExplicitTopology(t *testing.T) {
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	tests := []struct {
+		name   string
+		source codexFingerprintSource
+	}{
+		{
+			name: "thread omitted",
+			source: codexFingerprintSource{
+				clientSessionID:   rootOriginal,
+				originalSessionID: rootOriginal,
+			},
+		},
+		{
+			name: "parent present",
+			source: codexFingerprintSource{
+				clientSessionID:   rootOriginal,
+				originalSessionID: rootOriginal,
+				threadID:          rootOriginal,
+				parentThreadID:    uuid.Must(uuid.NewV7()).String(),
+			},
+		},
+	}
+	for index, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			account := newTestOAuthAccount(int64(1906+index), map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+			ids := resolveCodexFingerprintIDsWithSource(account, tc.source, codexFingerprintCockpit)
+			require.NotNil(t, ids)
+			assert.NotEqual(t, ids.sessionID, ids.threadID)
+		})
+	}
+}
+
+func TestCockpitIdentityGraph_SharedRootPreservesBothBindingsAtCapacity(t *testing.T) {
+	bindings := make(map[string]any, codexIdentityBindingMaxEntries)
+	nowMS := time.Now().UnixMilli()
+	for index := 0; index < codexIdentityBindingMaxEntries; index++ {
+		bindings[fmt.Sprintf("legacy-%04d", index)] = codexIdentityBinding{
+			UUID:         uuid.Must(uuid.NewV7()).String(),
+			CreatedAtMS:  nowMS - int64(codexIdentityBindingMaxEntries-index),
+			LastUsedAtMS: nowMS - int64(codexIdentityBindingMaxEntries-index),
+		}
+	}
+	account := newTestOAuthAccount(1908, map[string]any{
+		codexFingerprintModeExtraKey:  "cockpit",
+		CodexIdentityBindingsExtraKey: bindings,
+	})
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+		clientSessionID:   rootOriginal,
+		originalSessionID: rootOriginal,
+		threadID:          rootOriginal,
+	}, codexFingerprintCockpit)
+	require.NotNil(t, root)
+	assert.Equal(t, root.sessionID, root.threadID)
+	assert.LessOrEqual(t, len(readCodexIdentityBindings(account)), codexIdentityBindingMaxEntries)
+
+	sessionKey := codexIdentitySeedKey(codexCockpitSessionBindingSeed(account, rootOriginal))
+	threadKey := codexIdentitySeedKey(codexThreadBindingSeed(account, rootOriginal))
+	sessionBinding, sessionOK := parseCodexIdentityBinding(readCodexIdentityBindings(account)[sessionKey])
+	threadBinding, threadOK := parseCodexIdentityBinding(readCodexIdentityBindings(account)[threadKey])
+	require.True(t, sessionOK)
+	require.True(t, threadOK)
+	assert.Equal(t, sessionBinding.UUID, threadBinding.UUID)
+}
+
+func TestCockpitIdentityGraph_DecodedAndRawRequestsShareExplicitRoot(t *testing.T) {
+	rootOriginal := uuid.Must(uuid.NewV7()).String()
+	decoded := map[string]any{"client_metadata": map[string]any{
+		"session_id": rootOriginal,
+		"thread_id":  rootOriginal,
+	}}
+	raw, err := json.Marshal(decoded)
+	require.NoError(t, err)
+
+	decodedIDs := resolveCodexFingerprintIDsFromRequest(newTestOAuthAccount(1909, map[string]any{codexFingerprintModeExtraKey: "cockpit"}), nil, decoded)
+	rawIDs := resolveCodexFingerprintIDsFromRawRequest(newTestOAuthAccount(1910, map[string]any{codexFingerprintModeExtraKey: "cockpit"}), nil, raw)
+	require.NotNil(t, decodedIDs)
+	require.NotNil(t, rawIDs)
+	assert.Equal(t, decodedIDs.sessionID, decodedIDs.threadID)
+	assert.Equal(t, rawIDs.sessionID, rawIDs.threadID)
+}
+
 func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
 	account := newTestOAuthAccount(121, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	rootOriginal := uuid.Must(uuid.NewV7()).String()
