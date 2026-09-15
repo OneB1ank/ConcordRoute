@@ -47,6 +47,10 @@ const messages: Record<string, string> = {
   'usage.original': 'Original',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
+  'usage.latencyFirstTokenNotApplicable': 'Not applicable',
+  'usage.latencyFirstTokenNotApplicableHint': 'No independent first-content sample for this non-streaming request.',
+  'usage.latencyFirstTokenNotRecorded': 'Not recorded',
+  'usage.latencyFirstTokenNotRecordedHint': 'No first-content timing was recorded; this is not zero latency.',
   'usage.imageUnit': ' images',
   'usage.imageCount': 'Image count',
   'usage.imageBillingSize': 'Billing size',
@@ -92,6 +96,7 @@ const DataTableStub = {
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
         <slot name="cell-request_id" :row="row" />
+        <div data-testid="latency"><slot name="cell-latency" :row="row" /></div>
       </div>
     </div>
   `,
@@ -124,6 +129,36 @@ const baseImageRow = {
   image_size_source: null,
   image_size_breakdown: null,
 }
+
+describe('admin UsageTable first-content timing', () => {
+  // 空首字应说明统计缺省，不用总耗时冒充；已记录的零毫秒也要显示。
+  it.each([
+    { request_type: 'sync', stream: false, first_token_ms: null, text: 'Not applicable', hint: messages['usage.latencyFirstTokenNotApplicableHint'] },
+    { request_type: 'stream', stream: true, first_token_ms: null, text: 'Not recorded', hint: messages['usage.latencyFirstTokenNotRecordedHint'] },
+    { request_type: 'ws_v2', stream: false, first_token_ms: null, text: 'Not recorded', hint: messages['usage.latencyFirstTokenNotRecordedHint'] },
+    { request_type: 'unknown', stream: null, first_token_ms: undefined, text: 'Not recorded', hint: messages['usage.latencyFirstTokenNotRecordedHint'] },
+    { request_type: undefined, stream: undefined, first_token_ms: undefined, text: 'Not recorded', hint: messages['usage.latencyFirstTokenNotRecordedHint'] },
+    { request_type: undefined, stream: false, first_token_ms: null, text: 'Not applicable', hint: messages['usage.latencyFirstTokenNotApplicableHint'] },
+    { request_type: 'sync', stream: false, first_token_ms: 900, text: '900ms', hint: null },
+    { request_type: 'stream', stream: true, first_token_ms: 0, text: '0ms', hint: null },
+    { request_type: 'stream', stream: true, first_token_ms: 1234, text: '1.23s', hint: null },
+  ])('renders $request_type / $first_token_ms explicitly', ({ text, hint, ...fields }) => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, ...fields, duration_ms: 14070 }],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+    const cell = wrapper.get('[data-testid="latency"]')
+    expect(cell.text()).toContain(text)
+    expect(cell.text()).toContain('14.07s')
+    if (hint) expect(cell.get('[title]').attributes('title')).toBe(hint)
+  })
+})
 
 describe('admin UsageTable request ID column', () => {
   beforeEach(() => {

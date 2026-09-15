@@ -26,7 +26,7 @@ func newCodexWebSocketFingerprintState(account *Account, ids *codexFingerprintID
 	}
 }
 
-// 帧推进与必要的窗口提交共用取消预算；失败不提交连接状态或泄露锁所有权副本。
+// 帧推进与必要的绑定提交共用取消预算；失败不提交连接状态或泄露锁所有权副本。
 func (state *codexWebSocketFingerprintState) prepare(ctx context.Context, repo AccountRepository, body []byte) (*codexFingerprintIDs, error) {
 	next := *state
 	ids, err := withCodexIdentityPreparation(ctx, state.account, func(ctx context.Context, local *Account) (*codexFingerprintIDs, error) {
@@ -38,7 +38,11 @@ func (state *codexWebSocketFingerprintState) prepare(ctx context.Context, repo A
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if current != nil && state.current != nil && current.windowID != state.current.windowID {
+		// 同窗口的字符串 turn/parent/root 也可能新增持久绑定。
+		// 原生 UUIDv7 无需逐回合写库；依据实际变更标记避免每帧全量提交。
+		windowChanged := current != nil && state.current != nil &&
+			(current.windowID != state.current.windowID || current.contextWindowID != state.current.contextWindowID)
+		if current != nil && local != nil && (local.codexIdentityBindingsDirty || windowChanged) {
 			if err := persistCodexIdentityBindings(ctx, repo, local, current); err != nil {
 				return nil, fmt.Errorf("persist websocket Codex fingerprint bindings: %w", err)
 			}
@@ -85,7 +89,6 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 	source := extractCockpitFingerprintSourceRaw(nil, body)
 	current := *previous
 	current.turnIDPresent = source.turnID != ""
-	turnChanged := source.turnID != "" && source.turnID != previous.originalTurnID
 	if source.turnID != "" && source.turnID != previous.originalTurnID {
 		current.originalTurnID = source.turnID
 		if current.mode == codexFingerprintCockpit {
@@ -105,7 +108,8 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 		current.parentTurnID = source.parentTurnID
 		current.rootTurnID = resolveCodexRootTurnID(source.rootTurnID, source.parentTurnID, current.turnID)
 	}
-	if current.turnID != "" && (turnChanged || current.turnStartedAtUnixMS == 0) {
+	// 即使 turn 未变，也要接收首次有效时间或另一条链路已确认的生命周期时间。
+	if current.turnID != "" {
 		current.turnStartedAtUnixMS = resolveCodexTurnStartedAt(account, current.mode, current.sessionID, current.originalTurnID, current.turnID, source.turnStartedAtUnixMS, source.turnStartedAtPresent)
 	}
 	current.windowNumberPresent = source.windowNumberPresent
@@ -114,8 +118,21 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 	current.originalContextWindowID = source.contextWindowID
 	current.originalFirstWindowID = source.firstWindowID
 	current.originalPreviousWindowID = source.previousWindowID
-	if source.windowID != "" || source.windowNumberPresent {
-		resolveCodexFingerprintWindow(account, source, &current)
+	if source.windowID != "" || source.windowNumberPresent || source.contextWindowID != "" ||
+		source.firstWindowID != "" || source.previousWindowID != "" {
+		windowSource := source
+		// 缺省代数保留连接内部位置；字段存在性仍由当前帧独立控制。
+		if source.windowID == "" && !source.windowNumberPresent {
+			windowSource.windowID = previous.windowID
+		}
+		windowID := normalizeCodexWindowID(windowSource.windowID, current.threadID)
+		if source.windowNumberPresent {
+			windowID = fmt.Sprintf("%s:%d", current.threadID, source.windowNumber)
+		}
+		if source.contextWindowID == "" && windowID == previous.windowID {
+			windowSource.contextWindowID = previous.windowInstanceID
+		}
+		resolveCodexFingerprintWindow(account, windowSource, &current)
 		current.originalWindowID = source.windowID
 	}
 	if current.mode == codexFingerprintCockpit {
@@ -127,7 +144,7 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 			if current.promptCacheKey != "" {
 				rememberCodexPromptCacheKey(account, &current, current.promptCacheKey, current.promptCacheKeyInBody)
 			}
-		} else if current.windowID != previous.windowID {
+		} else if codexPromptCacheWindow(&current) != codexPromptCacheWindow(previous) {
 			// 与 HTTP 共用窗口绑定：当前窗口优先，缺省时仅继承直接前一窗口。
 			current.originalPromptCacheKey = ""
 			current.promptCacheKey = resolveOfficialCockpitPromptCacheKey(current.sessionID, "")

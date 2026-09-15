@@ -537,7 +537,7 @@ func TestCockpitRootTurnID_MissingIsNotSynthesizedForPre151Client(t *testing.T) 
 	assert.NotContains(t, body, "root_turn_id")
 }
 
-func TestCockpitContextWindowID_IsStablePerThreadGeneration(t *testing.T) {
+func TestCockpitContextWindowID_IsStablePerThreadInstance(t *testing.T) {
 	account := newTestOAuthAccount(108, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	contextID := uuid.Must(uuid.NewV7()).String()
 	base := map[string]any{
@@ -569,10 +569,10 @@ func TestCockpitContextWindowID_IsStablePerThreadGeneration(t *testing.T) {
 	third := resolveCodexFingerprintIDsFromRequest(account, nil, rotated)
 	require.NotNil(t, third)
 	assert.NotEqual(t, first.windowID, third.windowID)
-	assert.NotEqual(t, first.contextWindowID, third.contextWindowID)
+	assert.Equal(t, first.contextWindowID, third.contextWindowID, "实例引用不以代数为键")
 }
 
-func TestCockpitContextWindowID_IgnoresClientRotationWithinGeneration(t *testing.T) {
+func TestCockpitContextWindowID_DistinguishesClientRotationWithinGeneration(t *testing.T) {
 	account := newTestOAuthAccount(110, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	sessionID := uuid.Must(uuid.NewV7()).String()
 	threadID := uuid.Must(uuid.NewV7()).String()
@@ -593,7 +593,7 @@ func TestCockpitContextWindowID_IgnoresClientRotationWithinGeneration(t *testing
 	require.NotNil(t, second)
 	assert.Equal(t, first.threadID, second.threadID)
 	assert.Equal(t, first.windowID, second.windowID)
-	assert.Equal(t, first.contextWindowID, second.contextWindowID)
+	assert.NotEqual(t, first.contextWindowID, second.contextWindowID)
 }
 
 func TestCockpitContextWindowID_PersistsAcrossRestart(t *testing.T) {

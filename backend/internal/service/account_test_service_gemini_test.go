@@ -2,12 +2,13 @@
 
 package service
 
+// 并行用例不写 Gin 全局模式，避免与其它请求构造竞争。
+
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +41,6 @@ func TestCreateGeminiTestPayload_ImageModel(t *testing.T) {
 
 func TestProcessGeminiStream_EmitsImageEvent(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
 	ctx, recorder := newTestContext()
 	svc := &AccountTestService{}

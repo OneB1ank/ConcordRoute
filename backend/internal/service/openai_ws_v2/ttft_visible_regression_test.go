@@ -153,6 +153,53 @@ func TestRelayTTFTWaitsForVisibleContent(t *testing.T) {
 	}
 }
 
+// 只有完整拒绝内容或 incomplete 终态内容时，WS 也应记录首字并保持原帧与用量不变。
+func TestRelayTTFTCompleteContentWithoutDelta(t *testing.T) {
+	for _, tc := range []struct {
+		name, terminal string
+		content        bool
+	}{
+		{"refusal", `{"type":"response.completed","response":{"id":"resp_test","output":[{"type":"message","content":[{"type":"refusal","refusal":"synthetic refusal"}]}],"usage":{"input_tokens":12,"output_tokens":3}}}`, true},
+		{"incomplete", `{"type":"response.incomplete","response":{"id":"resp_test","output":[{"type":"message","content":[{"type":"output_text","text":"partial output"}]}],"usage":{"input_tokens":12,"output_tokens":3}}}`, true},
+		{"incomplete_empty", `{"type":"response.incomplete","response":{"id":"resp_test","output":[],"usage":{"input_tokens":12,"output_tokens":3}}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frames := []passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"resp_test"}}`)},
+				{msgType: coderws.MessageText, payload: []byte(tc.terminal)},
+			}
+			client := newPassthroughTestFrameConn(nil, false)
+			upstream := newPassthroughTestFrameConn(frames, true)
+			base := time.Unix(1000, 0)
+			var clockMs atomic.Int64
+			var turn RelayTurnResult
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			result, exit := Relay(ctx, client, upstream, []byte(`{"type":"response.create","model":"test-model","input":[]}`), RelayOptions{
+				Now: func() time.Time { return base.Add(time.Duration(clockMs.Load()) * time.Millisecond) },
+				OnUpstreamEvent: func(event string, _ []byte) {
+					if event != "response.created" {
+						clockMs.Store(500)
+					}
+				},
+				OnTurnComplete: func(r RelayTurnResult) { turn = r },
+			})
+			require.Nil(t, exit)
+			require.Equal(t, frames, client.Writes())
+			require.Equal(t, 12, result.Usage.InputTokens)
+			require.Equal(t, 3, result.Usage.OutputTokens)
+			if tc.content {
+				require.NotNil(t, result.FirstTokenMs)
+				require.Equal(t, 500, *result.FirstTokenMs)
+				require.Equal(t, result.FirstTokenMs, turn.FirstTokenMs)
+			} else {
+				require.Nil(t, result.FirstTokenMs)
+				require.Nil(t, turn.FirstTokenMs)
+			}
+		})
+	}
+}
+
 // 工具发现采用对象参数；WS 必须与 HTTP 同口径，且不得改写任何转发帧。
 func TestRelayTTFTToolSearchObjectArguments(t *testing.T) {
 	const item = `{"type":"tool_search_call","status":"completed","execution":"client","arguments":{"query":"synthetic tool","limit":1}}`

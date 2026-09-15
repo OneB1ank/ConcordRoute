@@ -123,6 +123,10 @@ func compactCodexCallID(id string) string {
 
 const codexImageGenerationFunctionToolName = "image_gen.imagegen"
 
+// Codex 0.153.3 的原生摘要流选项；不自动启用，不影响 reasoning.effort/summary。
+const codexReasoningSummaryDelivery = "sequential_cutoff"
+const codexReasoningSummaryStreamOptions = `{"reasoning_summary_delivery":"` + codexReasoningSummaryDelivery + `"}`
+
 var openAIChatGPTInternalUnsupportedFields = []string{
 	"user",
 	"metadata",
@@ -213,6 +217,17 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	// Strip parameters unsupported by ChatGPT internal Codex endpoint.
 	for _, key := range openAICodexOAuthUnsupportedFields {
 		if _, ok := reqBody[key]; ok {
+			// stream_options 还包含 Chat 专用参数，不能整包放行或整包丢弃原生选项。
+			if key == "stream_options" && !opts.IsCompact {
+				options, _ := reqBody[key].(map[string]any)
+				if delivery, ok := options["reasoning_summary_delivery"].(string); ok && delivery == codexReasoningSummaryDelivery {
+					if len(options) != 1 {
+						reqBody[key] = map[string]any{"reasoning_summary_delivery": delivery}
+						result.Modified = true
+					}
+					continue
+				}
+			}
 			delete(reqBody, key)
 			result.Modified = true
 		}

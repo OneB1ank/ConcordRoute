@@ -76,6 +76,8 @@ type Account struct {
 
 	// 仅用于同步身份准备操作的账号副本；锁所有权不进入缓存或持久化。
 	codexIdentityLockHeld bool
+	// 绑定新增、恢复或触碰后保留脏标记，提交成功才清除；WS 失败重试不得漏写。
+	codexIdentityBindingsDirty bool
 
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string

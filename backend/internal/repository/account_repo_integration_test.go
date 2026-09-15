@@ -200,6 +200,25 @@ func (s *AccountRepoSuite) TestGetCodexIdentityBindings_DurableRoundTrip() {
 	s.Require().ErrorIs(err, service.ErrAccountNotFound)
 }
 
+// 真实 PostgreSQL 行锁路径在现有测试事务内复用连接，并原子写回嵌套绑定集合。
+func (s *AccountRepoSuite) TestWithCodexIdentityBindings_DurableRoundTrip() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "bindings-transaction"})
+	s.Require().NoError(s.repo.UpdateExtra(s.ctx, account.ID, map[string]any{
+		service.CodexIdentityBindingsExtraKey: map[string]any{"before": "value"},
+	}))
+	err := s.repo.WithCodexIdentityBindings(s.ctx, account.ID, func(latest *service.Account) (map[string]any, error) {
+		s.Require().EqualValues(account.ID, latest.ID)
+		s.Require().Equal("value", latest.Extra[service.CodexIdentityBindingsExtraKey].(map[string]any)["before"])
+		return map[string]any{
+			service.CodexIdentityBindingsExtraKey: map[string]any{"after": "committed"},
+		}, nil
+	})
+	s.Require().NoError(err)
+	stored, err := s.repo.GetCodexIdentityBindings(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("committed", stored.Extra[service.CodexIdentityBindingsExtraKey].(map[string]any)["after"])
+}
+
 func (s *AccountRepoSuite) TestUpdate() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "original"})
 

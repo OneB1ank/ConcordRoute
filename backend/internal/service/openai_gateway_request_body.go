@@ -717,8 +717,29 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 	changed := false
 
 	for _, field := range openAIChatGPTInternalUnsupportedFields {
-		if value := gjson.GetBytes(normalized, field); !value.Exists() {
+		value := gjson.GetBytes(normalized, field)
+		if !value.Exists() {
 			continue
+		}
+		// 仅在普通 Responses 保留客户端显式原生摘要流选项；compact 沿用原有过滤。
+		if field == "stream_options" && !compact && value.IsObject() {
+			delivery := value.Get("reasoning_summary_delivery")
+			if delivery.Type == gjson.String && delivery.String() == codexReasoningSummaryDelivery {
+				fields := 0
+				value.ForEach(func(_, _ gjson.Result) bool {
+					fields++
+					return fields < 2
+				})
+				if fields == 1 {
+					continue // 原生对象无需重编码，保留原始字节。
+				}
+				next, err := sjson.SetRawBytes(normalized, field, []byte(codexReasoningSummaryStreamOptions))
+				if err != nil {
+					return body, false, fmt.Errorf("normalize passthrough stream options: %w", err)
+				}
+				normalized, changed = next, true
+				continue
+			}
 		}
 		next, err := sjson.DeleteBytes(normalized, field)
 		if err != nil {

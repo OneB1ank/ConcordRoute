@@ -249,8 +249,9 @@ var codexTurnStartedBindings = struct {
 }{items: make(map[string]codexTurnStartedBinding)}
 
 type codexTurnStartedBinding struct {
-	Value      int64
-	LastUsedAt int64
+	Value          int64
+	LastUsedAt     int64
+	ClientProvided bool
 }
 
 const codexTurnStartedBindingMaxEntries = 8192
@@ -273,15 +274,24 @@ func codexPromptCacheCarryKey(accountID int64, sessionID, threadID, windowID str
 	return fmt.Sprintf("%d:%s:%s:%s", accountID, strings.TrimSpace(sessionID), strings.TrimSpace(threadID), strings.TrimSpace(windowID))
 }
 
+// 实例键与旧代数键分域；不依赖落库前可能被协调替换的出站 UUID。
+func codexPromptCacheWindow(ids *codexFingerprintIDs) string {
+	if ids.mode == codexFingerprintCockpit && ids.windowInstanceID != "" {
+		return "instance:" + ids.windowInstanceID
+	}
+	return ids.windowID
+}
+
 func rememberCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs, key string, inBody bool) {
 	if account == nil || ids == nil || strings.TrimSpace(key) == "" {
 		return
 	}
 	now := time.Now().UnixMilli()
-	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, ids.windowID)
+	window := codexPromptCacheWindow(ids)
+	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, window)
 	codexPromptCacheCarry.Lock()
 	defer codexPromptCacheCarry.Unlock()
-	storeCodexPromptCacheKeyLocked(cacheKey, codexPromptCacheCarryEntry{Key: key, WindowID: ids.windowID, InBody: inBody, LastUsedAt: now})
+	storeCodexPromptCacheKeyLocked(cacheKey, codexPromptCacheCarryEntry{Key: key, WindowID: window, InBody: inBody, LastUsedAt: now})
 }
 
 func codexTurnStartedBindingKey(account *Account, mode codexFingerprintMode, sessionID, originalTurnID, turnID string) string {
@@ -315,6 +325,10 @@ func resolveCodexTurnStartedAt(account *Account, mode codexFingerprintMode, sess
 	cutoff := now - codexIdentityBindingIdleTTL.Milliseconds()
 	// 热命中只检查目标的 TTL；过期清理和容量整理留给新回合，避免每次扫全局表。
 	if entry, ok := codexTurnStartedBindings.items[key]; ok && (entry.LastUsedAt == 0 || entry.LastUsedAt >= cutoff) {
+		// 兜底时间不是客户端已确认时间；只允许首次有效客户端值替换一次。
+		if providedPresent && !entry.ClientProvided {
+			entry.Value, entry.ClientProvided = provided, true
+		}
 		entry.LastUsedAt = now
 		codexTurnStartedBindings.items[key] = entry
 		return entry.Value
@@ -340,7 +354,9 @@ func resolveCodexTurnStartedAt(account *Account, mode codexFingerprintMode, sess
 			delete(codexTurnStartedBindings.items, oldestKey)
 		}
 	}
-	codexTurnStartedBindings.items[key] = codexTurnStartedBinding{Value: value, LastUsedAt: now}
+	codexTurnStartedBindings.items[key] = codexTurnStartedBinding{
+		Value: value, LastUsedAt: now, ClientProvided: providedPresent,
+	}
 	return value
 }
 
@@ -365,7 +381,8 @@ func loadCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs) (codexP
 	if account == nil || ids == nil {
 		return codexPromptCacheCarryEntry{}, false
 	}
-	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, ids.windowID)
+	window := codexPromptCacheWindow(ids)
+	cacheKey := codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, window)
 	now := time.Now().UnixMilli()
 	codexPromptCacheCarry.Lock()
 	defer codexPromptCacheCarry.Unlock()
@@ -380,17 +397,24 @@ func loadCodexPromptCacheKey(account *Account, ids *codexFingerprintIDs) (codexP
 		}
 		return entry, true
 	}
-	entry, ok := load(cacheKey, ids.windowID)
+	entry, ok := load(cacheKey, window)
 	if !ok && ids.extendedTurnIdentity && ids.windowNumber > 0 {
-		// 仅从同账号、同 session/thread 的直接前一窗口继承，不向未来窗口借键。
-		// 每个窗口保留独立绑定，旧窗口迟到或重试不会覆盖新窗口的显式键。
 		previousWindow := fmt.Sprintf("%s:%d", ids.threadID, ids.windowNumber-1)
-		entry, ok = load(codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, previousWindow), previousWindow)
+		if ids.windowInstanceID != "" {
+			// 实例路径只认明确前驱；代数相邻不证明属于同一压缩分支。
+			previousWindow = ""
+			if ids.originalPreviousWindowID != "" && ids.originalPreviousWindowID != ids.windowInstanceID {
+				previousWindow = "instance:" + ids.originalPreviousWindowID
+			}
+		}
+		if previousWindow != "" {
+			entry, ok = load(codexPromptCacheCarryKey(account.ID, ids.sessionID, ids.threadID, previousWindow), previousWindow)
+		}
 	}
 	if !ok {
 		return codexPromptCacheCarryEntry{}, false
 	}
-	entry.WindowID = ids.windowID
+	entry.WindowID = window
 	entry.LastUsedAt = now
 	storeCodexPromptCacheKeyLocked(cacheKey, entry)
 	return entry, true
@@ -547,15 +571,23 @@ func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, 
 		binding, valid := parseCodexIdentityBinding(bindings[key])
 		lastUsed := codexIdentityBindingRecency(binding)
 		if !valid || (lastUsed > 0 && nowMS-lastUsed >= idleTTL.Milliseconds()) || len(bindings) > maxEntries {
-			pruneCodexUUIDv7Bindings(bindings, nowMS, key, idleTTL, maxEntries)
+			if pruneCodexUUIDv7Bindings(bindings, nowMS, key, idleTTL, maxEntries) {
+				account.codexIdentityBindingsDirty = true
+			}
 		}
 		if binding, ok := parseCodexIdentityBinding(bindings[key]); ok {
+			changed := false
 			if binding.CreatedAtMS == 0 {
 				binding.CreatedAtMS = nowMS
+				changed = true
 			}
 			if binding.LastUsedAtMS == 0 || nowMS-binding.LastUsedAtMS >= codexIdentityBindingTouchEvery.Milliseconds() {
 				binding.LastUsedAtMS = nowMS
+				changed = true
+			}
+			if changed {
 				bindings[key] = binding
+				account.codexIdentityBindingsDirty = true
 			}
 			codexIdentityHotCache.Store(codexIdentityHotKey(account, seed), codexIdentityHotBinding{UUID: binding.UUID, LastUsedAtMS: nowMS})
 			sweepCodexIdentityHotCache()
@@ -573,6 +605,7 @@ func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, 
 				account.Extra[extraKey] = bindings
 			}
 			bindings[key] = codexIdentityBinding{UUID: hot.UUID, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
+			account.codexIdentityBindingsDirty = true
 			codexIdentityHotCache.Store(hotKey, codexIdentityHotBinding{UUID: hot.UUID, LastUsedAtMS: nowMS})
 			return hot.UUID
 		}
@@ -587,6 +620,7 @@ func deriveStableUUIDv7ForAccountStore(account *Account, seed, extraKey string, 
 		account.Extra[extraKey] = bindings
 	}
 	bindings[key] = codexIdentityBinding{UUID: value, CreatedAtMS: nowMS, LastUsedAtMS: nowMS}
+	account.codexIdentityBindingsDirty = true
 	codexIdentityHotCache.Store(hotKey, codexIdentityHotBinding{UUID: value, LastUsedAtMS: nowMS})
 	pruneCodexUUIDv7Bindings(bindings, nowMS, key, idleTTL, maxEntries)
 	sweepCodexIdentityHotCache()
@@ -726,6 +760,106 @@ var codexUUIDv7BindingStores = []codexUUIDv7BindingStore{
 	{extraKey: CodexTurnLineageBindingsExtraKey, idleTTL: codexTurnLineageBindingIdleTTL, maxEntries: codexTurnLineageBindingMaxEntries},
 }
 
+type codexIdentityPersistenceState struct {
+	updates        map[string]any
+	hotUpdates     []codexIdentityHotUpdate
+	reconciled     []codexFingerprintIDs
+	matchesDurable bool
+}
+
+// restoreCodexIdentityBindingsBeforeResolve 用数据库行锁内读到的绑定覆盖请求旧快照。
+// 只替换运行态绑定集合，账号模式、TLS 配置及其它 Extra 仍使用本次调度快照。
+func restoreCodexIdentityBindingsBeforeResolve(account, latest *Account) {
+	if account == nil || latest == nil {
+		return
+	}
+	extra := make(map[string]any, len(account.Extra)+len(codexUUIDv7BindingStores))
+	for key, value := range account.Extra {
+		extra[key] = value
+	}
+	for _, store := range codexUUIDv7BindingStores {
+		bindings := readCodexUUIDv7Bindings(latest, store.extraKey)
+		if bindings == nil {
+			delete(extra, store.extraKey)
+			continue
+		}
+		cloned := make(map[string]any, len(bindings))
+		for key, value := range bindings {
+			cloned[key] = value
+		}
+		extra[store.extraKey] = cloned
+	}
+	account.Extra = extra
+	account.codexIdentityBindingsDirty = false
+}
+
+// buildCodexIdentityPersistenceState 合并、裁剪并准备提交结果，但不发布热缓存或修改出站快照。
+// 调用方只有在数据库写入或行锁事务成功后才能调用 commitCodexIdentityPersistenceState。
+func buildCodexIdentityPersistenceState(account, latest *Account, snapshots ...*codexFingerprintIDs) (codexIdentityPersistenceState, error) {
+	state := codexIdentityPersistenceState{
+		updates:        make(map[string]any, len(codexUUIDv7BindingStores)),
+		matchesDurable: true,
+	}
+	if account == nil || account.Extra == nil {
+		return state, nil
+	}
+	nowMS := time.Now().UnixMilli()
+	snapshotValues := codexFingerprintSnapshotValues(snapshots)
+	var snapshotSelections map[string]string
+	hotPrefix := strconv.FormatInt(codexIdentityOwnerID(account), 10) + ":"
+	for _, store := range codexUUIDv7BindingStores {
+		if _, exists := account.Extra[store.extraKey]; !exists {
+			continue
+		}
+		bindings := readCodexUUIDv7Bindings(account, store.extraKey)
+		if bindings == nil {
+			bindings = make(map[string]any)
+		}
+		snapshotBindings := codexFingerprintSnapshotBindings{values: snapshotValues}
+		if pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries, &snapshotBindings) {
+			state.matchesDurable = false
+		}
+		latestBindings := readCodexUUIDv7Bindings(latest, store.extraKey)
+		if latestBindings != nil {
+			if pruneCodexUUIDv7Bindings(latestBindings, nowMS, "", store.idleTTL, store.maxEntries) {
+				state.matchesDurable = false
+			}
+			bindings = mergeCodexIdentityBindings(latestBindings, bindings)
+			pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries)
+		}
+		if latestBindings == nil || len(latestBindings) != len(bindings) {
+			state.matchesDurable = false
+		}
+		// 比较最新数据库值时同时收集缓存变更；成功后不再完整遍历一次集合。
+		for key, raw := range bindings {
+			binding, _ := parseCodexIdentityBinding(raw)
+			durable, valid := parseCodexIdentityBinding(latestBindings[key])
+			if !valid || durable != binding {
+				state.matchesDurable = false
+			}
+			state.hotUpdates = collectCodexIdentityHotUpdate(state.hotUpdates, hotPrefix+key, binding)
+		}
+		snapshotSelections = collectCodexFingerprintSnapshotChanges(snapshotBindings.bindings, bindings, snapshotSelections)
+		account.Extra[store.extraKey] = bindings
+		state.updates[store.extraKey] = bindings
+	}
+	reconciled, err := reconcileCodexFingerprintSnapshots(snapshots, snapshotSelections)
+	if err != nil {
+		return codexIdentityPersistenceState{}, err
+	}
+	state.reconciled = reconciled
+	return state, nil
+}
+
+// commitCodexIdentityPersistenceState 只在持久化事务成功后发布最终状态。
+func commitCodexIdentityPersistenceState(account *Account, snapshots []*codexFingerprintIDs, state codexIdentityPersistenceState) {
+	publishCodexIdentityHotBindings(state.hotUpdates)
+	commitCodexFingerprintSnapshots(snapshots, state.reconciled)
+	if account != nil {
+		account.codexIdentityBindingsDirty = false
+	}
+}
+
 // persistCodexIdentityBindings 一次性持久化账号身份和 Cockpit 回合图绑定。
 // @project-doc docs/interfaces/openai_upstream.md#codex_identity_persistence
 // 与最新持久化值逐项比较让无变化的热路径保持只读，账号锁和写前合并协调并发快照。
@@ -780,51 +914,8 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	if err != nil {
 		return fmt.Errorf("load latest account for codex identity bindings: %w", err)
 	}
-	nowMS := time.Now().UnixMilli()
 	finishMerge := latencytrace.Start(ctx, "identity_binding_merge")
-	updates := make(map[string]any, len(codexUUIDv7BindingStores))
-	snapshotValues := codexFingerprintSnapshotValues(snapshots)
-	var snapshotSelections map[string]string
-	var hotUpdates []codexIdentityHotUpdate
-	hotPrefix := strconv.FormatInt(codexIdentityOwnerID(account), 10) + ":"
-	matchesDurable := true
-	for _, store := range codexUUIDv7BindingStores {
-		if _, exists := account.Extra[store.extraKey]; !exists {
-			continue
-		}
-		bindings := readCodexUUIDv7Bindings(account, store.extraKey)
-		if bindings == nil {
-			bindings = make(map[string]any)
-		}
-		snapshotBindings := codexFingerprintSnapshotBindings{values: snapshotValues}
-		if pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries, &snapshotBindings) {
-			matchesDurable = false
-		}
-		latestBindings := readCodexUUIDv7Bindings(latest, store.extraKey)
-		if latestBindings != nil {
-			if pruneCodexUUIDv7Bindings(latestBindings, nowMS, "", store.idleTTL, store.maxEntries) {
-				matchesDurable = false
-			}
-			bindings = mergeCodexIdentityBindings(latestBindings, bindings)
-			pruneCodexUUIDv7Bindings(bindings, nowMS, "", store.idleTTL, store.maxEntries)
-		}
-		if latestBindings == nil || len(latestBindings) != len(bindings) {
-			matchesDurable = false
-		}
-		// 比较最新数据库值时同时收集缓存变更；成功后不再完整遍历一次集合。
-		for key, raw := range bindings {
-			binding, _ := parseCodexIdentityBinding(raw)
-			durable, valid := parseCodexIdentityBinding(latestBindings[key])
-			if !valid || durable != binding {
-				matchesDurable = false
-			}
-			hotUpdates = collectCodexIdentityHotUpdate(hotUpdates, hotPrefix+key, binding)
-		}
-		snapshotSelections = collectCodexFingerprintSnapshotChanges(snapshotBindings.bindings, bindings, snapshotSelections)
-		account.Extra[store.extraKey] = bindings
-		updates[store.extraKey] = bindings
-	}
-	reconciled, err := reconcileCodexFingerprintSnapshots(snapshots, snapshotSelections)
+	state, err := buildCodexIdentityPersistenceState(account, latest, snapshots...)
 	if err != nil {
 		finishMerge(err)
 		return err
@@ -836,14 +927,13 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	hashKey := strconv.FormatInt(account.ID, 10)
 	// 保留首次成功登记；后续已与最新数据库完全一致时，不再序列化整份集合算哈希。
 	// 判定仍以本次数据库读取为准，不以历史哈希掩盖其他实例写入。
-	if _, committed := codexIdentityPersistedHashes.Load(hashKey); committed && matchesDurable {
+	if _, committed := codexIdentityPersistedHashes.Load(hashKey); committed && state.matchesDurable {
 		finishMerge(nil)
-		publishCodexIdentityHotBindings(hotUpdates)
-		commitCodexFingerprintSnapshots(snapshots, reconciled)
+		commitCodexIdentityPersistenceState(account, snapshots, state)
 		return nil
 	}
 	// 过期或损坏的集合仍以空对象落库，确保旧值实际被清除。
-	encoded, err := json.Marshal(updates)
+	encoded, err := json.Marshal(state.updates)
 	finishMerge(err)
 	if err != nil {
 		return fmt.Errorf("marshal codex UUIDv7 bindings: %w", err)
@@ -851,14 +941,13 @@ func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, a
 	hash := sha256.Sum256(encoded)
 	hashString := fmt.Sprintf("%x", hash[:])
 	finishWrite := latencytrace.Start(ctx, "identity_binding_write")
-	err = repo.UpdateExtra(ctx, account.ID, updates)
+	err = repo.UpdateExtra(ctx, account.ID, state.updates)
 	finishWrite(err)
 	if err != nil {
 		return fmt.Errorf("persist codex identity bindings: %w", err)
 	}
 	codexIdentityPersistedHashes.Store(hashKey, hashString)
-	publishCodexIdentityHotBindings(hotUpdates)
-	commitCodexFingerprintSnapshots(snapshots, reconciled)
+	commitCodexIdentityPersistenceState(account, snapshots, state)
 	return nil
 }
 
@@ -1030,11 +1119,7 @@ func resolveCodexWindowLineage(account *Account, threadID, windowID string) (uin
 	return generation, first, previous
 }
 
-// resolveConvergedContextWindowID mirrors Codex 0.151's context-window lifecycle:
-// one independently generated UUIDv7 belongs to each final thread/window
-// generation, remains stable while that window is active, and changes only when
-// the generation advances. The durable account binding keeps resume/restart
-// behavior stable without making the client-supplied context ID authoritative.
+// 缺少客户端窗口实例的兼容路径保留旧代数绑定，不把它冒充为已知实例。
 func resolveConvergedContextWindowID(account *Account, threadID, windowID string) string {
 	if account == nil || strings.TrimSpace(threadID) == "" {
 		return ""
@@ -1042,6 +1127,16 @@ func resolveConvergedContextWindowID(account *Account, threadID, windowID string
 	generation := strconv.FormatUint(codexWindowGeneration(windowID), 10)
 	seed := fmt.Sprintf("codex-context-window:%s:%s", strings.TrimSpace(threadID), generation)
 	return deriveStableUUIDv7ForAccount(account, seed)
+}
+
+// 窗口及 first/previous 引用共用实例命名空间；代数回退后同号新实例不会合并。
+// 旧绑定未记录原始 UUID，故不猜测迁移；新实例首次建立独立持久绑定。
+func resolveCodexWindowInstance(account *Account, threadID, originalID string) string {
+	if account == nil || strings.TrimSpace(threadID) == "" || strings.TrimSpace(originalID) == "" {
+		return ""
+	}
+	return deriveStableUUIDv7ForAccount(account,
+		fmt.Sprintf("codex-context-instance:v2:%s:%s", strings.TrimSpace(threadID), strings.TrimSpace(originalID)))
 }
 
 // EnsureCodexFingerprintSeed 为新建的 OpenAI OAuth 账号补齐随机种子。
@@ -1348,10 +1443,12 @@ type codexFingerprintIDs struct {
 	rootTurnID              string
 	originalContextWindowID string
 	contextWindowID         string
-	turnStartedAtUnixMS     int64
-	originalWindowID        string
-	windowID                string
-	windowNumber            uint64
+	// windowInstanceID 仅保存内部当前实例，不代表本帧有权写出可选字段。
+	windowInstanceID    string
+	turnStartedAtUnixMS int64
+	originalWindowID    string
+	windowID            string
+	windowNumber        uint64
 	// windowNumberPresent 将内部窗口代数与客户端实际发送的字段分开。
 	windowNumberPresent      bool
 	originalFirstWindowID    string
@@ -1525,8 +1622,26 @@ func resolveCodexFingerprintWindow(account *Account, source codexFingerprintSour
 	}
 	ids.windowID = normalizeCodexWindowID(windowSource, ids.threadID)
 	if ids.extendedTurnIdentity {
-		ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
-		ids.windowNumber, ids.firstWindowID, ids.previousWindowID = resolveCodexWindowLineage(account, ids.threadID, ids.windowID)
+		ids.windowInstanceID = ""
+		if ids.mode == codexFingerprintCockpit {
+			ids.windowInstanceID = strings.TrimSpace(source.contextWindowID)
+		}
+		if ids.windowInstanceID != "" {
+			ids.windowNumber = codexWindowGeneration(ids.windowID)
+			ids.contextWindowID = resolveCodexWindowInstance(account, ids.threadID, ids.windowInstanceID)
+			ids.firstWindowID, ids.previousWindowID = "", ""
+		} else {
+			ids.contextWindowID = resolveConvergedContextWindowID(account, ids.threadID, ids.windowID)
+			ids.windowNumber, ids.firstWindowID, ids.previousWindowID = resolveCodexWindowLineage(account, ids.threadID, ids.windowID)
+		}
+		if ids.mode == codexFingerprintCockpit {
+			if source.firstWindowID != "" {
+				ids.firstWindowID = resolveCodexWindowInstance(account, ids.threadID, source.firstWindowID)
+			}
+			if source.previousWindowID != "" && ids.windowNumber > 0 {
+				ids.previousWindowID = resolveCodexWindowInstance(account, ids.threadID, source.previousWindowID)
+			}
+		}
 	}
 }
 

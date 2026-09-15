@@ -7,6 +7,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// 完整内容片段与增量一样可以提供首内容；拒绝文本不是空的结构通知。
+func streamPartHasVisibleOutput(part gjson.Result) bool {
+	for _, path := range []string{"text", "transcript"} {
+		value := part.Get(path)
+		if value.Type == gjson.String && value.String() != "" {
+			return true
+		}
+	}
+	if part.Get("type").String() == "refusal" {
+		value := part.Get("refusal")
+		return value.Type == gjson.String && value.String() != ""
+	}
+	return false
+}
+
 func streamItemHasVisibleOutput(item gjson.Result) bool {
 	for _, path := range []string{"arguments", "input", "result"} {
 		value := item.Get(path)
@@ -27,10 +42,7 @@ func streamItemHasVisibleOutput(item gjson.Result) bool {
 	}
 	for _, path := range []string{"content", "summary"} {
 		for _, part := range item.Get(path).Array() {
-			text := part.Get("text")
-			transcript := part.Get("transcript")
-			if (text.Exists() && text.Type == gjson.String && text.String() != "") ||
-				(transcript.Exists() && transcript.Type == gjson.String && transcript.String() != "") {
+			if streamPartHasVisibleOutput(part) {
 				return true
 			}
 		}
@@ -123,6 +135,9 @@ func streamDataStartsVisibleOutput(data streamOutputJSON, eventType string) bool
 	case "response.function_call_arguments.done":
 		arguments := data.get("arguments")
 		return arguments.Exists() && arguments.Type == gjson.String && arguments.String() != ""
+	case "response.refusal.done":
+		refusal := data.get("refusal")
+		return refusal.Type == gjson.String && refusal.String() != ""
 	case "response.custom_tool_call_input.done":
 		input := data.get("input")
 		return input.Exists() && input.Type == gjson.String && input.String() != ""
@@ -131,14 +146,11 @@ func streamDataStartsVisibleOutput(data streamOutputJSON, eventType string) bool
 		return partial.Exists() && partial.Type == gjson.String && partial.String() != ""
 	case "response.content_part.added", "response.content_part.done",
 		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
-		part := data.get("part")
-		text := part.Get("text")
-		transcript := part.Get("transcript")
-		return (text.Exists() && text.Type == gjson.String && text.String() != "") ||
-			(transcript.Exists() && transcript.Type == gjson.String && transcript.String() != "")
+		return streamPartHasVisibleOutput(data.get("part"))
 	case "response.output_item.added", "response.output_item.done":
 		return streamItemHasVisibleOutput(data.get("item"))
-	case "response.completed", "response.done":
+	case "response.completed", "response.done", "response.incomplete":
+		// 未完成响应也可能带部分正文；只看实际 output，不用状态或 output_tokens 推定首字。
 		for _, item := range data.get("response.output").Array() {
 			if streamItemHasVisibleOutput(item) {
 				return true

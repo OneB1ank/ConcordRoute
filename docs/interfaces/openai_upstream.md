@@ -36,6 +36,14 @@ OpenAI OAuth 账号的 `extra.codex_fingerprint_mode` 控制 Codex Responses 的
 
 官方客户端内部压缩状态维护 `first_window_id`、`previous_window_id` 与 `window_number`：首窗口锚点不变，压缩后记录前一窗口并递增代数。它们不是 Responses 顶层生成参数。核对过的 0.153.4 源码中，`first_window_id` / `previous_window_id` 还用于客户端上下文片段与持久化状态，并非普通 turn metadata 的标准字段；本 fork 的同名元数据属于兼容扩展，不能据此宣称完整模拟官方压缩历史。网关保留账号隔离的内部窗口链；Cockpit 仅在客户端实际携带 `context_window_id`、`first_window_id`、`previous_window_id` 时写出对应映射。首窗口主动删除已携带的残留 `previous_window_id`；客户端上下文文本保持原样。`window_number` 的数值由客户端显式字段或窗口后缀提供，逐请求发送不会自动递增；Cockpit 未收到该字段时仅内部使用代数，不向元数据补造字段。`client_metadata` 的 `window_number` 使用字符串，内嵌/兼容头的 turn metadata 使用 JSON 数字。普通与透传路径统一接受精确范围内的整数、小数/指数整数及兼容数字字符串，超出 JSON 精确整数范围或非整数不参与派生。异常或 `null` 的内嵌 turn metadata 保留原文，不向 nil map 写入。
 
+### 窗口实例与升级边界
+
+Cockpit 在客户端提供 `context_window_id` 时，按账号、映射后的 thread 与原始窗口实例建立独立 UUIDv7 绑定，窗口代数不参与实例键。`0/W0 → 1/W1 → 0/W0 → 1/W2` 的 W1 与 W2 分别映射；回访 W0 恢复原绑定。显式 `first_window_id` / `previous_window_id` 使用同一实例域，而不是按第零/前一代猜测引用。缺省字段仍不补造；session/thread 映射与回合算法不变。WS 只改变 context UUID 时也刷新并持久化；缺省代数仅内部沿用连接位置，不补入当前帧。
+
+旧 `codex-context-window` 绑定只记录代数，没有原始实例对应信息。新实例使用 `codex-context-instance:v2` 独立命名空间，不自动认领旧 UUID；升级后已有客户端实例首次建立新绑定，因此该窗口 UUID 会发生一次切换。没有实例字段的兼容请求继续使用旧代数绑定，旧记录按原 TTL/容量淘汰，不批量清空账号。回退旧二进制会恢复旧窗口策略，并不等于保持新实例语义。
+
+携带实例的请求，其内部缓存 carry 同样按实例隔离；只在显式提供 `previous_window_id` 时继承对应前驱，不从相同代数的另一分支借键。缺少明确前驱且本实例没有绑定时走既有 session 默认键。只有代数的兼容请求维持既有相邻代数继承。显式缓存键（包括空字符串与首尾空白）不受此限制，原样发送；这项保守隔离可能减少缺省键请求的 carry，不能承诺缓存命中率完全不变。
+
 <a id="openai_protocol_dispatch"></a>
 ## 协议与传输
 
@@ -65,37 +73,40 @@ OpenAI 兼容非流式响应的 usage 按 `usage`、`response.usage`、`data.usa
 退出前在锁内同步 Extra。取消不会释放另一个请求持有的锁，也不会让未确认持久化的请求快照继续向上游发送。
 未启用映射的请求保留原有持久化和流式断连收尾生命周期，不因没有身份准备工作而新增取消拦截。
 已有账号测试等探测的生成步骤也支持等锁取消，但不新增探测、不改变触发策略或落库策略。
-生产仓储通过独立窄读取能力加载账号 ID 和最新 Extra，不加载凭据、代理或分组关系；
-旧仓储适配器继续走既有 GetByID。两类绑定仍按既有规则读取最新状态、合并、裁剪并同步写入；
-首次写入成功后登记进程状态，后续逐项确认与本次读取的数据库状态完全一致时，跳过整集合序列化、哈希及写入，
-但仍提交已核对的请求快照。历史成功哈希本身不作为跳过写入的依据，避免掩盖其它实例写入或需要落库的清理。
-写后调度快照传播保持原流程，不改为异步或省略持久化。
-这项优化不改变 UUID、父子回合、缓存键、UA/TLS 或绑定有效期；窄读取也不新增跨进程锁保证。
+生产仓储通过独立事务能力只加载账号 ID 和最新 Extra，不加载凭据、代理或分组关系；
+账号行锁覆盖权威绑定恢复、UUID 派生、裁剪和写回。请求调度快照缺少绑定或本机热缓存为空时，
+先用行锁内的持久化集合覆盖旧运行态集合，再生成本次 session/thread/turn/window 图；不同应用实例并发创建
+同一逻辑种子的首个绑定时，后进入事务的实例会复用前一个实例已经提交的完整 UUID，而不是各自接受 A/B 两套结果。
+数据库值与本次结果完全一致时，事务只读提交并跳过整集合序列化及写入；实际新增、触摸、裁剪或修复时才原子更新顶层绑定字段。
+成功提交后再发布进程热缓存和最终出站快照，写后调度快照传播保持原流程。
+旧仓储适配器继续走 GetByID/UpdateExtra 兼容路径，但不获得生产仓储的跨进程行锁语义。
+这项处理不改变 UUID 算法、父子回合、缓存键、UA/TLS 或绑定有效期。
 
 生成热路径命中有效目标且集合未超容量时，只校验目标绑定；未命中、目标过期、超容量以及提交阶段继续完整裁剪。
 因此无关过期项可能暂存到下一次缺省查找或提交，但不扩容、不延长目标有效期。
 同一逻辑 turn 开始时间的热命中也只检查自身 TTL；新回合负责过期清理与既有容量控制。
 
 普通 Responses、passthrough、Messages、旧版 Compact 和 WS 已有持久化调用均将本次身份快照交给同一提交步骤。
-WS 后续帧使用同一准备预算，维持仅窗口变化时执行原有持久化的策略；失败帧不提交连接状态。
+WS 后续帧使用同一准备预算；窗口变化或实际新增/更新持久绑定时执行提交，失败帧不提交连接状态。字符串 turn/parent/root 即使在同窗口内新增也落库；原生 UUIDv7 与未变化热帧不增加逐帧读取。失败提交保留待写标记，重试成功或核对持久状态一致后才清除。
 合并选择的窗口、父线程或回合绑定与准备阶段不同时，成功写入后统一更新本次出站快照；确认与最新持久化状态一致时也执行相同快照提交。
 存储失败、绑定被裁剪或结果有歧义时不提交半更新的快照。若冲突改变 session/thread 派生根，则停止本次出站，
 由调用方使用刷新后的账号重试或重新建立 WS，避免仅替换根 ID 却沿用旧回合、窗口图。
-核对仅追踪本次快照实际引用的绑定，在既有裁剪遍历中、删除依赖之前采集，不增加独立的全集合遍历或数据库读取；
-合并优先级、UUID 派生算法及跨实例原子性边界保持不变。
+核对仅追踪本次快照实际引用的绑定，在既有裁剪遍历中、删除依赖之前采集，不增加独立的全集合遍历；
+UUID 派生算法保持不变，跨实例原子性边界是单个账号数据库行与一次最长 5 秒的准备事务。
 在比较持久化值时顺带收集已有热缓存的差异；成功写入或确认与最新持久化状态一致后，
 在同一账号锁内按账号与绑定键同步已存在的进程热缓存，
 再提交出站快照；失败分支不发布选中值。否则后续缺少运行态绑定的调度快照可能恢复旧 UUID 并重新落库。
 同步覆盖身份与回合两类集合，不预热完整持久化集合，不把提交时间当作所有绑定的新活动时间。
-这一步不等于冷启动恢复：热缓存缺失或过期且账号快照也缺少绑定时，仍需另行核对生成前的数据库恢复流程。
-正常基础调度现在保留数据库复核后的完整账号，避免最终水合回退到缺绑定旧快照；
+生产事务路径同时完成冷启动恢复：热缓存缺失或过期且账号快照也缺少绑定时，仍先读取数据库权威集合再派生。
+正常基础调度继续保留数据库复核后的完整账号，避免最终水合回退到缺绑定旧快照；
 完整账号缓存的乱序更新保护见[账号调度与缓存一致性](../architecture/account_scheduling_and_cache.md#scheduler_snapshot_consistency)。
-直接绕过调度、给生成器传入缺绑定快照的调用并未因此获得生成前恢复能力，
-不能把调度链修复扩大解释为任意缺绑定入口或跨实例并发均已完成治理。
+直接绕过调度但仍使用生产账号仓储的入口具有相同恢复与行锁语义；只实现旧读写接口的测试或第三方仓储仍属于兼容边界。
 
 同一逻辑 turn 的 `turn_started_at_unix_ms` 在 Header 与内嵌 turn metadata 中使用同一生命周期值。
 已有且有效的平铺 `client_metadata.turn_started_at_unix_ms` 也同步到该值，并保留字符串或数字类别；
 缺省平铺时间不补造，异常类型沿用既有处理，device/off 模式不增加该项改写。
+首笔缺省时的服务端时间标记为兜底，允许随后首次有效客户端时间替换一次；确认后不再被后续不同值覆盖。
+HTTP 与 WS 每帧共用该生命周期，WS 同 turn 后续帧也会读取已确认的时间。
 
 Cockpit 不向 turn metadata 新增 `prompt_cache_key`；显式键的主要协议载体保持 Responses 顶层，客户端既有兼容元数据字段保留。
 
@@ -122,6 +133,8 @@ WebSocket 的握手身份与每个 `response.create` 帧身份分开维护。现
 
 官方 Codex WebSocket v2 会先发送 `generate=false` 的预热 `response.create`，再以预热响应 ID 作为业务请求的 `previous_response_id`。严格续接比较会忽略逐请求变化的 `client_metadata`、仅用于传输的 `stream_options`，并把 `generate=false` 与后续省略该字段视为等价；`generate=true` 以及 model、instructions、tools、reasoning、store 等上下文字段仍必须保持一致，避免把无关请求错误串接。
 
+WS 准备按绑定的实际变更触发持久化，不只检查窗口代数。新增普通字符串 turn/parent/root、恢复或定期触碰绑定后，提交成功才清除脏标记；提交失败保留待提交状态，重试成功前不推进连接快照。原生 UUIDv7 回合及未改变绑定的热帧不因此增加数据库读取或写入；切换到已有窗口仍保留原有持久化快照复核。
+
 OpenAI OAuth 的 HTTP、passthrough、旧版 Compact 与 WebSocket 出站会在模型映射和本地 fast 策略处理完成后，由网关生成 `x-codex-routing-hint`。提示至少包含最终上游模型；只有有效的 `priority` 或 `flex` 才附带 tier，`fast` 先规范化为 `priority`，`default`、未知值和空值均保持 model-only。旧版 Compact 规范化必须保留 `service_tier`，否则提示会丢失已经生效的路由层级。该头由网关独占控制：所有账号类型都会先删除调用方及账号覆盖提供的任意大小写变体，只有 OpenAI OAuth 路径会重新生成；API Key 路径不得透传伪造提示。OAuth HTTP 也不再自动注入或透传旧版 `responses=experimental` beta 标记，但同一头中的其它独立 beta 项仍保留。
 
 `x-codex-beta-features` 是 Codex 的会话级协商头：OAuth 普通 Responses HTTP 与 WebSocket 握手在客户端未声明时补入 `remote_compaction_v2`，客户端给出的非空值保持原样；原生 V2 请求无论账号类型都保证该 feature 存在。上游响应中的 `x-codex-turn-state` 会在 HTTP/SSE、SSE 转 JSON 与 passthrough 路径显式回传。网关按 API Key 与客户端原始 session 记录最近签发账号；故障转移后，已知由其它账号签发的客户端回带值会被剥离，未知或同账号的值保持透传。
@@ -131,6 +144,8 @@ WebSocket 连接池把 routing hint 视为拨号和普通复用的软亲和：�
 Responses WebSocket 与 HTTP 共用首内容判断：非空 delta、完整文本或工具参数均可产生 TTFT；`response.completed`、`response.done` 以及 content part/output item 事件若携带实际文本、工具参数等内容，同样以内容到达时刻计时。仅含状态、usage 或空结构的事件不产生 TTFT，避免把纯终态耗时误记为首 token 延迟。文本终态缺少响应 ID 时保留活动轮次已观测的耗时与首内容样本，但不补造响应 ID。
 
 Responses HTTP/SSE 同样区分结构进度与可见输出：`response.created`、空 reasoning item 等进度可以提交当前 attempt、解除首输出超时并关闭 pre-output failover 窗口，但不记录 TTFT；非空文本/工具 delta、完整文本或工具参数、图片结果以及终态内实际 output 才开始 TTFT。只携带 usage 的终态必须保持 TTFT 未观测。
+
+OAuth 普通 Responses 与 OAuth passthrough 保留客户端显式提供的原生 `stream_options.reasoning_summary_delivery="sequential_cutoff"`，不主动补入该字段，也不改变 `reasoning.effort` 或 `reasoning.summary`。同一对象中的 Chat 专用 `include_usage` 及其它未支持成员仍移除；未支持的值、异常类型与旧版 Compact 请求沿用原有过滤规则。仅含原生选项的透传对象保持原始字节。该规则修正参数丢失，不承诺上游更早产生摘要或降低实际推理耗时。
 
 OAuth passthrough 的 Codex 请求可以省略 `instructions`，网关会按请求模型补入内置 Codex 基础指令；显式提供的非空字符串保持不变，空白或非字符串值仍在本地拒绝。该规则同时适用于 Responses SSE 与旧版 Compact 请求。
 

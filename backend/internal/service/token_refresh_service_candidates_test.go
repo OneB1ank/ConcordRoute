@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,12 +107,13 @@ type tokenRefreshTestRefresher struct {
 	err error
 }
 
-type tokenRefreshCandidateRuntimeBlocker struct{ clearCalls int }
+// 测试替身也会由并发账号刷新调用，计数须使用同步访问。
+type tokenRefreshCandidateRuntimeBlocker struct{ clearCalls atomic.Int64 }
 
 func (*tokenRefreshCandidateRuntimeBlocker) BlockAccountScheduling(*Account, time.Time, string) {}
-func (b *tokenRefreshCandidateRuntimeBlocker) ClearAccountSchedulingBlock(int64)                { b.clearCalls++ }
+func (b *tokenRefreshCandidateRuntimeBlocker) ClearAccountSchedulingBlock(int64)                { b.clearCalls.Add(1) }
 
-type tokenRefreshCandidateTempCache struct{ deleteCalls int }
+type tokenRefreshCandidateTempCache struct{ deleteCalls atomic.Int64 }
 
 func (*tokenRefreshCandidateTempCache) SetTempUnsched(context.Context, int64, *TempUnschedState) error {
 	return nil
@@ -120,7 +122,7 @@ func (*tokenRefreshCandidateTempCache) GetTempUnsched(context.Context, int64) (*
 	return nil, nil
 }
 func (c *tokenRefreshCandidateTempCache) DeleteTempUnsched(context.Context, int64) error {
-	c.deleteCalls++
+	c.deleteCalls.Add(1)
 	return nil
 }
 
@@ -234,8 +236,8 @@ func TestTokenRefreshService_ProcessRefreshUsesOAuthRefreshCandidates(t *testing
 	require.Zero(t, repo.listActiveCalls, "TokenRefreshService should not use the broad active-account query")
 	require.ElementsMatch(t, []int64{1, 6, 7}, repo.updatedCredentialIDs)
 	require.Equal(t, 2, repo.clearTempCalls, "successful refresh should clear OpenAI and Antigravity OAuth 401 pauses")
-	require.Equal(t, 2, tempCache.deleteCalls, "successful refresh should clear the temp-unsched cache")
-	require.Equal(t, 2, runtimeBlocker.clearCalls, "successful refresh should clear the runtime scheduling block")
+	require.EqualValues(t, 2, tempCache.deleteCalls.Load(), "successful refresh should clear the temp-unsched cache")
+	require.EqualValues(t, 2, runtimeBlocker.clearCalls.Load(), "successful refresh should clear the runtime scheduling block")
 }
 
 func TestTokenRefreshService_RefreshFailureDoesNotCallPrivacy(t *testing.T) {

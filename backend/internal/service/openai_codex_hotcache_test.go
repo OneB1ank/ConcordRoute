@@ -116,7 +116,7 @@ func TestCodexSnapshotHotCacheAfterReconcile(t *testing.T) {
 				first := codexSnapshotTestForward(t, account, repo, body)
 				require.Equal(t, selected, gjson.GetBytes(first.lastBody, "client_metadata.context_window_id").String())
 				// 观测真实窗口种子的热缓存，区分出站快照提交与缓存提交这两个层次。
-				hotKey := codexIdentityHotKey(account, fmt.Sprintf("codex-context-window:%s:0", prepared.threadID))
+				hotKey := codexIdentityHotKey(account, fmt.Sprintf("codex-context-instance:v2:%s:%s", prepared.threadID, prepared.windowInstanceID))
 				hotValue, hotExists := codexIdentityHotCache.Load(hotKey)
 				require.True(t, hotExists)
 				hotBinding, hotValid := hotValue.(codexIdentityHotBinding)

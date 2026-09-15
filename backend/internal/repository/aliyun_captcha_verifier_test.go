@@ -74,9 +74,11 @@ func TestAliyunCaptchaVerifier_APIErrorNormalized(t *testing.T) {
 }
 
 func TestAliyunCaptchaVerifier_TransportError(t *testing.T) {
+	// 保留 .1 上的端口所有权，访问未监听的 .2；提前关闭服务可能让其它测试
+	// 复用端口并返回 HTTP 错误，而主动断开连接的 EOF 又会被 SDK 包装为 API 错误。
 	server := httptest.NewServer(http.NotFoundHandler())
-	endpoint := strings.TrimPrefix(server.URL, "http://")
-	server.Close() // 立即关闭，制造连接失败
+	defer server.Close()
+	endpoint := strings.Replace(strings.TrimPrefix(server.URL, "http://"), "127.0.0.1:", "127.0.0.2:", 1)
 
 	verifier := &aliyunCaptchaVerifier{protocol: "HTTP", timeoutMillis: 2_000}
 	cred := service.AliyunCaptchaCredentials{
