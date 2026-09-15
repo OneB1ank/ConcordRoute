@@ -365,7 +365,7 @@ func TestCockpitIdentityGraph_LegacyDistinctRootBindingsRemainStable(t *testing.
 	assert.Equal(t, legacyThread, root.threadID)
 }
 
-func TestCockpitIdentityGraph_OneSidedRootBindingConvergesWithoutRotation(t *testing.T) {
+func TestCockpitIdentityGraph_OneSidedRootBindingKeepsIndependentTopology(t *testing.T) {
 	rootOriginal := uuid.Must(uuid.NewV7()).String()
 
 	t.Run("session exists", func(t *testing.T) {
@@ -378,7 +378,17 @@ func TestCockpitIdentityGraph_OneSidedRootBindingConvergesWithoutRotation(t *tes
 		}, codexFingerprintCockpit)
 		require.NotNil(t, root)
 		assert.Equal(t, existing, root.sessionID)
-		assert.Equal(t, existing, root.threadID)
+		assert.NotEqual(t, existing, root.threadID)
+		requireCodexUUIDv7(t, root.threadID)
+
+		repeated := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+			clientSessionID:   rootOriginal,
+			originalSessionID: rootOriginal,
+			threadID:          rootOriginal,
+		}, codexFingerprintCockpit)
+		require.NotNil(t, repeated)
+		assert.Equal(t, root.sessionID, repeated.sessionID)
+		assert.Equal(t, root.threadID, repeated.threadID)
 	})
 
 	t.Run("thread exists", func(t *testing.T) {
@@ -390,8 +400,49 @@ func TestCockpitIdentityGraph_OneSidedRootBindingConvergesWithoutRotation(t *tes
 			threadID:          rootOriginal,
 		}, codexFingerprintCockpit)
 		require.NotNil(t, root)
-		assert.Equal(t, existing, root.sessionID)
+		assert.NotEqual(t, existing, root.sessionID)
 		assert.Equal(t, existing, root.threadID)
+		requireCodexUUIDv7(t, root.sessionID)
+
+		repeated := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+			clientSessionID:   rootOriginal,
+			originalSessionID: rootOriginal,
+			threadID:          rootOriginal,
+		}, codexFingerprintCockpit)
+		require.NotNil(t, repeated)
+		assert.Equal(t, root.sessionID, repeated.sessionID)
+		assert.Equal(t, root.threadID, repeated.threadID)
+	})
+
+	t.Run("existing side survives capacity pruning", func(t *testing.T) {
+		account := newTestOAuthAccount(19041, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+		existing := resolveConvergedCockpitSessionID(account, rootOriginal)
+		bindings := readCodexIdentityBindings(account)
+		nowMS := time.Now().UnixMilli()
+		for index := len(bindings); index < codexIdentityBindingMaxEntries; index++ {
+			bindings[fmt.Sprintf("legacy-one-sided-%04d", index)] = codexIdentityBinding{
+				UUID:         uuid.Must(uuid.NewV7()).String(),
+				CreatedAtMS:  nowMS - int64(codexIdentityBindingMaxEntries-index),
+				LastUsedAtMS: nowMS - int64(codexIdentityBindingMaxEntries-index),
+			}
+		}
+
+		root := resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{
+			clientSessionID:   rootOriginal,
+			originalSessionID: rootOriginal,
+			threadID:          rootOriginal,
+		}, codexFingerprintCockpit)
+		require.NotNil(t, root)
+		assert.Equal(t, existing, root.sessionID)
+		assert.NotEqual(t, existing, root.threadID)
+		assert.LessOrEqual(t, len(readCodexIdentityBindings(account)), codexIdentityBindingMaxEntries)
+
+		sessionKey := codexIdentitySeedKey(codexCockpitSessionBindingSeed(account, rootOriginal))
+		threadKey := codexIdentitySeedKey(codexThreadBindingSeed(account, rootOriginal))
+		_, sessionOK := parseCodexIdentityBinding(readCodexIdentityBindings(account)[sessionKey])
+		_, threadOK := parseCodexIdentityBinding(readCodexIdentityBindings(account)[threadKey])
+		assert.True(t, sessionOK)
+		assert.True(t, threadOK)
 	})
 }
 

@@ -623,13 +623,13 @@ func storeCodexUUIDv7Binding(account *Account, seed, extraKey, value string, idl
 	sweepCodexIdentityHotCache()
 }
 
-// storeCodexUUIDv7Alias 在容量裁剪前保护已有根键，再把另一命名空间绑定到同一 UUID。
-func storeCodexUUIDv7Alias(account *Account, existingSeed, aliasSeed, extraKey, value string, idleTTL time.Duration, maxEntries int, nowMS int64) {
+// storeCodexUUIDv7Sibling 为历史单边根保留已有键，再独立建立缺失侧绑定。
+func storeCodexUUIDv7Sibling(account *Account, existingSeed, newSeed, extraKey, value string, idleTTL time.Duration, maxEntries int, nowMS int64) {
 	bindings := ensureCodexUUIDv7Bindings(account, extraKey)
 	if maxEntries >= 1 {
 		pruneCodexUUIDv7Bindings(bindings, nowMS, codexIdentitySeedKey(existingSeed), idleTTL, maxEntries-1)
 	}
-	storeCodexUUIDv7Binding(account, aliasSeed, extraKey, value, idleTTL, maxEntries, nowMS)
+	storeCodexUUIDv7Binding(account, newSeed, extraKey, value, idleTTL, maxEntries, nowMS)
 }
 
 // storeCodexUUIDv7Pair 为新根预留两个槽位后一次生成、双键写入，避免满容量时拆散共享关系。
@@ -1318,8 +1318,8 @@ func codexThreadBindingSeed(account *Account, clientSessionID string) string {
 	return fmt.Sprintf("sub2api:codex-thread-id:v3:%s:%s", seed, clientSessionID)
 }
 
-// resolveConvergedCockpitRootIDs 只为客户端明确声明的根线程共享 session/thread UUID。
-// 双边旧绑定若已经不同则原样保留，避免历史会话、窗口和缓存作用域在升级时旋转。
+// resolveConvergedCockpitRootIDs 只为两侧均无绑定的新根共享 session/thread UUID。
+// 历史双边或单边绑定继续沿用各自命名空间，避免升级时改变既有拓扑。
 func resolveConvergedCockpitRootIDs(account *Account, sessionSeed, threadSeed string) (string, string) {
 	sessionBindingSeed := codexCockpitSessionBindingSeed(account, sessionSeed)
 	threadBindingSeed := codexThreadBindingSeed(account, threadSeed)
@@ -1338,11 +1338,13 @@ func resolveConvergedCockpitRootIDs(account *Account, sessionSeed, threadSeed st
 	case hasSession && hasThread:
 		return sessionID, threadID
 	case hasSession:
-		storeCodexUUIDv7Alias(account, sessionBindingSeed, threadBindingSeed, CodexIdentityBindingsExtraKey, sessionID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
-		return sessionID, sessionID
+		threadID = newCodexUUIDv7().String()
+		storeCodexUUIDv7Sibling(account, sessionBindingSeed, threadBindingSeed, CodexIdentityBindingsExtraKey, threadID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+		return sessionID, threadID
 	case hasThread:
-		storeCodexUUIDv7Alias(account, threadBindingSeed, sessionBindingSeed, CodexIdentityBindingsExtraKey, threadID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
-		return threadID, threadID
+		sessionID = newCodexUUIDv7().String()
+		storeCodexUUIDv7Sibling(account, threadBindingSeed, sessionBindingSeed, CodexIdentityBindingsExtraKey, sessionID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
+		return sessionID, threadID
 	default:
 		sharedID := newCodexUUIDv7().String()
 		storeCodexUUIDv7Pair(account, sessionBindingSeed, threadBindingSeed, CodexIdentityBindingsExtraKey, sharedID, codexIdentityBindingIdleTTL, codexIdentityBindingMaxEntries, nowMS)
