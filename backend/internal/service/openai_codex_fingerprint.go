@@ -25,8 +25,8 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// codexFingerprintIDsContextKey 保存单次透传尝试的收敛 ID。请求体与请求头必须
-// 共享它，才能保证每次请求随机生成的 turn ID 在两个载体中一致。
+// codexFingerprintIDsContextKey 保存单次透传尝试的身份快照。请求体与请求头必须
+// 共享它，才能保证收敛字段和客户端回合字段在所有载体中一致。
 const codexFingerprintIDsContextKey = "codex_fingerprint_ids"
 
 // stageCodexFingerprintIDs 无条件写入当前尝试的 ID（包括 nil）。故障转移从
@@ -196,12 +196,10 @@ func deriveStableUUIDv4(seed string) string {
 var codexFallbackUUIDv7 sync.Map
 
 const (
-	codexIdentityBindingIdleTTL       = 7 * 24 * time.Hour
-	codexIdentityBindingTouchEvery    = 5 * time.Minute
-	codexIdentityHotCacheTTL          = 24 * time.Hour
-	codexIdentityBindingMaxEntries    = 1024
-	codexTurnLineageBindingIdleTTL    = 30 * 24 * time.Hour
-	codexTurnLineageBindingMaxEntries = 8192
+	codexIdentityBindingIdleTTL    = 7 * 24 * time.Hour
+	codexIdentityBindingTouchEvery = 5 * time.Minute
+	codexIdentityHotCacheTTL       = 24 * time.Hour
+	codexIdentityBindingMaxEntries = 1024
 	// 等锁和存储共享预算；超时返回错误，不以跳过落库继续转发换取低延迟。
 	codexIdentityPersistenceTimeout = 5 * time.Second
 )
@@ -212,8 +210,8 @@ const (
 // instead of creating a new timestamped identity and breaking cache affinity.
 const CodexIdentityBindingsExtraKey = "codex_identity_bindings_v1"
 
-// CodexTurnLineageBindingsExtraKey 单独保存 Cockpit 回合图的 UUIDv7 映射，
-// 避免高频 turn 淘汰 installation/session/thread 等低频账号身份绑定。
+// CodexTurnLineageBindingsExtraKey 保留旧版 Cockpit 回合映射的持久化键。
+// 新请求不再写入该存储；管理入口仍需清理调用方提交的旧运行态数据。
 const CodexTurnLineageBindingsExtraKey = "codex_turn_lineage_bindings_v1"
 
 // DiscardCodexFingerprintRuntimeBindings 清除只能由网关维护的 UUIDv7 映射。
@@ -797,7 +795,6 @@ type codexUUIDv7BindingStore struct {
 
 var codexUUIDv7BindingStores = []codexUUIDv7BindingStore{
 	{extraKey: CodexIdentityBindingsExtraKey, idleTTL: codexIdentityBindingIdleTTL, maxEntries: codexIdentityBindingMaxEntries},
-	{extraKey: CodexTurnLineageBindingsExtraKey, idleTTL: codexTurnLineageBindingIdleTTL, maxEntries: codexTurnLineageBindingMaxEntries},
 }
 
 type codexIdentityPersistenceState struct {
@@ -900,7 +897,7 @@ func commitCodexIdentityPersistenceState(account *Account, snapshots []*codexFin
 	}
 }
 
-// persistCodexIdentityBindings 一次性持久化账号身份和 Cockpit 回合图绑定。
+// persistCodexIdentityBindings 只持久化当前账号身份；旧版 Cockpit 回合绑定不再参与请求准备。
 // @project-doc docs/interfaces/openai_upstream.md#codex_identity_persistence
 // 与最新持久化值逐项比较让无变化的热路径保持只读，账号锁和写前合并协调并发快照。
 func persistCodexIdentityBindings(ctx context.Context, repo AccountRepository, account *Account, snapshots ...*codexFingerprintIDs) (err error) {
@@ -1352,44 +1349,6 @@ func resolveConvergedCockpitRootIDs(account *Account, sessionSeed, threadSeed st
 	}
 }
 
-// resolveConvergedCockpitTurnID 在账号和根 session 作用域内，
-// 为客户端明确提供的回合标识建立稳定 UUIDv7 映射。父子线程共享根 session，
-// 因而不能把当前 thread 纳入种子，否则子线程引用的父回合会映射到另一个 UUID。
-func resolveConvergedCockpitTurnID(account *Account, sessionID, originalTurnID string) string {
-	originalTurnID = strings.TrimSpace(originalTurnID)
-	if account == nil || originalTurnID == "" {
-		return ""
-	}
-	seed := resolveCodexFingerprintSeed(account)
-	sessionID = strings.TrimSpace(sessionID)
-	if seed == "" || sessionID == "" {
-		return ""
-	}
-	lineageSeed := fmt.Sprintf(
-		"sub2api:codex-turn-lineage:v2:%s:%d:%s:%d:%s",
-		seed,
-		len(sessionID), sessionID,
-		len(originalTurnID), originalTurnID,
-	)
-	if original, err := uuid.Parse(originalTurnID); err == nil && original.Version() == uuid.Version(7) && original.Variant() == uuid.RFC4122 {
-		// 官方 UUIDv7 保留原始毫秒时间戳，只用账号和会话作用域重写随机位。
-		// 该映射无需逐回合落库，重启后仍由持久账号种子得到相同结果。
-		digest := sha256.Sum256([]byte(lineageSeed))
-		mapped := original
-		copy(mapped[6:], digest[:10])
-		mapped[6] = (mapped[6] & 0x0f) | 0x70
-		mapped[8] = (mapped[8] & 0x3f) | 0x80
-		return mapped.String()
-	}
-	return deriveStableUUIDv7ForAccountStore(
-		account,
-		lineageSeed,
-		CodexTurnLineageBindingsExtraKey,
-		codexTurnLineageBindingIdleTTL,
-		codexTurnLineageBindingMaxEntries,
-	)
-}
-
 // resolveCodexParentThreadID 将客户端父线程映射到当前账号的线程命名空间。
 // 当前线程本身作为父线程时复用已解析值；full 模式把线程合并到账号线程。
 func resolveCodexParentThreadID(account *Account, mode codexFingerprintMode, originalThreadID, threadID, originalParentThreadID string) string {
@@ -1406,29 +1365,18 @@ func resolveCodexParentThreadID(account *Account, mode codexFingerprintMode, ori
 	return resolveConvergedThreadID(account, originalParentThreadID)
 }
 
-// resolveCockpitTurnLineage 将当前 turn 及其 parent/root 引用放入同一映射图。
-// parent/root 只在客户端明确提供时生成；缺失字段始终保持缺失。
-func resolveCockpitTurnLineage(account *Account, ids *codexFingerprintIDs) {
+// resolveCockpitTurnPassthrough 只收敛父线程引用，回合图保持客户端原值。
+// turn、parent/root 和开始时间都按当前请求存在性处理，不进入账号级映射。
+func resolveCockpitTurnPassthrough(account *Account, ids *codexFingerprintIDs) {
 	if ids == nil {
 		return
 	}
 	ids.parentThreadID = resolveCodexParentThreadID(account, ids.mode, ids.originalThreadID, ids.threadID, ids.originalParentThreadID)
 	if ids.extendedTurnIdentity {
-		// 首次看到一条既有子链时先映射 root/parent，再映射当前 turn，
-		// 使新生成 UUIDv7 的时间顺序与引用拓扑一致。
-		if ids.originalRootTurnID != "" && ids.originalRootTurnID != ids.originalTurnID {
-			ids.rootTurnID = resolveConvergedCockpitTurnID(account, ids.sessionID, ids.originalRootTurnID)
-		} else {
-			ids.rootTurnID = ""
-		}
-		ids.parentTurnID = resolveConvergedCockpitTurnID(account, ids.sessionID, ids.originalParentTurnID)
+		ids.parentTurnID = ids.originalParentTurnID
+		ids.rootTurnID = ids.originalRootTurnID
 	}
-	if ids.originalTurnID != "" {
-		ids.turnID = resolveConvergedCockpitTurnID(account, ids.sessionID, ids.originalTurnID)
-	}
-	if ids.extendedTurnIdentity && ids.originalRootTurnID != "" && ids.originalRootTurnID == ids.originalTurnID {
-		ids.rootTurnID = ids.turnID
-	}
+	ids.turnID = ids.originalTurnID
 }
 
 // resolveCodexRootTurnID 仅处理客户端明确提供的根，不因缺少 parent 而补全 root。
@@ -1516,7 +1464,7 @@ type codexFingerprintSource struct {
 	allowPromptCacheCarry bool
 }
 
-// codexFingerprintIDs 收敛后的完整 ID 集合。
+// codexFingerprintIDs 保存收敛身份与当前请求的客户端回合字段。
 // 由 resolveCodexFingerprintIDs 一次性生成，同一个实例在头改写和体改写之间共享，
 // 确保所有载体中的 turn_id 等随机字段一致。
 type codexFingerprintIDs struct {
@@ -1547,9 +1495,11 @@ type codexFingerprintIDs struct {
 	// windowInstanceID 仅保存内部当前实例，不代表本帧有权写出可选字段。
 	windowInstanceID    string
 	turnStartedAtUnixMS int64
-	originalWindowID    string
-	windowID            string
-	windowNumber        uint64
+	// turnStartedAtPresent 区分客户端明确提供的开始时间与字段缺失。
+	turnStartedAtPresent bool
+	originalWindowID     string
+	windowID             string
+	windowNumber         uint64
 	// windowNumberPresent 将内部窗口代数与客户端实际发送的字段分开。
 	windowNumberPresent      bool
 	originalFirstWindowID    string
@@ -1578,7 +1528,7 @@ func bindCodexFingerprintIDsToAccount(ids *codexFingerprintIDs, account *Account
 // clientSessionID 是客户端原始的 session-id 头值（连字符形式），用于 session 模式下
 // 的 thread_id 派生——每个真实 Codex 会话得到一个独立线程。
 // 返回 nil 表示 off 模式，不需要改写。
-// 注意：包含随机生成的 turn_id，调用方必须只调用一次并共享结果给头改写和体改写。
+// 注意：session/full 可能生成 turn_id；调用方必须只调用一次并共享结果给头改写和体改写。
 func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode codexFingerprintMode) *codexFingerprintIDs {
 	return resolveCodexFingerprintIDsWithSource(account, codexFingerprintSource{clientSessionID: clientSessionID}, mode)
 }
@@ -1611,6 +1561,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		originalPreviousWindowID: strings.TrimSpace(source.previousWindowID),
 		originalPromptCacheKey:   source.promptCacheKey,
 		promptCacheKeyPresent:    source.promptCacheKeyPresent,
+		turnStartedAtPresent:     source.turnStartedAtPresent,
 	}
 	if ids.originalSessionID == "" {
 		ids.originalSessionID = strings.TrimSpace(source.clientSessionID)
@@ -1669,7 +1620,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 			ids.threadID = ids.sessionID
 		}
 
-		resolveCockpitTurnLineage(account, ids)
+		resolveCockpitTurnPassthrough(account, ids)
 		resolveCodexFingerprintWindow(account, source, ids)
 		if source.promptCacheKeyPresent {
 			ids.promptCacheKey = source.promptCacheKey
@@ -1688,9 +1639,7 @@ func resolveCodexFingerprintIDsWithSource(account *Account, source codexFingerpr
 		} else {
 			ids.promptCacheKey = resolveOfficialCockpitPromptCacheKey(ids.sessionID, "")
 		}
-		if ids.turnID != "" {
-			ids.turnStartedAtUnixMS = resolveCodexTurnStartedAt(account, ids.mode, ids.sessionID, ids.originalTurnID, ids.turnID, source.turnStartedAtUnixMS, source.turnStartedAtPresent)
-		}
+		ids.turnStartedAtUnixMS = source.turnStartedAtUnixMS
 		// 显式键保持原载体；短暂复用时沿用上一次键的载体形态。
 		if source.promptCacheKeyPresent || !source.allowPromptCacheCarry {
 			ids.promptCacheKeyInBody = source.promptCacheKeyInBody
@@ -1752,6 +1701,17 @@ func resolveCodexFingerprintWindow(account *Account, source codexFingerprintSour
 // shouldWriteCodexTurnID 保留 session/full 的既有兼容行为；Cockpit 仅改写客户端字段。
 func shouldWriteCodexTurnID(ids *codexFingerprintIDs) bool {
 	return ids != nil && ids.turnID != "" && (ids.mode != codexFingerprintCockpit || ids.turnIDPresent)
+}
+
+// shouldWriteCodexTurnStartedAt 保留 session/full 的生命周期时间；Cockpit 只写客户端字段。
+func shouldWriteCodexTurnStartedAt(ids *codexFingerprintIDs) bool {
+	if ids == nil {
+		return false
+	}
+	if ids.mode == codexFingerprintCockpit {
+		return ids.turnStartedAtPresent
+	}
+	return ids.turnID != ""
 }
 
 // shouldWriteCodexWindowNumber 允许内部维护窗口链，但不把缺失的压缩次数补入 Cockpit 请求。
@@ -2545,6 +2505,8 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	}
 	if shouldWriteCodexTurnID(ids) {
 		fields["turn_id"] = ids.turnID
+	}
+	if shouldWriteCodexTurnStartedAt(ids) {
 		fields["turn_started_at_unix_ms"] = ids.turnStartedAtUnixMS
 	}
 	if ids.extendedTurnIdentity {
@@ -2749,8 +2711,11 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	existing["thread_id"] = ids.threadID
 	if shouldWriteCodexTurnID(ids) {
 		existing["turn_id"] = ids.turnID
-		// 平铺开始时间也是已支持的输入载体。只对已有有效值同步生命周期时间，
-		// 保留字符串/数字类别；缺失或异常字段不补造、不改变原有类型处理。
+	} else if ids.mode == codexFingerprintCockpit {
+		delete(existing, "turn_id")
+	}
+	if shouldWriteCodexTurnStartedAt(ids) {
+		// 平铺开始时间只对已有有效值同步，保留字符串/数字类别。
 		if _, present := extractCodexTurnStartedAtField(existing, "turn_started_at_unix_ms"); present {
 			if _, isString := existing["turn_started_at_unix_ms"].(string); isString {
 				existing["turn_started_at_unix_ms"] = strconv.FormatInt(ids.turnStartedAtUnixMS, 10)
@@ -2758,8 +2723,6 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 				existing["turn_started_at_unix_ms"] = ids.turnStartedAtUnixMS
 			}
 		}
-	} else if ids.mode == codexFingerprintCockpit {
-		delete(existing, "turn_id")
 	}
 	existing["x-codex-window-id"] = ids.windowID
 	if ids.extendedTurnIdentity {
@@ -2803,6 +2766,8 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	}
 	if shouldWriteCodexTurnID(ids) {
 		fields["turn_id"] = ids.turnID
+	}
+	if shouldWriteCodexTurnStartedAt(ids) {
 		fields["turn_started_at_unix_ms"] = ids.turnStartedAtUnixMS
 	}
 	if ids.extendedTurnIdentity {

@@ -19,12 +19,12 @@ func TestAdvanceCodexWebSocketFingerprintCacheLifecycle(t *testing.T) {
 	snapshot := *first
 	missing := advanceCodexWebSocketFingerprint(account, first, []byte(`{"model":"gpt-6-astra"}`))
 	require.Equal(t, first.promptCacheKey, missing.promptCacheKey)
-	require.Equal(t, first.turnID, missing.turnID)
+	require.Empty(t, missing.turnID)
 	second := advanceCodexWebSocketFingerprint(account, missing, []byte(`{"prompt_cache_key":"ws-B","client_metadata":{"turn_id":"ws-turn-2"}}`))
 	assert.Equal(t, "ws-B", second.promptCacheKey)
 	assert.Equal(t, first.threadID, second.threadID)
 	assert.Equal(t, first.contextWindowID, second.contextWindowID)
-	assert.NotEqual(t, first.turnID, second.turnID)
+	assert.Equal(t, "ws-turn-2", second.turnID)
 	assert.Empty(t, second.rootTurnID)
 	assert.Equal(t, snapshot, *first, "帧身份更新不得污染握手快照")
 
@@ -32,6 +32,7 @@ func TestAdvanceCodexWebSocketFingerprintCacheLifecycle(t *testing.T) {
 	assert.Equal(t, second.turnID, retry.turnID)
 	assert.Equal(t, second.turnStartedAtUnixMS, retry.turnStartedAtUnixMS)
 	compacted := advanceCodexWebSocketFingerprint(account, retry, []byte(`{"client_metadata":{"window_number":"1","turn_id":"ws-turn-3"}}`))
+	assert.Equal(t, "ws-turn-3", compacted.turnID)
 	assert.Equal(t, first.firstWindowID, compacted.firstWindowID)
 	assert.Equal(t, first.contextWindowID, compacted.previousWindowID)
 	assert.Equal(t, "ws-B", compacted.promptCacheKey)

@@ -117,17 +117,8 @@ func auditDropIdentityHotState(accountID int64) {
 	codexIdentityPersistedHashes.Delete(fmt.Sprint(accountID))
 }
 
-func auditDurableContainsTurn(account *Account, mapped string) bool {
-	for _, raw := range readCodexTurnLineageBindings(account) {
-		if entry, ok := parseCodexIdentityBinding(raw); ok && entry.UUID == mapped {
-			return true
-		}
-	}
-	return false
-}
-
-// 使用生产 WS 的 prepare 方法与首帧准备函数；仅以独立内存仓储代替数据库。
-func TestAuditWSNewTurnDurability(t *testing.T) {
+// 使用生产 WS 的 prepare 方法验证客户端回合原值跨冷启动保持不变，且不写旧回合映射库。
+func TestAuditWSTurnPassthroughAcrossColdStart(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		nativeTurn bool
@@ -165,18 +156,16 @@ func TestAuditWSNewTurnDurability(t *testing.T) {
 			second, err := state.prepare(context.Background(), repo, secondBody)
 			require.NoError(t, err)
 			require.NotNil(t, second)
+			require.Equal(t, secondTurn, second.turnID)
 			require.NotEqual(t, first.turnID, second.turnID)
-			stored := auditDurableContainsTurn(repo.stored, second.turnID)
+			require.Empty(t, readCodexTurnLineageBindings(repo.stored))
 			auditDropIdentityHotState(account.ID)
 			cold := auditCloneIdentityAccount(repo.stored)
 			restored := resolveCodexFingerprintIDsFromRawRequest(cold, nil, secondBody)
 			require.NotNil(t, restored)
-			t.Logf("WS_DURABILITY native=%v window_changed=%v new_writes=%d stored=%v cold_equal=%v",
-				test.nativeTurn, test.newWindow, repo.writes-writesBefore, stored, restored.turnID == second.turnID)
-			if !test.nativeTurn {
-				assert.True(t, stored, "依赖落库的字符串回合，在成功准备后应能从仓储找到")
-			}
-			assert.Equal(t, second.turnID, restored.turnID, "冷启动应恢复同一逻辑回合的出站 ID")
+			t.Logf("WS_PASSTHROUGH native=%v window_changed=%v new_writes=%d cold_equal=%v",
+				test.nativeTurn, test.newWindow, repo.writes-writesBefore, restored.turnID == second.turnID)
+			assert.Equal(t, secondTurn, restored.turnID, "冷启动应继续透传同一客户端回合 ID")
 		})
 	}
 }

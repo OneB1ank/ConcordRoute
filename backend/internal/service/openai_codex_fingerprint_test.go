@@ -318,7 +318,7 @@ func TestCockpitIdentityGraph_RootAndChildTopology(t *testing.T) {
 	childIDs := resolveCodexFingerprintIDsWithSource(account, child, codexFingerprintCockpit)
 	require.NotNil(t, childIDs)
 	assert.NotEqual(t, childIDs.sessionID, childIDs.threadID)
-	assert.NotEqual(t, child.turnID, childIDs.turnID)
+	assert.Equal(t, child.turnID, childIDs.turnID)
 	assert.Equal(t, childIDs.threadID+":0", childIDs.windowID)
 	assert.Equal(t, childIDs.sessionID, childIDs.promptCacheKey)
 }
@@ -559,7 +559,7 @@ func TestCockpitIdentityGraph_DecodedAndRawRequestsShareExplicitRoot(t *testing.
 	assert.Equal(t, rawIDs.sessionID, rawIDs.threadID)
 }
 
-func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
+func TestCockpitTurnLineage_PreservesClientRootAndChildGraph(t *testing.T) {
 	account := newTestOAuthAccount(121, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	rootOriginal := uuid.Must(uuid.NewV7()).String()
 	childOriginal := uuid.Must(uuid.NewV7()).String()
@@ -574,7 +574,7 @@ func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
 	rootSource.rootTurnID = rootOriginal
 	rootIDs := resolveCodexFingerprintIDsWithSource(account, rootSource, codexFingerprintCockpit)
 	require.NotNil(t, rootIDs)
-	requireCodexUUIDv7(t, rootIDs.turnID)
+	assert.Equal(t, rootOriginal, rootIDs.turnID)
 	assert.Equal(t, rootIDs.turnID, rootIDs.rootTurnID)
 	assert.Empty(t, rootIDs.parentTurnID)
 
@@ -587,15 +587,8 @@ func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
 	require.NotNil(t, childIDs)
 	assert.Equal(t, rootIDs.sessionID, childIDs.sessionID, "父子线程必须共享根 session")
 	assert.NotEqual(t, rootIDs.threadID, childIDs.threadID, "父子线程必须保留各自 thread")
-	requireCodexUUIDv7(t, childIDs.turnID)
+	assert.Equal(t, childOriginal, childIDs.turnID)
 	assert.NotEqual(t, rootIDs.turnID, childIDs.turnID)
-	rootParsed := uuid.MustParse(rootIDs.turnID)
-	childParsed := uuid.MustParse(childIDs.turnID)
-	rootOriginalParsed := uuid.MustParse(rootOriginal)
-	childOriginalParsed := uuid.MustParse(childOriginal)
-	assert.Equal(t, rootOriginalParsed[:6], rootParsed[:6])
-	assert.Equal(t, childOriginalParsed[:6], childParsed[:6])
-	assert.LessOrEqual(t, bytes.Compare(rootParsed[:6], childParsed[:6]), 0)
 	assert.Equal(t, rootIDs.turnID, childIDs.parentTurnID)
 	assert.Equal(t, rootIDs.turnID, childIDs.rootTurnID)
 	restored := restoreCodexFingerprintResponsePayload([]byte(fmt.Sprintf(
@@ -607,17 +600,13 @@ func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
 		childOriginal, rootOriginal, rootOriginal,
 	), string(restored))
 	assert.NotEmpty(t, readCodexIdentityBindings(account))
-	assert.Empty(t, readCodexTurnLineageBindings(account), "官方 UUIDv7 回合不得触发逐 turn 持久化")
-	// 非 UUIDv7 的旧客户端标识使用独立持久映射，不挤占账号身份库。
-	requireCodexUUIDv7(t, resolveConvergedCockpitTurnID(account, childIDs.sessionID, "legacy-turn"))
-	assert.NotEmpty(t, readCodexTurnLineageBindings(account))
+	assert.Empty(t, readCodexTurnLineageBindings(account), "Cockpit 回合透传不得写入旧映射存储")
 
 	codexIdentityPersistedHashes = sync.Map{}
 	repo := &codexIdentityPersistenceRepo{account: account}
 	require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account))
 	require.Len(t, repo.updates, 1)
 	assert.Contains(t, repo.updates[0], CodexIdentityBindingsExtraKey)
-	assert.Contains(t, repo.updates[0], CodexTurnLineageBindingsExtraKey)
 
 	encoded, err := json.Marshal(account.Extra)
 	require.NoError(t, err)
@@ -628,9 +617,9 @@ func TestCockpitTurnLineage_MapsRootAndChildToOneUUIDv7Graph(t *testing.T) {
 	codexIdentityPersistedHashes = sync.Map{}
 	restarted := resolveCodexFingerprintIDsWithSource(fresh, childSource, codexFingerprintCockpit)
 	require.NotNil(t, restarted)
-	assert.Equal(t, childIDs.turnID, restarted.turnID)
-	assert.Equal(t, childIDs.parentTurnID, restarted.parentTurnID)
-	assert.Equal(t, childIDs.rootTurnID, restarted.rootTurnID)
+	assert.Equal(t, childOriginal, restarted.turnID)
+	assert.Equal(t, rootOriginal, restarted.parentTurnID)
+	assert.Equal(t, rootOriginal, restarted.rootTurnID)
 }
 
 func requireCodexUUIDv7(t *testing.T, value string) {
@@ -673,7 +662,7 @@ func TestCockpitRootTurnID_RewritesOfficialMetadataCarriers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uuid.Version(7), parsed.Version())
 	assert.Equal(t, uuid.RFC4122, parsed.Variant())
-	assert.NotEqual(t, root, ids.rootTurnID)
+	assert.Equal(t, root, ids.rootTurnID)
 	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 
 	headers := make(http.Header)
@@ -704,8 +693,8 @@ func TestCockpitRootTurnID_ChildInheritsClientRoot(t *testing.T) {
 	require.NotNil(t, ids)
 	requireCodexUUIDv7(t, ids.parentTurnID)
 	requireCodexUUIDv7(t, ids.rootTurnID)
-	assert.NotEqual(t, parent, ids.parentTurnID)
-	assert.NotEqual(t, root, ids.rootTurnID)
+	assert.Equal(t, parent, ids.parentTurnID)
+	assert.Equal(t, root, ids.rootTurnID)
 	assert.NotEqual(t, ids.turnID, ids.rootTurnID)
 }
 
@@ -750,7 +739,7 @@ func TestCockpitRootTurnID_MissingChildRootRemainsUnset(t *testing.T) {
 	})
 	require.NotNil(t, ids)
 	requireCodexUUIDv7(t, ids.parentTurnID)
-	assert.NotEqual(t, parent, ids.parentTurnID)
+	assert.Equal(t, parent, ids.parentTurnID)
 	assert.Empty(t, ids.rootTurnID)
 	body := map[string]any{"parent_turn_id": parent}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
@@ -1074,7 +1063,7 @@ func TestCodexFingerprintPre151OmitsExtendedTurnIdentity(t *testing.T) {
 	assert.NotContains(t, headerMetadata, "context_window_id")
 }
 
-func TestCodexFingerprint151ConvergesParentTurnIdentity(t *testing.T) {
+func TestCodexFingerprint151PreservesParentTurnIdentity(t *testing.T) {
 	account := newTestOAuthAccount(111, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	parent := uuid.Must(uuid.NewV7()).String()
 	source := codexFingerprintSource{
@@ -1090,7 +1079,7 @@ func TestCodexFingerprint151ConvergesParentTurnIdentity(t *testing.T) {
 	require.NotNil(t, ids)
 	assert.True(t, ids.extendedTurnIdentity)
 	requireCodexUUIDv7(t, ids.parentTurnID)
-	assert.NotEqual(t, parent, ids.parentTurnID)
+	assert.Equal(t, parent, ids.parentTurnID)
 
 	body := map[string]any{"prompt_cache_key": "cache-parent"}
 	require.True(t, applyCodexFingerprintClientMetadata(body, ids))
@@ -1164,7 +1153,7 @@ func TestCockpitIdentityGraph_ServerFieldsAndClientCacheKey(t *testing.T) {
 	require.NotNil(t, ids)
 	assert.NotEqual(t, sessionID, ids.sessionID)
 	assert.NotEqual(t, threadID, ids.threadID)
-	assert.NotEqual(t, turnID, ids.turnID)
+	assert.Equal(t, turnID, ids.turnID)
 	assert.NotEqual(t, windowID, ids.windowID)
 	assert.Equal(t, "client-cache", ids.promptCacheKey)
 	for name, value := range map[string]string{
@@ -1255,7 +1244,7 @@ func TestCockpitIdentityGraph_LocalSimulation(t *testing.T) {
 	assert.Equal(t, root.sessionID, child.sessionID, "同一客户端 session 下的子线程保持服务器 session")
 	assert.NotEqual(t, childThread, child.threadID)
 	assert.NotEqual(t, child.sessionID, child.threadID)
-	assert.NotEqual(t, childTurn, child.turnID)
+	assert.Equal(t, childTurn, child.turnID)
 	assert.Equal(t, child.threadID+":0", child.windowID)
 	assert.Equal(t, "child-cache", child.promptCacheKey)
 
@@ -2311,7 +2300,7 @@ func TestCockpitExplicitPromptCacheKeyPreservesWhitespace(t *testing.T) {
 	assert.Equal(t, key, headers.Get("conversation_id"))
 }
 
-func TestCodexTurnStartedAtPreservesAndCarriesLogicalTurnTime(t *testing.T) {
+func TestCodexTurnStartedAtPreservesClientTimeWithoutCarry(t *testing.T) {
 	account := newTestOAuthAccount(993003, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	firstRaw := []byte(`{"client_metadata":{"session_id":"review-time","turn_id":"019f1891-3400-7001-8000-000000000001","x-codex-turn-metadata":"{\"turn_started_at_unix_ms\":1789100000000}"}}`)
 	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, firstRaw)
@@ -2325,7 +2314,8 @@ func TestCodexTurnStartedAtPreservesAndCarriesLogicalTurnTime(t *testing.T) {
 	secondRaw := []byte(`{"client_metadata":{"session_id":"review-time","turn_id":"019f1891-3400-7001-8000-000000000001","x-codex-turn-metadata":"{}"}}`)
 	second := resolveCodexFingerprintIDsFromRawRequest(account, nil, secondRaw)
 	require.NotNil(t, second)
-	assert.Equal(t, first.turnStartedAtUnixMS, second.turnStartedAtUnixMS)
+	assert.Zero(t, second.turnStartedAtUnixMS)
+	assert.False(t, second.turnStartedAtPresent)
 }
 
 func TestCodexParentThreadMappingIsConsistentAcrossMetadataAndHeader(t *testing.T) {

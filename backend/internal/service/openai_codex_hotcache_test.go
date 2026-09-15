@@ -14,59 +14,51 @@ import (
 
 // 写入与成功哈希跳过均发布选中值；失败不得发布未提交值或污染其它账号/绑定。
 func TestCodexSnapshotHotCacheCommitPaths(t *testing.T) {
-	for _, store := range []string{CodexIdentityBindingsExtraKey, CodexTurnLineageBindingsExtraKey} {
-		for _, mode := range []string{"write_success", "write_failure", "hash_skip"} {
-			t.Run(store+"/"+mode, func(t *testing.T) {
-				account, repo, ids, selected := codexSnapshotPersistenceFixture(t)
-				if store != CodexIdentityBindingsExtraKey {
-					account.Extra[store] = account.Extra[CodexIdentityBindingsExtraKey]
-					delete(account.Extra, CodexIdentityBindingsExtraKey)
-					repo.latest.Extra[store] = repo.latest.Extra[CodexIdentityBindingsExtraKey]
-					delete(repo.latest.Extra, CodexIdentityBindingsExtraKey)
-				}
-				hotKey := fmt.Sprintf("%d:window", account.ID)
-				oldHot := codexIdentityHotBinding{UUID: ids.contextWindowID, LastUsedAtMS: time.Now().UnixMilli()}
-				otherKey := fmt.Sprintf("%d:window", account.ID+1000000)
-				unrelatedKey := fmt.Sprintf("%d:unrelated", account.ID)
-				for _, key := range []string{hotKey, otherKey, unrelatedKey} {
-					codexIdentityHotCache.Store(key, oldHot)
-					t.Cleanup(func() { codexIdentityHotCache.Delete(key) })
-				}
+	for _, mode := range []string{"write_success", "write_failure", "hash_skip"} {
+		t.Run(mode, func(t *testing.T) {
+			account, repo, ids, selected := codexSnapshotPersistenceFixture(t)
+			hotKey := fmt.Sprintf("%d:window", account.ID)
+			oldHot := codexIdentityHotBinding{UUID: ids.contextWindowID, LastUsedAtMS: time.Now().UnixMilli()}
+			otherKey := fmt.Sprintf("%d:window", account.ID+1000000)
+			unrelatedKey := fmt.Sprintf("%d:unrelated", account.ID)
+			for _, key := range []string{hotKey, otherKey, unrelatedKey} {
+				codexIdentityHotCache.Store(key, oldHot)
+				t.Cleanup(func() { codexIdentityHotCache.Delete(key) })
+			}
+			if mode == "hash_skip" {
+				oldBindings := readCodexIdentityBindings(account)
+				require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account))
+				account.Extra[CodexIdentityBindingsExtraKey] = oldBindings
+				codexIdentityHotCache.Store(hotKey, oldHot)
+			}
+			if mode == "write_failure" {
+				repo.writeErr = errors.New("synthetic hot-cache publish failure")
+			}
+			writes := len(repo.updates)
+			err := persistCodexIdentityBindings(context.Background(), repo, account, ids)
+			hot, exists := codexIdentityHotCache.Load(hotKey)
+			require.True(t, exists)
+			if mode == "write_failure" {
+				require.ErrorIs(t, err, repo.writeErr)
+				require.Equal(t, oldHot, hot, "写入失败时不发布选中值")
+			} else {
+				require.NoError(t, err)
+				binding, valid := hot.(codexIdentityHotBinding)
+				require.True(t, valid)
+				require.Equal(t, selected, binding.UUID)
+				require.Equal(t, selected, ids.contextWindowID)
 				if mode == "hash_skip" {
-					oldBindings := readCodexUUIDv7Bindings(account, store)
-					require.NoError(t, persistCodexIdentityBindings(context.Background(), repo, account))
-					account.Extra[store] = oldBindings
-					codexIdentityHotCache.Store(hotKey, oldHot)
-				}
-				if mode == "write_failure" {
-					repo.writeErr = errors.New("synthetic hot-cache publish failure")
-				}
-				writes := len(repo.updates)
-				err := persistCodexIdentityBindings(context.Background(), repo, account, ids)
-				hot, exists := codexIdentityHotCache.Load(hotKey)
-				require.True(t, exists)
-				if mode == "write_failure" {
-					require.ErrorIs(t, err, repo.writeErr)
-					require.Equal(t, oldHot, hot, "写入失败时不发布选中值")
+					require.Len(t, repo.updates, writes)
 				} else {
-					require.NoError(t, err)
-					binding, valid := hot.(codexIdentityHotBinding)
-					require.True(t, valid)
-					require.Equal(t, selected, binding.UUID)
-					require.Equal(t, selected, ids.contextWindowID)
-					if mode == "hash_skip" {
-						require.Len(t, repo.updates, writes)
-					} else {
-						require.Len(t, repo.updates, writes+1)
-					}
+					require.Len(t, repo.updates, writes+1)
 				}
-				for _, key := range []string{otherKey, unrelatedKey} {
-					value, ok := codexIdentityHotCache.Load(key)
-					require.True(t, ok)
-					require.Equal(t, oldHot, value, "其它账号或未参与提交的绑定保持不变")
-				}
-			})
-		}
+			}
+			for _, key := range []string{otherKey, unrelatedKey} {
+				value, ok := codexIdentityHotCache.Load(key)
+				require.True(t, ok)
+				require.Equal(t, oldHot, value, "其它账号或未参与提交的绑定保持不变")
+			}
+		})
 	}
 }
 

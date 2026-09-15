@@ -234,11 +234,9 @@ func TestCodexRootPresentRegressionWS(t *testing.T) {
 		`{"client_metadata":{"parent_turn_id":"explicit-parent","root_turn_id":"explicit-root"}}`,
 	} {
 		next := advanceCodexWebSocketFingerprint(account, first, []byte(raw))
-		requireCodexUUIDv7(t, next.rootTurnID)
-		require.NotEqual(t, "explicit-root", next.rootTurnID)
+		require.Equal(t, "explicit-root", next.rootTurnID)
 		if next.parentTurnID != "" {
-			requireCodexUUIDv7(t, next.parentTurnID)
-			require.NotEqual(t, "explicit-parent", next.parentTurnID)
+			require.Equal(t, "explicit-parent", next.parentTurnID)
 		} else {
 			require.NotEqual(t, next.turnID, next.rootTurnID)
 		}

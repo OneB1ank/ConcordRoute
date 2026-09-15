@@ -99,7 +99,7 @@ func TestCodexSnapshotTimestampCarrierAgreement(t *testing.T) {
 				flat := gjson.GetBytes(captured.lastBody, "client_metadata.turn_started_at_unix_ms").Int()
 				nested := gjson.Get(gjson.GetBytes(captured.lastBody, "client_metadata.x-codex-turn-metadata").String(), "turn_started_at_unix_ms").Int()
 				require.Equal(t, nested, flat, "同一最终请求的平铺与内嵌开始时间应一致")
-				require.Equal(t, start, flat)
+				require.Equal(t, start+int64(step)*1000, flat)
 				require.Equal(t, flat, gjson.Get(captured.lastReq.Header.Get("x-codex-turn-metadata"), "turn_started_at_unix_ms").Int())
 			}
 		})
@@ -289,7 +289,7 @@ func TestCodexSnapshotTimestampPresenceAndTypes(t *testing.T) {
 	for _, value := range []string{`"2000"`, `2000`, `null`, `true`, `{}`, `""`} {
 		for _, rawPath := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/raw=%v", value, rawPath), func(t *testing.T) {
-				ids := &codexFingerprintIDs{mode: codexFingerprintCockpit, turnID: "turn", turnIDPresent: true, turnStartedAtUnixMS: 1000}
+				ids := &codexFingerprintIDs{mode: codexFingerprintCockpit, turnID: "turn", turnIDPresent: true, turnStartedAtUnixMS: 1000, turnStartedAtPresent: true}
 				body := []byte(`{"client_metadata":{"turn_started_at_unix_ms":` + value + `,"x-codex-turn-metadata":"{}"}}`)
 				var result []byte
 				if rawPath {
@@ -315,7 +315,7 @@ func TestCodexSnapshotTimestampPresenceAndTypes(t *testing.T) {
 			})
 		}
 	}
-	ids := &codexFingerprintIDs{mode: codexFingerprintCockpit, turnID: "turn", turnIDPresent: true, turnStartedAtUnixMS: 1000}
+	ids := &codexFingerprintIDs{mode: codexFingerprintCockpit, turnID: "turn", turnIDPresent: true, turnStartedAtUnixMS: 1000, turnStartedAtPresent: true}
 	decoded := map[string]any{"client_metadata": map[string]any{"x-codex-turn-metadata": "{}"}}
 	applyCodexFingerprintClientMetadata(decoded, ids)
 	client, valid := decoded["client_metadata"].(map[string]any)
@@ -334,8 +334,8 @@ func TestCodexSnapshotWebSocketTimestampCarriers(t *testing.T) {
 	require.NoError(t, err)
 	result, _, err := applyCodexFingerprintClientMetadataRaw(next, current)
 	require.NoError(t, err)
-	require.EqualValues(t, 1000, gjson.GetBytes(result, "client_metadata.turn_started_at_unix_ms").Int())
-	require.EqualValues(t, 1000, gjson.Get(gjson.GetBytes(result, "client_metadata.x-codex-turn-metadata").String(), "turn_started_at_unix_ms").Int())
+	require.EqualValues(t, 2000, gjson.GetBytes(result, "client_metadata.turn_started_at_unix_ms").Int())
+	require.EqualValues(t, 2000, gjson.Get(gjson.GetBytes(result, "client_metadata.x-codex-turn-metadata").String(), "turn_started_at_unix_ms").Int())
 	require.Equal(t, first.turnID, current.turnID)
 	require.Equal(t, "ws-key-new", gjson.GetBytes(result, "prompt_cache_key").String())
 }

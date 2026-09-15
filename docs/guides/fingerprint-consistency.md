@@ -43,12 +43,12 @@ ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理�
 账号
 └─ 稳定 installation/device
    └─ 稳定主 session
-      ├─ 对话 A → 稳定 thread/window/cache key → 多个 turn
-      ├─ 对话 B → 稳定 thread/window/cache key → 多个 turn
-      └─ 对话 C → 稳定 thread/window/cache key → 多个 turn
+      ├─ 对话 A → 稳定 thread/window/cache key → 客户端 turn 原值
+      ├─ 对话 B → 稳定 thread/window/cache key → 客户端 turn 原值
+      └─ 对话 C → 稳定 thread/window/cache key → 客户端 turn 原值
 ```
 
-所有稳定值都在账号作用域内派生。同一个客户端对话切换到另一个上游账号时，新账号获得自己的 installation、session、thread 和缓存键，不直接复用旧账号的上游身份。由于这也会切换上游缓存域，只有确实需要兼容旧 Cockpit 行为时才应启用。
+installation、session、thread、window 和缺省缓存键在账号作用域内派生。同一个客户端对话切换到另一个上游账号时，新账号获得自己的这些上游身份，不直接复用旧账号的缓存域。`turn_id`、`parent_turn_id`、`root_turn_id` 与客户端提供的开始时间不参与 Cockpit 收敛，按当前 HTTP 请求或 WS 帧透传；字段缺失时保持缺失。由于身份收敛仍会切换上游缓存域，只有确实需要兼容 Cockpit 行为时才应启用。
 
 ## TLS、UA 与 HTTP 协议
 

@@ -141,8 +141,8 @@ func TestAuditAssocWindowRollbackIdentity(t *testing.T) {
 	}
 }
 
-// 边界契约：首笔未带时间时的服务端兜底，不应被误认成客户端首次有效时间。
-func TestAuditAssocFirstValidTimestamp(t *testing.T) {
+// Cockpit 不补造开始时间；后续请求首次提供有效值时按客户端原值发送。
+func TestAuditAssocTimestampPassthrough(t *testing.T) {
 	for _, raw := range []bool{false, true} {
 		t.Run(fmt.Sprint(raw), func(t *testing.T) {
 			account := newTestOAuthAccount(998000+codexSnapshotTestAccountID.Add(1),
@@ -152,9 +152,9 @@ func TestAuditAssocFirstValidTimestamp(t *testing.T) {
 				auditAssocBody(t, auditAssocRoot, auditAssocRoot, auditAssocTurn, "01993000-0000-7000-8000-000000000221", 0, map[string]any{"turn_started_at_unix_ms": nil}))
 			second := auditAssocForward(t, account, repo,
 				auditAssocBody(t, auditAssocRoot, auditAssocRoot, auditAssocTurn, "01993000-0000-7000-8000-000000000221", 0, nil))
-			firstTime := gjson.Get(first.lastReq.Header.Get("x-codex-turn-metadata"), "turn_started_at_unix_ms").Int()
+			firstValue := gjson.Get(first.lastReq.Header.Get("x-codex-turn-metadata"), "turn_started_at_unix_ms")
 			secondTime := gjson.Get(second.lastReq.Header.Get("x-codex-turn-metadata"), "turn_started_at_unix_ms").Int()
-			t.Logf("FIRST_VALID_TIME server_fallback_reused=%v client_first_valid_used=%v", firstTime == secondTime, secondTime == 1789100000000)
+			require.False(t, firstValue.Exists(), "缺失的客户端时间不得由网关补造")
 			require.Equal(t, int64(1789100000000), secondTime, "首次有效客户端时间被之前的兜底缓存遮蔽")
 		})
 	}

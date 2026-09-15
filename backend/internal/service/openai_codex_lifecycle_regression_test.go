@@ -27,8 +27,8 @@ func (repo *auditLifecycleRepo) UpdateExtra(ctx context.Context, id int64, updat
 	return repo.auditDetachedIdentityRepo.UpdateExtra(ctx, id, updates)
 }
 
-// 同窗口新字符串 turn 失败后，重试仍须提交，且只在成功后推进连接状态。
-func TestAuditWSFailedTurnCommitRetried(t *testing.T) {
+// 同窗口只切换客户端 turn 时不生成持久绑定，也不触发数据库读写。
+func TestAuditWSTurnPassthroughDoesNotPersistBindings(t *testing.T) {
 	account := newTestOAuthAccount(2998000+codexSnapshotTestAccountID.Add(1),
 		map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	t.Cleanup(func() { auditDropIdentityHotState(account.ID) })
@@ -41,25 +41,22 @@ func TestAuditWSFailedTurnCommitRetried(t *testing.T) {
 	require.False(t, account.codexIdentityBindingsDirty)
 	state := newCodexWebSocketFingerprintState(account, first, nil, body)
 	body = auditAssocBody(t, auditAssocRoot, auditAssocRoot, "second-string", auditAssocChild, 0, nil)
+	reads, writes := repo.reads, repo.writes
 	repo.failWrite = true
-	_, err = state.prepare(context.Background(), repo, body)
-	require.Error(t, err)
-	require.Same(t, first, state.current)
-	require.True(t, account.codexIdentityBindingsDirty)
-	repo.failWrite = false
 	second, err := state.prepare(context.Background(), repo, body)
 	require.NoError(t, err)
 	require.False(t, account.codexIdentityBindingsDirty)
-	require.True(t, auditDurableContainsTurn(repo.stored, second.turnID))
-	reads, writes := repo.reads, repo.writes
+	require.Equal(t, "second-string", second.turnID)
+	require.Equal(t, reads, repo.reads)
+	require.Equal(t, writes, repo.writes)
 	_, err = state.prepare(context.Background(), repo, body)
 	require.NoError(t, err)
 	require.Equal(t, reads, repo.reads, "热帧不应增加数据库读取")
 	require.Equal(t, writes, repo.writes, "热帧不应反复写同一绑定")
 }
 
-// 同 turn 的兜底、首次有效值、后续不同值、再缺省必须按同一生命周期处理。
-func TestAuditWSFirstValidTimestampLifecycle(t *testing.T) {
+// Cockpit 每帧透传本帧开始时间；后续不同值和缺省都不读取旧生命周期缓存。
+func TestAuditWSTimestampPassthrough(t *testing.T) {
 	account := newTestOAuthAccount(2998000+codexSnapshotTestAccountID.Add(1),
 		map[string]any{codexFingerprintModeExtraKey: "cockpit"})
 	t.Cleanup(func() { auditDropIdentityHotState(account.ID) })
@@ -75,12 +72,17 @@ func TestAuditWSFirstValidTimestampLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	state := newCodexWebSocketFingerprintState(account, first, nil, body)
 	const valid = int64(1789100000000)
-	for i, value := range []any{valid, valid + 999, nil} {
+	for i, testCase := range []struct {
+		value   any
+		expect  int64
+		present bool
+	}{{valid, valid, true}, {valid + 999, valid + 999, true}, {nil, 0, false}} {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			reads, writes := repo.reads, repo.writes
-			next, err := state.prepare(context.Background(), repo, makeBody(value))
+			next, err := state.prepare(context.Background(), repo, makeBody(testCase.value))
 			require.NoError(t, err)
-			require.Equal(t, valid, next.turnStartedAtUnixMS)
+			require.Equal(t, testCase.expect, next.turnStartedAtUnixMS)
+			require.Equal(t, testCase.present, next.turnStartedAtPresent)
 			require.Equal(t, first.turnID, next.turnID)
 			require.Equal(t, reads, repo.reads)
 			require.Equal(t, writes, repo.writes)
