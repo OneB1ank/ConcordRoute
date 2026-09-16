@@ -29,7 +29,7 @@ func TestOpenAISemanticTTFTHTTP(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			InitTTFTStageTiming(c, true)
 			reader, writer := io.Pipe()
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 			created := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_semantic\"}}\n\n"
 			empty := "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n\n"
 			content := "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"summary\"}\n\n"
@@ -38,7 +38,7 @@ func TestOpenAISemanticTTFTHTTP(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				defer writer.Close()
+				defer func() { _ = writer.Close() }()
 				_, _ = io.WriteString(writer, created+empty)
 				time.Sleep(160 * time.Millisecond)
 				_, _ = io.WriteString(writer, content+terminal)
