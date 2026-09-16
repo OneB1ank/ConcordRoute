@@ -25,6 +25,7 @@ import (
 type openaiStreamingResult struct {
 	usage                *OpenAIUsage
 	firstTokenMs         *int
+	semanticFirstTokenMs *int
 	responseID           string
 	responseBindingEvent string
 	imageCount           int
@@ -112,8 +113,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	var firstTokenMs *int
+	var semanticFirstTokenMs *int
 	// SSE 载荷只有在事件边界完成 flush 后才对客户端可见。待确认标记与 firstTokenMs 分离，
-	// 使持久化 TTFT 表示网关写出时刻，而非承诺客户端已经收到。
+	// 使真实首内容样本表示网关写出时刻；使用记录另选语义样本，二者均不承诺客户端已收到。
 	firstVisibleOutputPendingFlush := false
 	firstSSEEventObserved := false
 	firstOutputProgressObserved := false
@@ -356,6 +358,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		return &openaiStreamingResult{
 			usage:                usage,
 			firstTokenMs:         firstTokenMs,
+			semanticFirstTokenMs: semanticFirstTokenMs,
 			responseID:           responseID,
 			responseBindingEvent: responseBindingEvent,
 			imageCount:           imageCounter.Count(),
@@ -641,6 +644,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
+			recordOpenAISemanticFirstTokenMs(&semanticFirstTokenMs, startTime, dataBytes, eventType)
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			// 首内容已经完成写出后，不再为后续每个大事件重复进行首字分类。
 			startsVisibleOutput := firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType)
@@ -683,7 +687,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 
-			// 事件边界 flush 完成后再记录首字，使指标与下游客户端实际可见时间一致。
+			// 事件边界 flush 完成后再记录真实首内容，不受展示用语义样本影响。
 			if !guardFirstOutput && firstTokenMs == nil && startsVisibleOutput {
 				firstVisibleOutputPendingFlush = true
 				stopFirstOutputTimer()

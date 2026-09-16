@@ -6,40 +6,63 @@
 本项目已有 API Key 两级认证缓存、OpenAI access token 缓存、OAuth 刷新互斥与后台刷新，以及部分运行配置缓存。
 缓存失效、凭据接近过期、存储变慢、并发排队或故障重试仍可能增加等待；直接跳过鉴权或刷新不是本轮方案。
 
-本轮确认并修正：
+已有的真实首内容测量与热路径优化：
 
 1. Responses 转 Chat Completions、Responses 转 Messages 以及 Anthropic 透传/桥接路径把首个 `data:` 当作首 token；原生 Chat 还会把角色帧、空增量或结束帧算入首 token。
 2. WS 的部分计时分支仅看事件类型，空 `.delta` / `.done` 也会产生首 token 样本。
 3. OpenAI Fast 策略热路径缺少跨请求缓存，携带相应 `service_tier` 的连续策略评估重复读取设置表。
 
-## 三种时间不要混用
+## 四种时间不要混用
 
 | 指标 | 实际含义 |
 | --- | --- |
 | TTFB | 首个响应字节到达；可能只有 HTTP 头、SSE 心跳或响应创建通知 |
-| 本项目首内容/TTFT | 当前转发尝试开始至首个有内容事件的计时点；HTTP Responses/原始 Chat 以网关写出为准，WS/其它协议仍按各自事件计时；内容不仅是最终答案 |
+| 使用记录中的首字 `first_token_ms` | OpenAI 原生 Responses HTTP（普通/透传）与 WS 的新记录优先使用首语义事件；空 reasoning item、空文本增量也可计入，并非实际文字到达 |
+| 内部真实首内容 `OpenAIForwardResult.FirstTokenMs` | 当前转发尝试开始至首个有内容事件的计时点；HTTP Responses/原始 Chat 以网关写出为准，WS/其它协议仍按各自事件计时；内容不仅是最终答案 |
 | 用户端首内容耗时 | 从客户端发起调用到客户端收到可展示内容，还包含客户端网络、入口处理、调度等待、之前失败尝试、回程和客户端解析 |
 
 HTTP 的 `startTime` 在转发方法内建立，WS 按各自转发尝试/轮次建立。
 HTTP 的 Flush 完成不代表入口反代已经释放缓冲，也不代表客户端已经收到或渲染。
-现有 `FirstTokenMs` 不是完整端到端监控，早于转发入口的鉴权、排队和跨账号失败尝试未必包含在内。
-本轮没有改变计时起点，避免把客户端耗时混入调度器使用的账号反馈。
+内部 `FirstTokenMs` 不是完整端到端监控，早于转发入口的鉴权、排队和跨账号失败尝试未必包含在内。
+首语义和首内容沿用同一调用方的计时起点，不改变生命周期。
 
-没有可识别内容的流保持 `FirstTokenMs=nil`，界面显示“未记录”并解释缺失原因，
+特别地，WS passthrough relay 的连接级样本从 relay 开始计时，但逐轮使用记录沿用既有的
+首个带 response ID 的上游事件作为起点，未包含请求发出到该事件之前的等待。
+例如 relay 开始后 5 秒收到 `response.created`、5.5 秒收到空推理结构，连接级语义样本为
+5.5 秒，逐轮使用记录为 0.5 秒；真实首内容与总耗时也继续沿用各自原有起点。
+这次没有调整该历史边界，因此逐轮 WS passthrough 数值不宜直接与 HTTP `Forward()` 区间比较。
+
+原生 Responses 另外记录 `SemanticFirstTokenMs`。`RecordUsage` 仅在 OpenAI 账号的流式/WS
+使用记录入库时优先选它，不覆盖转发结果里的真实首内容。没有语义样本的旧调用方以及
+其它平台/协议沿用首内容值。诊断阶段 `first_content_received` 与 Flush 时间仍记录实际内容，
+账号调度反馈也仍读取原始 `FirstTokenMs`，不因展示口径提前而改变其采样。
+
+首语义判断与 HTTP/WS 的转发、首输出超时、故障转移和计费相互独立。
+空推理/消息 item、合法的空 content part 和字符串型空 delta 可以触发首语义；
+`response.created`、`response.in_progress`、心跳、错误、状态/用量终态不触发。
+终态携带实际正文时仍允许内容兜底；异常 JSON 或异常载荷类型不制造样本。
+例如空推理结构在 0.5 秒、摘要在 8 秒到达，使用记录显示 0.5 秒，
+真实首内容仍约 8 秒。这是计时口径变化，不是模型或传输提速。
+
+没有可识别内容的流内部保持 `FirstTokenMs=nil`；若首语义也未观测，界面显示“未记录”，
 不人为填成 0 或总耗时。明确为非流式且未记录独立首内容时间时显示“不适用”；
 已有首字（包括 0ms）仍按数值展示，历史空值不追溯猜测回填。
+下述实际文本、工具参数和加密内容规则描述的是保留的真实首内容，而非新增语义事件样本。
 只在终止事件里返回实际内容的流，可以在该内容到达时产生样本；只有 usage/状态的终止事件不产生样本。
 `response.refusal.done`、拒绝内容 part/item 与 `response.incomplete` 中的非空 output
 也按实际可用内容识别，普通、透传与 WS 复用同一分类器；纯加密推理或只有用量不产生样本。
 工具发现调用 `tool_search_call` 的 `arguments` 使用对象；已填充的对象参数也属于首内容，
 HTTP 普通/透传与 WS 使用同一识别规则，支持 item 事件和终态 output。
-空对象、缺省参数及纯结构事件仍不产生首字样本；其它工具的异常对象参数不因此放宽。
+空对象、缺省参数及纯结构事件仍不产生真实首内容样本；其它工具的异常对象参数不因此放宽。
 这只补齐计时识别，不改变转发的工具声明、参数、正文或用量，也不拿总耗时回填首字。
-旧用量记录不追溯改写。协议统一后某些端点的新首字数值可能上升，这表示口径更准确，并不表示发送变慢。
+旧用量记录不追溯改写；没有新增数据库列或后台回填任务。
+历史与新记录可能采用不同口径，跨版本趋势应分段比较。界面为数值添加解释提示，
+使用记录、导出及基于该字段的监控/聚合会反映新口径，不能作为实际等待改善的证明。
 
 ## 本轮实现边界
 
 - HTTP Responses 的已有内容判断抽到 `internal/pkg/openai/stream_output.go`，与 WS 共用。
+- 原生 Responses HTTP/WS 共用独立的首语义分类器；只扫描至首个匹配事件，之后跳过重复分类。
 - 原生 Chat 按 `delta` 的真实内容判断，角色、空对象、usage 和结束标记不算内容。
 - Anthropic Responses/Chat/透传路径按 `content_block_delta` 的文本、思考或工具参数判断；`message_start`、usage、签名和空增量不算内容。
 - Gemini、Bedrock 与图片流按实际文本、工具参数、图片数据或有效输出 part 判断；生命周期和 usage 事件不产生 TTFT。
@@ -48,7 +71,7 @@ HTTP 普通/透传与 WS 使用同一识别规则，支持 item 事件和终态 
 - WS 文本终态缺少响应 ID 时保留活动轮次的耗时和首内容样本，响应 ID 仍保持缺失；
   后续轮次的无 ID 内容事件使用本轮计时，不复用连接首轮的样本。
 - 没有修改 UA、TLS、HTTP/2 配置、`prompt_cache_key` 或窗口链生成逻辑。
-- 调度器原本会使用 `FirstTokenMs`：修正样本后，其后续评分可能随真实数值变化。这是统计准确化的间接影响，而不是新增调度策略。
+- 调度器继续使用内部首内容 `FirstTokenMs`；仅使用记录的展示值选择首语义样本。
 
 ## Fast 策略缓存
 
@@ -72,7 +95,7 @@ HTTP 普通/透传与 WS 使用同一识别规则，支持 item 事件和终态 
 
 ```bash
 go test -tags unit ./internal/service ./internal/service/openai_ws_v2 ./internal/pkg/openai \
-  -run 'TestOpenAITTFT|TestOpenAIChatTTFT|TestOpenAIFastPolicy|TestRelayTTFT|TestOpenAIResponsesTTFT'
+  -run 'TestOpenAITTFT|TestOpenAIChatTTFT|TestOpenAIFastPolicy|TestRelay.*TTFT|TestOpenAIResponsesTTFT|TestOpenAISemanticTTFT|TestStreamSemanticOutput'
 
 go test -tags unit ./internal/service -run '^$' \
   -bench '^BenchmarkOpenAIFastPolicyHotPath$' -benchtime=100x
@@ -86,6 +109,8 @@ go test -tags unit ./internal/service -run '^$' \
 - 并发冷读去重、配置保存、慢旧查询与保存竞态、返回值隔离；
 - 请求取消、存储失败、缓存到期、实例隔离；
 - 原有原生 Responses 首内容回归与相关鉴权/令牌测试。
+- 首语义与首内容分离、0.5 秒/8 秒时序、HTTP 普通/透传原帧一致性、WS 跨轮次隔离，
+  以及真实 `RecordUsage` 入库值与调度用结果不互相覆盖。
 
 性能基准为设置查询注入 2ms 延迟，比较预热后每次策略评估的时间和 `db_reads/op`。
 它衡量被删除的配置读取开销，不代表上游生成、真实数据库、生产网络或整站 p95 的提升。

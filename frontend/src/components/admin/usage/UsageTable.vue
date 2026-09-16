@@ -224,7 +224,7 @@
             ></span>
             <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
-              <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
+              <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]" :title="t('usage.latencyFirstTokenHint')">{{ formatDuration(row.first_token_ms) }}</span>
               <span
                 v-else-if="row.request_type === 'sync' || (row.stream === false && resolveUsageRequestType(row) === 'sync')"
                 class="text-gray-400 dark:text-gray-500"

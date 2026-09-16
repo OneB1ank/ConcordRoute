@@ -73,7 +73,7 @@ func chatCompletionsChunkHasVisibleOutput(root gjson.Result) bool {
 	return false
 }
 
-// 结构进度可以提交当前 attempt 并解除首输出故障转移，但只有客户端可用内容才开始计算 TTFT。
+// 真实首内容只识别客户端可用内容；使用记录的首语义事件由独立函数观测，不改变此判断。
 //
 // StreamDataStartsVisibleOutputBytes 是热路径版本。调用方已经持有 SSE 字节帧时，
 // 直接处理 []byte 可避免额外字符串分配，适用于大型 Responses 事件的 HTTP/WS 路径。
@@ -91,6 +91,49 @@ func StreamDataStartsVisibleOutputBytes(data []byte, eventType string) bool {
 		return false
 	}
 	return streamDataStartsVisibleOutput(streamOutputJSON{bytes: trimmed}, eventType)
+}
+
+// StreamDataStartsSemanticOutputBytes 识别首个 Responses 语义事件，用于使用记录展示。
+// 空推理结构、空文本增量也表示输出已开始；前导状态、心跳及纯用量终态不算。
+// 它不替代首内容判断，也不参与提交响应、重试或超时决策。
+func StreamDataStartsSemanticOutputBytes(data []byte, eventType string) bool {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !gjson.ValidBytes(trimmed) {
+		return false
+	}
+	payload := streamOutputJSON{bytes: trimmed}
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		eventType = strings.TrimSpace(payload.get("type").String())
+	}
+	switch eventType {
+	case "response.created", "response.in_progress", "response.queued",
+		"response.failed", "response.cancelled", "response.canceled", "error":
+		return false
+	case "response.completed", "response.done", "response.incomplete":
+		// 只有终态携带实际内容时兜底计时，避免把总耗时填成首字。
+		return streamDataStartsVisibleOutput(payload, eventType)
+	case "response.output_item.added", "response.output_item.done":
+		// 只取嵌套类型，避免复制可能携带大块密文的整个 item。
+		itemType := payload.get("item.type")
+		return itemType.Type == gjson.String && itemType.String() != ""
+	case "response.content_part.added", "response.content_part.done",
+		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		partType := payload.get("part.type")
+		return partType.Type == gjson.String && partType.String() != ""
+	case "response.output_text.delta", "response.reasoning_text.delta",
+		"response.reasoning_summary_text.delta", "response.function_call_arguments.delta",
+		"response.custom_tool_call_input.delta", "response.refusal.delta",
+		"response.audio.delta", "response.audio_transcript.delta",
+		"response.output_audio.delta", "response.output_audio_transcript.delta":
+		return payload.get("delta").Type == gjson.String
+	}
+	// 仅已知输出增量允许空字符串，错误或未知 delta 不借用宽泛的真实内容兼容判断。
+	if !strings.HasPrefix(eventType, "response.") || strings.HasSuffix(eventType, ".delta") {
+		return false
+	}
+	// 其它事件继续要求实际内容，不因未知事件名或异常载荷提前制造样本。
+	return streamDataStartsVisibleOutput(payload, eventType)
 }
 
 // 两种原始载体共享事件语义，不为复用逻辑把大字节帧整体转换成字符串。

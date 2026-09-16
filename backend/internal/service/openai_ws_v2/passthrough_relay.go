@@ -36,6 +36,7 @@ type RelayResult struct {
 	TerminalEventType       string
 	TerminalResponseBody    []byte
 	FirstTokenMs            *int
+	SemanticFirstTokenMs    *int // 展示用首语义事件，与真实首内容分离。
 	Duration                time.Duration
 	ClientToUpstreamFrames  int64
 	UpstreamToClientFrames  int64
@@ -50,6 +51,7 @@ type RelayTurnResult struct {
 	TerminalResponseBody []byte
 	Duration             time.Duration
 	FirstTokenMs         *int
+	SemanticFirstTokenMs *int
 }
 
 type RelayExit struct {
@@ -107,6 +109,7 @@ type relayState struct {
 	terminalEventType    string
 	terminalResponseBody []byte
 	firstTokenMs         *int
+	semanticFirstTokenMs *int
 	turnTimingByID       map[string]*relayTurnTiming
 	activeTurn           *relayTurnTiming
 }
@@ -119,18 +122,20 @@ type relayExitSignal struct {
 }
 
 type observedUpstreamEvent struct {
-	terminal     bool
-	eventType    string
-	responseID   string
-	responseBody []byte
-	usage        Usage
-	duration     time.Duration
-	firstToken   *int
+	terminal           bool
+	eventType          string
+	responseID         string
+	responseBody       []byte
+	usage              Usage
+	duration           time.Duration
+	firstToken         *int
+	semanticFirstToken *int
 }
 
 type relayTurnTiming struct {
-	startAt      time.Time
-	firstTokenMs *int
+	startAt              time.Time
+	firstTokenMs         *int
+	semanticFirstTokenMs *int
 }
 
 func Relay(
@@ -743,8 +748,8 @@ func observeUpstreamMessage(
 		state.consumePendingTurn()
 	}
 
-	// 仅统计采用内容判断；不修改透传帧、流控制或终止事件分类。
-	// 已有首内容样本的轮次不再扫描后续大帧，避免统计本身增加转发开销。
+	// 两种首事件分类仅用于统计；不修改透传帧、流控制或终止事件分类。
+	// 每种样本记录后分别停止对应扫描，避免后续大帧重复付出分类开销。
 	turnTiming := state.activeTurn
 	if responseID != "" {
 		turnTiming = state.turnTimingByID[responseID]
@@ -754,20 +759,15 @@ func observeUpstreamMessage(
 		needsFirstToken = true
 	}
 	visibleOutput := needsFirstToken && openai.StreamDataStartsVisibleOutputBytes(message, eventType)
-	if state.firstTokenMs == nil && visibleOutput {
-		ms := int(now.Sub(startAt).Milliseconds())
-		if ms < 0 {
-			ms = 0
-		}
-		state.firstTokenMs = &ms
-	}
+	needsSemantic := state.semanticFirstTokenMs == nil ||
+		(turnTiming != nil && turnTiming.semanticFirstTokenMs == nil) || (responseID != "" && turnTiming == nil)
+	semanticOutput := needsSemantic && openai.StreamDataStartsSemanticOutputBytes(message, eventType)
+	recordRelayFirstTokenMs(&state.firstTokenMs, startAt, now, visibleOutput)
+	recordRelayFirstTokenMs(&state.semanticFirstTokenMs, startAt, now, semanticOutput)
 	// 无 ID 内容使用活动轮次，不受连接级首字已经产生的影响。
-	if visibleOutput && turnTiming != nil && turnTiming.firstTokenMs == nil {
-		tms := int(now.Sub(turnTiming.startAt).Milliseconds())
-		if tms < 0 {
-			tms = 0
-		}
-		turnTiming.firstTokenMs = &tms
+	if turnTiming != nil {
+		recordRelayFirstTokenMs(&turnTiming.firstTokenMs, turnTiming.startAt, now, visibleOutput)
+		recordRelayFirstTokenMs(&turnTiming.semanticFirstTokenMs, turnTiming.startAt, now, semanticOutput)
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
 	observed := observedUpstreamEvent{
@@ -777,12 +777,9 @@ func observeUpstreamMessage(
 	}
 	if responseID != "" {
 		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && visibleOutput {
-			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
-			if ms < 0 {
-				ms = 0
-			}
-			turnTiming.firstTokenMs = &ms
+		if turnTiming != nil {
+			recordRelayFirstTokenMs(&turnTiming.firstTokenMs, turnTiming.startAt, now, visibleOutput)
+			recordRelayFirstTokenMs(&turnTiming.semanticFirstTokenMs, turnTiming.startAt, now, semanticOutput)
 		}
 	}
 	if !isTerminalEvent(eventType) {
@@ -807,6 +804,7 @@ func observeUpstreamMessage(
 		}
 		observed.duration = duration
 		observed.firstToken = openAIWSRelayCloneIntPtr(completedTiming.firstTokenMs)
+		observed.semanticFirstToken = openAIWSRelayCloneIntPtr(completedTiming.semanticFirstTokenMs)
 	}
 	return observed
 }
@@ -833,6 +831,7 @@ func emitTurnComplete(
 		TerminalResponseBody: cloneBytes(observed.responseBody),
 		Duration:             observed.duration,
 		FirstTokenMs:         openAIWSRelayCloneIntPtr(observed.firstToken),
+		SemanticFirstTokenMs: openAIWSRelayCloneIntPtr(observed.semanticFirstToken),
 	})
 }
 
@@ -951,6 +950,17 @@ func openAIWSRelayCloneIntPtr(v *int) *int {
 	return &cloned
 }
 
+// 两种统计共用只写一次和负值钳制，不改变轮次的起止/关联规则。
+func recordRelayFirstTokenMs(value **int, started, observed time.Time, matches bool) {
+	if *value == nil && matches {
+		ms := int(observed.Sub(started).Milliseconds())
+		if ms < 0 {
+			ms = 0
+		}
+		*value = &ms
+	}
+}
+
 func parseUsageAndAccumulate(
 	state *relayState,
 	message []byte,
@@ -1066,6 +1076,7 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.TerminalEventType = state.terminalEventType
 	result.TerminalResponseBody = cloneBytes(state.terminalResponseBody)
 	result.FirstTokenMs = state.firstTokenMs
+	result.SemanticFirstTokenMs = openAIWSRelayCloneIntPtr(state.semanticFirstTokenMs)
 }
 
 func isDisconnectError(err error) bool {

@@ -285,6 +285,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	var usage *OpenAIUsage
 	var firstTokenMs *int
+	var semanticFirstTokenMs *int
 	responseID := ""
 	responseBindingEvent := ""
 	imageCount := 0
@@ -297,6 +298,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		usage = result.usage
 		firstTokenMs = result.firstTokenMs
+		semanticFirstTokenMs = result.semanticFirstTokenMs
 		responseID = strings.TrimSpace(result.responseID)
 		responseBindingEvent = result.responseBindingEvent
 		imageCount = result.imageCount
@@ -339,6 +341,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		ResponseBody:                cloneDataSharingRequestBody(responseBody),
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                firstTokenMs,
+		SemanticFirstTokenMs:        semanticFirstTokenMs,
 	}
 	if imageCount > 0 {
 		forwardResult.ImageCount = imageCount
@@ -857,6 +860,7 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 type openaiStreamingResultPassthrough struct {
 	usage                *OpenAIUsage
 	firstTokenMs         *int
+	semanticFirstTokenMs *int
 	responseID           string
 	responseBindingEvent string
 	imageCount           int
@@ -1364,6 +1368,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
+	var semanticFirstTokenMs *int
 	firstVisibleOutputPendingFlush := false
 	responseID := ""
 	clientDisconnected := false
@@ -1447,6 +1452,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		return &openaiStreamingResultPassthrough{
 			usage:                usage,
 			firstTokenMs:         firstTokenMs,
+			semanticFirstTokenMs: semanticFirstTokenMs,
 			responseID:           responseID,
 			responseBindingEvent: responseBindingEvent,
 			imageCount:           imageCounter.Count(),
@@ -1626,6 +1632,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				openAIResponsesCompletedEventIsEmpty(dataBytes, usage) {
 				return resultWithUsage(), newOpenAIResponsesEmptyCompletedFailoverError(c, account, upstreamRequestID)
 			}
+			recordOpenAISemanticFirstTokenMs(&semanticFirstTokenMs, startTime, dataBytes, eventType)
 			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(dataBytes, eventType) {
 				markStreamStage("first_content_received")
 				firstVisibleOutputPendingFlush = true

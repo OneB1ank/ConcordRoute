@@ -374,6 +374,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
+	var semanticFirstTokenMs *int
 	responseID := ""
 	var finalResponse []byte
 	responseAccumulator := apicompat.NewBufferedResponseAccumulator()
@@ -571,6 +572,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			terminalEventCount++
 		}
 		// 首内容统计独立于协议进度分类，空 delta 不应提前触发 TTFT。
+		recordOpenAISemanticFirstTokenMs(&semanticFirstTokenMs, startTime, message, eventType)
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(message, eventType) {
 			recordFirstTokenMs(&firstTokenMs, startTime)
 		}
@@ -896,6 +898,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		ResponseBody:                cloneDataSharingRequestBody(finalResponse),
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                firstTokenMs,
+		SemanticFirstTokenMs:        semanticFirstTokenMs,
 		UpstreamWarning:             upstreamWarning,
 	}, nil
 }

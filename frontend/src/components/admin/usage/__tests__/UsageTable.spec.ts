@@ -48,6 +48,7 @@ const messages: Record<string, string> = {
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
   'usage.latencyFirstTokenNotApplicable': 'Not applicable',
+  'usage.latencyFirstTokenHint': 'First semantic event; actual text may arrive later.',
   'usage.latencyFirstTokenNotApplicableHint': 'No independent first-content sample for this non-streaming request.',
   'usage.latencyFirstTokenNotRecorded': 'Not recorded',
   'usage.latencyFirstTokenNotRecordedHint': 'No first-content timing was recorded; this is not zero latency.',
@@ -131,6 +132,22 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable first-content timing', () => {
+  // 显示新口径但保留总耗时，并明确提示并非实际文字的到达时间。
+  it('explains semantic timing without changing the recorded duration', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, first_token_ms: 500, duration_ms: 9000, stream: true }],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const cell = wrapper.get('[data-testid="latency"]')
+    expect(cell.text()).toContain('500ms')
+    expect(cell.text()).toContain('9.00s')
+    expect(cell.get('[title]').attributes('title')).toBe(messages['usage.latencyFirstTokenHint'])
+  })
+
   // 空首字应说明统计缺省，不用总耗时冒充；已记录的零毫秒也要显示。
   it.each([
     { request_type: 'sync', stream: false, first_token_ms: null, text: 'Not applicable', hint: messages['usage.latencyFirstTokenNotApplicableHint'] },

@@ -328,6 +328,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	usage := OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
+	var semanticFirstTokenMs *int
 	reqStream := openAIWSPayloadBoolFromRaw(body, "stream", true)
 	eventCount := 0
 	tokenEventCount := 0
@@ -358,6 +359,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			ResponseHeaders:             cloneHeader(resp.Header),
 			Duration:                    time.Since(turnStart),
 			FirstTokenMs:                firstTokenMs,
+			SemanticFirstTokenMs:        semanticFirstTokenMs,
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
@@ -416,6 +418,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			tokenEventCount++
 		}
 		// HTTP 桥接为 WS 时保持首内容统计口径，结构进度仍照常转发。
+		recordOpenAISemanticFirstTokenMs(&semanticFirstTokenMs, turnStart, upstreamMessage, eventType)
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(upstreamMessage, eventType) {
 			recordFirstTokenMs(&firstTokenMs, turnStart)
 		}

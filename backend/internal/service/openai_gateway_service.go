@@ -273,14 +273,16 @@ type OpenAIForwardResult struct {
 	DataShareSessionID    string // 数据共享聚合使用的稳定会话标识。
 	Duration              time.Duration
 	FirstTokenMs          *int
-	ClientDisconnect      bool
-	ImageCount            int
-	ImageSize             string
-	ImageInputSize        string
-	ImageOutputSize       string
-	ImageOutputSizes      []string
-	ImageSizeSource       string
-	ImageSizeBreakdown    map[string]int
+	// SemanticFirstTokenMs 仅供使用记录展示；FirstTokenMs 继续为真实首内容，保留调度反馈口径。
+	SemanticFirstTokenMs *int
+	ClientDisconnect     bool
+	ImageCount           int
+	ImageSize            string
+	ImageInputSize       string
+	ImageOutputSize      string
+	ImageOutputSizes     []string
+	ImageSizeSource      string
+	ImageSizeBreakdown   map[string]int
 	// UpstreamWarning 仅在上游成功完成传输但 terminal 事件携带风控拒绝时填充。
 	UpstreamWarning *OpenAIUpstreamWarning
 	VideoCount      int

@@ -137,9 +137,17 @@ OpenAI OAuth 的 HTTP、passthrough、旧版 Compact 与 WebSocket 出站会在�
 
 WebSocket 连接池把 routing hint 视为拨号和普通复用的软亲和：优先复用相同提示建立的连接，池满时仍可在硬兼容连接上排队，显式 continuation 也不会仅因提示变化而断链。握手 beta feature 与本 fork 的 TLS fingerprint profile 仍是硬兼容键，任一变化都禁止复用，并会使尚未完成的旧目标预热拨号失效。路由诊断只记录网关推导的最终模型、规范化 tier、传输类型、账号 ID、是否生成提示和 WS 亲和决策，不记录提示头值、token 或凭据。
 
-Responses WebSocket 与 HTTP 共用首内容判断：非空 delta、完整文本或工具参数均可产生 TTFT；`response.completed`、`response.done` 以及 content part/output item 事件若携带实际文本、工具参数等内容，同样以内容到达时刻计时。仅含状态、usage 或空结构的事件不产生 TTFT，避免把纯终态耗时误记为首 token 延迟。文本终态缺少响应 ID 时保留活动轮次已观测的耗时与首内容样本，但不补造响应 ID。
+Responses WebSocket 与 HTTP 共用真实首内容判断：非空 delta、完整文本或工具参数均可产生首内容样本；`response.completed`、`response.done` 以及 content part/output item 事件若携带实际文本、工具参数等内容，同样以内容到达时刻计时。仅含状态、usage 或空结构的事件不产生真实首内容样本，避免把纯终态耗时误记为首 token 延迟。文本终态缺少响应 ID 时保留活动轮次已观测的耗时与首内容样本，但不补造响应 ID。
 
-Responses HTTP/SSE 同样区分结构进度与可见输出：`response.created`、空 reasoning item 等进度可以提交当前 attempt、解除首输出超时并关闭 pre-output failover 窗口，但不记录 TTFT；非空文本/工具 delta、完整文本或工具参数、图片结果以及终态内实际 output 才开始 TTFT。只携带 usage 的终态必须保持 TTFT 未观测。
+Responses HTTP/SSE 同样区分结构进度与可见输出：`response.created`、空 reasoning item 等进度可以提交当前 attempt、解除首输出超时并关闭 pre-output failover 窗口，但不记录真实首内容；非空文本/工具 delta、完整文本或工具参数、图片结果以及终态内实际 output 才开始首内容计时。只携带 usage 的终态保持首内容未观测。
+
+使用记录的首字展示另采用首语义事件口径：OpenAI 原生 Responses 的 HTTP 普通/透传、WS
+连接池、中继及 HTTP 桥接路径额外观测 `SemanticFirstTokenMs`，空推理 item、合法空 part
+和字符串型空 delta 均可触发；前导状态、心跳、错误及纯用量终态不计入。
+`RecordUsage` 在 OpenAI 流式/WS 记录中优先选择这个值写入 `first_token_ms`，没有样本时沿用原值。
+内部 `FirstTokenMs`、首内容阶段诊断与调度反馈保持原语义；帧转发、故障转移、身份与计费不使用新增值。
+历史使用记录不回填，其它平台、非流式以及未产生该样本的兼容协议保持原口径。
+详情见[首字指南](../guides/first-token-latency.md)。
 
 OAuth 普通 Responses 与 OAuth passthrough 保留客户端显式提供的原生 `stream_options.reasoning_summary_delivery="sequential_cutoff"`，不主动补入该字段，也不改变 `reasoning.effort` 或 `reasoning.summary`。同一对象中的 Chat 专用 `include_usage` 及其它未支持成员仍移除；未支持的值、异常类型与旧版 Compact 请求沿用原有过滤规则。仅含原生选项的透传对象保持原始字节。该规则修正参数丢失，不承诺上游更早产生摘要或降低实际推理耗时。
 

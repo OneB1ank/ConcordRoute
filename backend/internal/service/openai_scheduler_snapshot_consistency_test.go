@@ -113,6 +113,8 @@ func TestCodexSchedulerSessionAndAccountIsolation(t *testing.T) {
 						require.NotNil(t, selection.Account)
 						ids := schedulerContinuityForward(t, selection.Account, repo, body)
 						selection.ReleaseFunc()
+						// Cockpit 的回合由客户端原值透传；隔离约束只适用于映射的会话、线程和窗口。
+						require.Equal(t, gjson.GetBytes(body, "client_metadata.turn_id").String(), ids[2], "客户端回合不得因切换会话或账号而改写")
 						key := fmt.Sprintf("%d/%s", owner, session)
 						if previous, ok := baselines[key]; ok {
 							require.Equal(t, previous, ids, "同账号、同客户端会话应复用原来的整组身份")
@@ -120,6 +122,9 @@ func TestCodexSchedulerSessionAndAccountIsolation(t *testing.T) {
 							for _, other := range baselines {
 								for i := range ids {
 									require.NotEmpty(t, ids[i])
+									if i == 2 {
+										continue
+									}
 									require.NotEqual(t, other[i], ids[i], "不同会话或账号不得合并")
 								}
 							}

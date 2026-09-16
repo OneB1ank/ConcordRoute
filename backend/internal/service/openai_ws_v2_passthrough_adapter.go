@@ -1386,6 +1386,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					ResponseBody:                cloneDataSharingRequestBody(turn.TerminalResponseBody),
 					Duration:                    turn.Duration,
 					FirstTokenMs:                turn.FirstTokenMs,
+					SemanticFirstTokenMs:        turn.SemanticFirstTokenMs,
 				}
 				if normalizeOpenAIWSTerminalEvent(turn.TerminalEventType) == "response.completed" {
 					s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, turnPayload.UpstreamModel, handshakeHeaders)
@@ -1601,6 +1602,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		ResponseBody:                cloneDataSharingRequestBody(relayResult.TerminalResponseBody),
 		Duration:                    relayResult.Duration,
 		FirstTokenMs:                relayResult.FirstTokenMs,
+		SemanticFirstTokenMs:        relayResult.SemanticFirstTokenMs,
 	}
 
 	turnCount := int(completedTurns.Load())

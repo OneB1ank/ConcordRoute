@@ -966,6 +966,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		usage := OpenAIUsage{}
 		imageCounter := newOpenAIImageOutputCounter()
 		var firstTokenMs *int
+		var semanticFirstTokenMs *int
 		reqStream := openAIWSPayloadBoolFromRaw(payload, "stream", true)
 		turnPreviousResponseID := openAIWSPayloadStringFromRaw(payload, "previous_response_id")
 		turnPreviousResponseIDKind := ClassifyOpenAIPreviousResponseIDKind(turnPreviousResponseID)
@@ -1112,6 +1113,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				terminalEventCount++
 			}
 			// 与 HTTP 共用首内容判断，不改变 WS 的事件转发和重试边界。
+			recordOpenAISemanticFirstTokenMs(&semanticFirstTokenMs, turnStart, upstreamMessage, eventType)
 			if firstTokenMs == nil && openAIStreamDataStartsVisibleOutputBytes(upstreamMessage, eventType) {
 				recordFirstTokenMs(&firstTokenMs, turnStart)
 			}
@@ -1241,6 +1243,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					ResponseBody:                cloneDataSharingRequestBody(terminalResponseBody),
 					Duration:                    time.Since(turnStart),
 					FirstTokenMs:                firstTokenMs,
+					SemanticFirstTokenMs:        semanticFirstTokenMs,
 				}
 				if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 					result.wsReplayInput = replayInput
