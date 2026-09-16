@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +91,18 @@ func TestLiveEnabledForAPIKey(t *testing.T) {
 	}))
 }
 
+func TestLiveCallIdentityPreservesClientSessionHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/backend-api/codex/realtime/calls", nil)
+	context.Request.Header.Set("session-id", "root-session")
+	context.Request.Header.Set("thread-id", "child-thread")
+	identity := liveCallIdentity(context, &service.APIKey{ID: 1, UserID: 2}, 2, nil)
+	// 原生 Live 在 Header 发送根会话/线程，Body 的 session_id 是另一层语音标识。
+	require.Equal(t, "root-session", identity.ClientSessionID)
+	require.Equal(t, "child-thread", identity.ClientThreadID)
+}
+
 func TestLiveContentModerationBlocksBeforeBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	moderationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +176,18 @@ func TestLiveAttestationErrorIsExplicit(t *testing.T) {
 
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "ConcordRoute runs on macOS")
+}
+
+func TestLiveNoEligibleAccountIsNotUpstreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	// 调度尚未发送上游请求时，不能把本地缺少候选账号误报成上游 502。
+	(&OpenAIGatewayHandler{}).writeLiveCreateError(context,
+		fmt.Errorf("model unavailable: %w", service.ErrNoAvailableAccounts))
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "No eligible accounts")
+	require.NotContains(t, recorder.Body.String(), "upstream request failed")
 }
 
 func jsonPathString(t *testing.T, raw json.RawMessage, keys ...string) string {

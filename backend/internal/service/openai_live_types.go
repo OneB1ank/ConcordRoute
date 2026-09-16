@@ -53,6 +53,9 @@ type LiveCallIdentity struct {
 	SubscriptionID *int64
 	UserAgent      string
 	Originator     string
+	// 客户端原始根会话/线程提示仅用于选择证明中继，不参与出站身份映射。
+	ClientSessionID string
+	ClientThreadID  string
 	// ClientAttestationEnvelope 是 Windows Codex/Claude 客户端生成的
 	// x-oai-attestation 原始 envelope。服务端只做语法校验与加密保存，
 	// 不在 Linux 上伪造或签发设备证明。

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/config"
+	"github.com/TokenFlux/TokenRouter/internal/platform/liveattestation"
 )
 
 const liveAttestationHeader = "x-oai-attestation"
@@ -72,19 +73,32 @@ func (c *liveAttestationAES) Decrypt(ciphertext string) (string, error) {
 }
 
 func (s *OpenAIGatewayService) prepareLiveAttestation(ctx context.Context) (string, string, error) {
-	if s == nil || s.liveAttestation == nil {
+	if s == nil {
 		return "", "", &LiveAttestationUnavailableError{
-			Reason: "ConcordRoute has no platform DeviceCheck provider",
+			Reason: "Live service is unavailable",
 		}
+	}
+	// 没有提供器表示没有可附带的证明，而不是 Live 传输不可用。
+	// 上游决定账号是否需要证明；不合成成功状态，也不改变认证或账号准入。
+	if s.liveAttestation == nil {
+		return "", "", nil
+	}
+	header, err := s.liveAttestation.Generate(ctx)
+	if err != nil {
+		if errors.Is(err, liveattestation.ErrLinuxProviderMissing) ||
+			errors.Is(err, liveattestation.ErrUnsupportedPlatform) ||
+			errors.Is(err, liveattestation.ErrChatGPTAppMissing) {
+			return "", "", nil
+		}
+		return "", "", &LiveAttestationUnavailableError{Reason: err.Error()}
+	}
+	if strings.TrimSpace(header) == "" {
+		return "", "", &LiveAttestationUnavailableError{Reason: "configured provider returned an empty attestation"}
 	}
 	if s.liveAttestationCipher == nil {
 		return "", "", &LiveAttestationUnavailableError{
 			Reason: "JWT secret is required to protect the Sideband attestation",
 		}
-	}
-	header, err := s.liveAttestation.Generate(ctx)
-	if err != nil {
-		return "", "", &LiveAttestationUnavailableError{Reason: err.Error()}
 	}
 	ciphertext, err := s.liveAttestationCipher.Encrypt(header)
 	if err != nil {
@@ -98,7 +112,9 @@ func (s *OpenAIGatewayService) prepareLiveAttestation(ctx context.Context) (stri
 // prepareLiveAttestationForRequest 优先复用已经完成 app-server 协商的证明；
 // 没有内部 context 时，仅接受官方客户端已经生成的 envelope。Linux 网关
 // 不生成 Windows 客户端证明，缺少客户端 envelope 时才回退到已配置的平台
-// provider（例如 macOS DeviceCheck 或 Linux 外部 helper）。
+// provider（例如 macOS DeviceCheck 或 Linux 外部 helper）；也没有提供器时
+// 省略证明，让真实上游校验账号资格。已提供的异常证明不静默丢弃。
+// @project-doc docs/interfaces/openai_upstream.md#openai_live_runtime
 func (s *OpenAIGatewayService) prepareLiveAttestationForRequest(
 	ctx context.Context,
 	account *Account,
@@ -139,7 +155,14 @@ func (s *OpenAIGatewayService) prepareLiveAttestationForRequest(
 }
 
 func (s *OpenAIGatewayService) decryptLiveAttestation(record *LiveCallRecord) (string, error) {
-	if record == nil || strings.TrimSpace(record.AttestationCiphertext) == "" || s.liveAttestationCipher == nil {
+	if record == nil {
+		return "", ErrLiveCallNotFound
+	}
+	// 创建时未携带证明的会话，Sideband 同样省略；非空密文仍严格解密。
+	if record.AttestationCiphertext == "" {
+		return "", nil
+	}
+	if s.liveAttestationCipher == nil {
 		return "", &LiveAttestationUnavailableError{
 			Reason: "the Live call has no reusable DeviceCheck attestation",
 		}

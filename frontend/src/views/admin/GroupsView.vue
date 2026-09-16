@@ -4735,7 +4735,6 @@ const pendingLiveForm = ref<"create" | "edit" | null>(null);
 const showUnsupportedLiveConfirm = computed(
   () => pendingLiveForm.value !== null,
 );
-const liveCapability = ref<LiveCapability | null>(null);
 let liveCapabilityRequest: Promise<LiveCapability> | null = null;
 const showSortModal = ref(false);
 const submitting = ref(false);
@@ -5479,7 +5478,7 @@ const deleteConfirmMessage = computed(() => {
 });
 
 const loadLiveCapability = async () => {
-  if (liveCapability.value) return liveCapability.value;
+  // 开启时重新检查服务能力；仅合并同一时刻的在途请求。
   if (!liveCapabilityRequest) {
     liveCapabilityRequest = adminAPI.groups
       .getLiveCapability()
@@ -5488,8 +5487,7 @@ const loadLiveCapability = async () => {
         liveCapabilityRequest = null;
       });
   }
-  liveCapability.value = await liveCapabilityRequest;
-  return liveCapability.value ?? { supported: false };
+  return liveCapabilityRequest;
 };
 
 const toggleLive = async (target: "create" | "edit") => {
@@ -5499,11 +5497,7 @@ const toggleLive = async (target: "create" | "edit") => {
     return;
   }
   const capability = await loadLiveCapability();
-  if (
-    capability.supported ||
-    capability.live_client_supported ||
-    capability.client_attestation_relay
-  ) {
+  if (capability.live_transport_supported ?? capability.supported) {
     form.allow_live = true;
     return;
   }
@@ -6444,7 +6438,6 @@ const saveSortOrder = async () => {
 onMounted(() => {
   loadGroups();
   loadUnavailableFallbackGroups();
-  void loadLiveCapability();
   loadModelsListCandidates("create", 0, createForm.platform);
   document.addEventListener("click", handleClickOutside);
 });

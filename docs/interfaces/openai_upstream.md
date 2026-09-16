@@ -25,7 +25,7 @@ OAuth 账号可受 Codex CLI-only、允许客户端、agent identity、privacy s
 取消请求或预算耗尽按原有可选证明策略退出，业务请求保留原始上下文；
 账号不匹配时先跳过，拿到锁后再次校验绑定，避免排队期间串用账号。
 
-Codex app-server 的 `initialize.params.capabilities.requestAttestation=true` 会话由网关短时记录，并按 API Key、连接、账号、session/thread 隔离。客户端通过独立的 `GET /backend-api/codex/app-server` WebSocket 接入 JSON-RPC bridge；首帧必须是 `initialize`，随后上游请求由该 bridge 发出与 Codex 源码一致的 just-in-time `attestation/generate`：`{"jsonrpc":"2.0","id":N,"method":"attestation/generate","params":{}}`。响应按 JSON-RPC ID 匹配，只接受 `v1.*` opaque token，再封装为 `{"v":1,"s":0,"t":"..."}`。超时、请求失败、取消和 malformed response 分别形成 `s=1/2/3/4`，不合成 token；Responses HTTP、Responses WebSocket 和 Live 创建都会复用同一条已协商连接。`app_server_attestation_transport` 是运行时字段：没有已完成协商的 bridge 时为 `false`，至少一条活动 bridge 完成 initialize 后为 `true`，全部断开后恢复 `false`。未建立 bridge 时，Responses、passthrough 和 WebSocket 会剥离公网请求直接携带的 `x-oai-attestation`，Live 带有未协商 envelope 时直接返回 attestation unavailable，不回退到其它来源。只有完成能力协商、ID 匹配、短 TTL 未过期的内部 context 才能把证明绑定到上游请求。Linux 服务端不生成伪造 DeviceCheck 证明；配置真实 Linux helper 或接入真实 app-server bridge 后，才会启用对应服务端路径。Windows UA/TLS 模板只表示客户端身份与连接特征，不代表证明已经生成。证明状态仅短 TTL 保存在内存；Live Sideband 只保存加密后的会话 envelope，不写入账号凭据或普通日志。
+Codex app-server 的 `initialize.params.capabilities.requestAttestation=true` 会话由网关短时记录，并按 API Key、连接、账号、session/thread 隔离。客户端通过独立的 `GET /backend-api/codex/app-server` WebSocket 接入 JSON-RPC bridge；首帧必须是 `initialize`，随后上游请求由该 bridge 发出与 Codex 源码一致的 just-in-time `attestation/generate`：`{"jsonrpc":"2.0","id":N,"method":"attestation/generate","params":{}}`。响应按 JSON-RPC ID 匹配，只接受 `v1.*` opaque token，再封装为 `{"v":1,"s":0,"t":"..."}`。超时、请求失败、取消和 malformed response 分别形成 `s=1/2/3/4`，不合成 token；Responses HTTP、Responses WebSocket 和 Live 创建都会复用同一条已协商连接。`app_server_attestation_transport` 是运行时字段：没有已完成协商的 bridge 时为 `false`，至少一条活动 bridge 完成 initialize 后为 `true`，全部断开后恢复 `false`。标准转发与 Live 保留真实客户端直接 Header 的兼容路径，检查客户端 UA/originator 配对和 envelope 格式后中继；这不等于设备证明已由网关验证为真。标准转发已绑定 app-server context 时不回退到直传 Header；Live 创建优先使用已协商 context，实际接受情况仍由对应上游请求确定。Linux 服务端不生成伪造 DeviceCheck 证明；配置真实 Linux helper 或接入真实 app-server bridge 后，才会启用对应服务端路径。Windows UA/TLS 模板只表示客户端身份与连接特征，不代表证明已经生成。证明状态仅短 TTL 保存在内存；Live Sideband 只保存加密后的会话 envelope，不写入账号凭据或普通日志。
 
 管理员可显式开启 app-server 证明采集器：`POST /admin/codex-attestation-collector/start` 后创建 `POST /admin/codex-attestation-collector/sessions`，将返回的 `collector_token` 作为 `collector_token` 查询参数或 `X-Codex-Attestation-Collector-Token` 握手头附加到 app-server WebSocket。管理页面会同时显示完整 WebSocket 地址，并提供显式删除当前采集会话的操作。采集器只记录 `initialize` 能力、`attestation/generate` 状态、请求 ID、客户端版本、连接/session/thread 关联以及 proof 长度和 SHA-256；`GET /admin/codex-attestation-collector/sessions/:token/captures` 不返回 opaque proof 原文。会话默认 30 分钟、每会话最多 100 条，停止采集会立即清除内存摘要；采集 token 不是上游认证凭据，也不能写入账号、TLS 模板或全局配置。采集器只覆盖证明层；账号现有 Codex 收敛策略和 TLS 模板/路由继续由各自配置决定，不在采集器内切换。
 管理页面入口位于“账号 → 更多操作 → 工具 → Codex app-server Attestation Collector”，采集器采用独立弹窗；TLS 指纹模板、TLS 路由器和 Codex 收敛仍保持独立配置。采集器只在管理员显式启动并创建会话后工作，不增加账号级自动证明开关。
@@ -64,6 +64,22 @@ OpenAI 分组支持 Messages、Responses 和 Chat，新建时默认启用 Respon
 OpenAI 兼容非流式响应的 usage 按 `usage`、`response.usage`、`data.usage`、`data.response.usage` 的顺序解析；前两条原生路径优先于 Cline 等兼容上游使用的 `data` envelope。同层的 hosted image usage 必须随对应路径读取，不能把不同 envelope 的 token 与图片用量混合。
 
 `/backend-api/codex` 和无 `/v1` 别名服务特定客户端兼容，但仍经过 ConcordRoute Key 鉴权、分组准入、调度和结算。Responses WebSocket 不支持 Qoder；其它平台是否可进入 OpenAI 兼容处理器由路由和平台专题共同决定，不能仅凭 URL 推断。
+
+<a id="openai_live_runtime"></a>
+### Live 语音接入与验证边界
+
+当前 Live 路由支持 `POST /v1/live` 或 `POST /backend-api/codex/realtime/calls` 创建 WebRTC 会话并返回 SDP，以及相应 call ID 的 Sideband 控制连接；它不是默认 `GET /v1/live` 的纯音频 WebSocket 服务。客户端验证必须明确选择匹配的 WebRTC transport，不能把 Responses SSE、证明 bridge 或 CLI 默认音频 WebSocket 当作同一种通道。
+
+Codex app-server 的 `initialize.params.capabilities.experimentalApi` 与线程的 `features.realtime_conversation` 是不同开关；在核对的 0.153.4 中，仅启用 experimental API 并不会使线程具备 realtime 能力。该版本 v3 语音使用 audio 输出，text 输出只适用于 v2。排障先在隔离配置和本地假上游核对客户端请求是否真正到达 Live 创建路由，再验证有效账号、真实证明、SDP、控制连接和双向音频。网关的能力状态、单元测试或成功返回 RPC 确认均不替代真实通话验收；旧版本客户端的具体参数需按其自身协议核对。
+
+Live 的证明按来源可选：存在协商客户端、可信直接 Header 或平台提供器时沿用原校验与加密中继；没有来源（Linux 未配置 helper、本机平台不支持或 macOS 未安装对应 App）时不设置 `x-oai-attestation`，由真实上游决定账号资格。已配置 helper 的执行故障、格式错误、客户端异常 envelope 和已有密文解密失败仍明确报错，不静默降级。创建时未携带证明的会话，其 Sideband 同样不设置该头；已有证明的会话继续使用加密快照，不迁移、不混用。平台是否能生成证明不等于 Live 传输是否可用，也不保证所有账号都接受无证明请求。
+
+网关保持 Linux 部署也可接入外部真实证明或客户端证明中继，服务器平台不是最终可用性结论。分组 `allow_live` 仅授予调用权限，仍受账号类型、计费、并发和上游资格限制。能力查询不生成证明、不探测账号、不产生模型调用，传输能力和证明来源分别报告，语义详见 [HTTP 接口边界](http_api.md)。
+Live 创建仍尊重账号模型白名单；所请求语音模型必须获准，不能把文字模型白名单视为已包含 Live。调度返回无可用账号时响应 503 与明确的候选账号提示，不再误报为上游请求失败的 502。
+
+Live 选择证明中继时，优先读取原始 `session-id`、`thread-id` Header；缺省时才兼容旧调用方放在 Session JSON 中的同名下划线字段。原生客户端的 `session.session_id` 可能属于独立语音会话，不应覆盖 Header 中的根会话/线程提示。这些提示只用于 API Key 下的中继连接匹配，不改写 Session JSON、出站 UA/TLS 或 Cockpit 映射，跨线程/跨 Key 仍隔离。
+
+在核对的 0.153.4 源码与隔离客户端测试中，API Key 自定义 provider 即使声明 `requestAttestation=true`，也未发起 `attestation/generate`；其证明能力判定依赖 ChatGPT 认证模式。因此“打开能力位”不等于实际取得证明，独立运行 CLI 也不是设备证明提供器。这与无证明时正常发起 Live 请求是两个不同问题；不要通过伪造登录形状或成功状态完成验收。需要证明时仍须按客户端支持的登录和宿主能力接入，上游拒绝保持原有错误与准入处理。
 
 <a id="codex_identity_persistence"></a>
 ### 身份绑定持久化的等待与读取

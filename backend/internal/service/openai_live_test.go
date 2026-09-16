@@ -127,6 +127,59 @@ func TestValidateLiveCallRequestDoesNotRequireDelegation(t *testing.T) {
 	require.NotContains(t, string(request.Session), "delegation")
 }
 
+func TestLiveAttestationSessionHintsSelectScopedBridge(t *testing.T) {
+	registry := newCodexAppServerBridgeRegistry()
+	bridge := &codexAppServerBridge{
+		apiKeyID: 7, connectionID: "live-scoped", sessionID: "root-session",
+		threadID: "child-thread", closed: make(chan struct{}),
+	}
+	bridge.negotiated.Store(true)
+	bridge.initialized.Store(true)
+	require.NoError(t, registry.add(bridge))
+	t.Cleanup(func() { registry.remove(bridge) })
+
+	for _, body := range []string{`{"model":"gpt-live"}`, `{"session_id":"realtime-call-session"}`} {
+		t.Run(body, func(t *testing.T) {
+			request := &LiveCallRequest{Session: json.RawMessage(body)}
+			sessionID, threadID := liveAttestationSessionHints(request, LiveCallIdentity{
+				ClientSessionID: "root-session", ClientThreadID: "child-thread",
+			})
+			selected, err := registry.find(7, sessionID, threadID)
+			require.NoError(t, err)
+			require.Same(t, bridge, selected)
+			require.Equal(t, body, string(request.Session), "不得改写语音 Session JSON")
+		})
+	}
+	// 不同线程或 API Key 不得借用同一证明连接。
+	for _, hints := range []LiveCallIdentity{
+		{ClientSessionID: "other-session", ClientThreadID: "child-thread"},
+		{ClientSessionID: "root-session", ClientThreadID: "other-thread"},
+	} {
+		sessionID, threadID := liveAttestationSessionHints(&LiveCallRequest{Session: json.RawMessage(`{}`)}, hints)
+		selected, err := registry.find(7, sessionID, threadID)
+		require.ErrorIs(t, err, ErrCodexAppServerBridgeAmbiguous)
+		require.Nil(t, selected)
+	}
+	selected, err := registry.find(8, "root-session", "child-thread")
+	require.NoError(t, err)
+	require.Nil(t, selected)
+}
+
+func TestLiveAttestationSessionHintsLegacyAndMissing(t *testing.T) {
+	for _, test := range []struct {
+		body      string
+		sessionID string
+		threadID  string
+	}{
+		{`{}`, "", ""},
+		{`{"session_id":"legacy-session","thread_id":"legacy-thread"}`, "legacy-session", "legacy-thread"},
+	} {
+		sessionID, threadID := liveAttestationSessionHints(&LiveCallRequest{Session: json.RawMessage(test.body)}, LiveCallIdentity{})
+		require.Equal(t, test.sessionID, sessionID)
+		require.Equal(t, test.threadID, threadID)
+	}
+}
+
 func TestCreateUpstreamLiveCallPreservesSession(t *testing.T) {
 	upstream := &liveHTTPUpstreamStub{}
 	profileService, routerService := newLiveTLSRoutingServices()
@@ -264,6 +317,82 @@ func TestPrepareLiveAttestationEncryptsHeaderAndReturnsExplicitProviderError(t *
 	var unavailable *LiveAttestationUnavailableError
 	require.ErrorAs(t, err, &unavailable)
 	require.Contains(t, unavailable.Error(), "macOS app missing")
+}
+
+// 没有证明来源时按原样省略 Header；提供器故障和坏密文仍应报错。
+func TestLiveOptionalAttestationMissingSource(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		provider liveattestation.Provider
+	}{
+		{"no_provider", nil},
+		{"linux_unconfigured", liveAttestationStub{err: liveattestation.ErrLinuxProviderMissing}},
+		{"unsupported_host", liveAttestationStub{err: liveattestation.ErrUnsupportedPlatform}},
+		{"macos_app_absent", liveAttestationStub{err: liveattestation.ErrChatGPTAppMissing}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &OpenAIGatewayService{liveAttestation: test.provider}
+			header, ciphertext, err := service.prepareLiveAttestationForRequest(
+				context.Background(), &Account{Type: AccountTypeOAuth}, LiveCallIdentity{})
+			require.NoError(t, err)
+			require.Empty(t, header)
+			require.Empty(t, ciphertext)
+		})
+	}
+	for _, providerErr := range []error{
+		liveattestation.ErrLinuxProviderInvalid, context.DeadlineExceeded,
+		errors.New("provider generation failed"),
+	} {
+		service := &OpenAIGatewayService{liveAttestation: liveAttestationStub{err: providerErr}}
+		_, _, err := service.prepareLiveAttestation(context.Background())
+		require.Error(t, err)
+	}
+}
+
+func TestLiveOptionalAttestationCreateAndSideband(t *testing.T) {
+	upstream := &liveHTTPUpstreamStub{}
+	profiles, routers := newLiveTLSRoutingServices()
+	service := &OpenAIGatewayService{
+		cfg: &config.Config{}, httpUpstream: upstream,
+		tlsFPProfileService: profiles, tlsFPRouterService: routers,
+		liveAttestation: liveAttestationStub{err: liveattestation.ErrLinuxProviderMissing},
+	}
+	account := &Account{
+		ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"},
+		Extra:       map[string]any{"enable_tls_fingerprint": true, "tls_fingerprint_router_id": int64(9)},
+	}
+	header, ciphertext, err := service.prepareLiveAttestationForRequest(context.Background(), account, LiveCallIdentity{})
+	require.NoError(t, err)
+	match := service.matchLiveTLSFingerprintRouter(account, "test-live-client")
+	_, err = service.createUpstreamLiveCall(context.Background(), account, &LiveCallRequest{
+		SDP: "v=offer\r\n", Session: json.RawMessage(`{"model":"gpt-live-test"}`),
+	}, header, match)
+	require.NoError(t, err)
+	require.NotContains(t, upstream.request.Header, http.CanonicalHeaderKey(liveAttestationHeader))
+	require.NotNil(t, upstream.tlsProfile)
+	require.Equal(t, "live-routed", upstream.tlsProfile.Name)
+	require.Equal(t, "codex_vscode/0.145.0 live-test", upstream.request.Header.Get("User-Agent"))
+
+	headers, err := service.liveSidebandHeaders(context.Background(), account, &LiveCallRecord{
+		AttestationCiphertext: ciphertext,
+	}, match)
+	require.NoError(t, err)
+	require.NotContains(t, headers, http.CanonicalHeaderKey(liveAttestationHeader))
+	require.Equal(t, "Bearer test-token", headers.Get("Authorization"))
+	require.Equal(t, upstream.request.Header.Get("User-Agent"), headers.Get("User-Agent"))
+	require.Equal(t, upstream.request.Header.Get("Originator"), headers.Get("Originator"))
+
+	// 只有空值表示会话从未带证明，非空坏密文不能静默降级成无证明。
+	service.liveAttestationCipher = newLiveAttestationCipher(&config.Config{
+		JWT: config.JWTConfig{Secret: "live-test-secret"},
+	})
+	for _, stored := range []string{" ", "invalid-ciphertext"} {
+		_, err := service.decryptLiveAttestation(&LiveCallRecord{AttestationCiphertext: stored})
+		require.Error(t, err)
+	}
+	_, err = service.decryptLiveAttestation(nil)
+	require.Error(t, err)
 }
 
 func TestPrepareLiveAttestationForRequestRelaysTrustedClientEnvelope(t *testing.T) {

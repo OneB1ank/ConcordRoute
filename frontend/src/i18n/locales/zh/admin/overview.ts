@@ -1198,9 +1198,9 @@ affiliates: {
       openaiLive: {
         title: 'OpenAI Live',
         allow: '允许访问 Live',
-        hint: '启用后，此 OpenAI 分组的 API Key 可以创建并控制 Live 语音会话。默认关闭。运行 ConcordRoute 的服务端必须是 Apple Silicon Mac，并安装官方 ChatGPT App；客户端平台不受限制。',
-        unsupportedTitle: '当前服务端不支持 Live',
-        unsupportedMessage: '当前 ConcordRoute 服务端无法生成 Live 所需的设备证明，即使开启也不能使用。是否仍然开启？',
+        hint: '启用后，此 OpenAI 分组的 API Key 可请求 Live 语音会话，默认关闭。Linux 支持 WebRTC 信令与 Sideband 转发；有真实证明时携带，无来源时省略，由上游判定是否接受。还需语音客户端、有效 OAuth 账号和模型准入，开启权限不等于通话已验证。',
+        unsupportedTitle: '尚未确认 Live 传输能力',
+        unsupportedMessage: '服务能力查询失败或当前服务未声明支持 Live。可先开启分组权限，再检查客户端、账号和语音模型配置；最终以真实语音通话验证为准。是否仍然开启？',
         enableAnyway: '仍然开启'
       },
       invalidRequestFallback: {

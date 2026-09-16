@@ -12,10 +12,13 @@ import type {
   PaginatedResponse
 } from '@/types'
 
-/** LiveCapability 描述当前服务端与客户端中继可用的 Live 证明路径。 */
+/** 传输能力、可选证明来源与真实通话验收是不同层次。 */
 export interface LiveCapability {
   supported: boolean
   server_supported?: boolean
+  live_transport_supported?: boolean
+  attestation_policy?: 'if_available'
+  attestation_source_available?: boolean
   live_client_supported?: boolean
   client_attestation_relay?: boolean
   client_attestation_source?: string

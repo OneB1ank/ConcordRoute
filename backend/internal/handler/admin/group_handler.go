@@ -27,12 +27,12 @@ type GroupHandler struct {
 func (h *GroupHandler) GetLiveCapability(c *gin.Context) {
 	status := liveattestation.CurrentCapabilityStatus(c.Request.Context())
 	result := gin.H{
-		// supported 表示 Live 至少有一条可用路径：服务端本地生成，或
-		// Windows Codex 客户端提供真实证明后由网关中继。
-		"supported": status.LiveDeviceCheckServer || status.LiveClientSupported,
-		// server_supported 表示网关服务端暴露的 Live 路径可用；Linux
-		// 通过 Windows Codex 客户端中继时也属于服务端可用路径。
-		"server_supported":                 status.LiveDeviceCheckServer || status.LiveClientSupported,
+		// 传输能力和可选证明来源分开；均不代表特定账号的通话已经验收。
+		"supported":                        status.LiveTransportSupported,
+		"server_supported":                 status.LiveTransportSupported,
+		"live_transport_supported":         status.LiveTransportSupported,
+		"attestation_policy":               "if_available",
+		"attestation_source_available":     status.AttestationSourceAvailable,
 		"client_attestation_relay":         status.ClientAttestationRelay,
 		"client_attestation_source":        status.ClientAttestationSource,
 		"server_attestation_provider":      status.ServerAttestationProvider,
@@ -46,9 +46,6 @@ func (h *GroupHandler) GetLiveCapability(c *gin.Context) {
 	}
 	if status.LiveDeviceCheckReason != "" {
 		result["server_reason"] = status.LiveDeviceCheckReason
-		if !status.LiveDeviceCheckServer && !status.LiveClientSupported {
-			result["reason"] = status.LiveDeviceCheckReason
-		}
 	}
 	response.Success(c, result)
 }

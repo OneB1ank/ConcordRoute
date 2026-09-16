@@ -226,12 +226,13 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		}
 		// 若存在 app-server bridge，Live 创建也先绑定同一条真实 JSON-RPC
 		// attestation/generate 通道，随后复用其客户端证明。
+		sessionID, threadID := liveAttestationSessionHints(request, identity)
 		attemptCtx, bindErr := s.bindCodexAppServerAttestationContextForAPIKey(
 			ctx,
 			identity.APIKeyID,
 			account,
-			strings.TrimSpace(gjson.GetBytes(request.Session, "session_id").String()),
-			strings.TrimSpace(gjson.GetBytes(request.Session, "thread_id").String()),
+			sessionID,
+			threadID,
 		)
 		if bindErr != nil {
 			selection.ReleaseFunc()
@@ -239,7 +240,8 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		}
 		// 优先使用该 OAuth 账号对应客户端/app-server 的真实 envelope。
 		// 支持的 macOS 部署仍可使用平台提供器；Linux 承接 Windows 客户端时
-		// 不在本地合成设备证明。
+		// 不在本地合成设备证明。未配置证明来源时省略该 Header，
+		// 是否接受当前账号由上游判定。
 		attestation, attestationCiphertext, attestationErr := s.prepareLiveAttestationForRequest(attemptCtx, account, identity)
 		if attestationErr != nil {
 			selection.ReleaseFunc()
@@ -321,6 +323,21 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 	return nil, ErrLiveUnavailable
 }
 
+// liveAttestationSessionHints 使用客户端原始 Header 选择对应的证明通道。
+// Body 中的 session_id 可能是独立语音标识，只在 Header 缺省时兼容旧调用方；
+// 不把客户端提示写回 Session，也不影响出站 Cockpit 身份。
+func liveAttestationSessionHints(request *LiveCallRequest, identity LiveCallIdentity) (string, string) {
+	sessionID := strings.TrimSpace(identity.ClientSessionID)
+	threadID := strings.TrimSpace(identity.ClientThreadID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(gjson.GetBytes(request.Session, "session_id").String())
+	}
+	if threadID == "" {
+		threadID = strings.TrimSpace(gjson.GetBytes(request.Session, "thread_id").String())
+	}
+	return sessionID, threadID
+}
+
 func (s *OpenAIGatewayService) shouldFailoverLiveCreateError(err error) bool {
 	var upstreamErr *UpstreamFailoverError
 	if !errors.As(err, &upstreamErr) {
@@ -378,7 +395,9 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Accept", "application/sdp")
-	upstreamReq.Header.Set(liveAttestationHeader, attestation)
+	if attestation != "" {
+		upstreamReq.Header.Set(liveAttestationHeader, attestation)
+	}
 
 	s.applyLiveUpstreamRouting(ctx, account, upstreamReq.Header, tlsRouterMatch)
 	resp, err := s.httpUpstream.DoWithTLS(
@@ -534,7 +553,9 @@ func (s *OpenAIGatewayService) liveSidebandHeaders(
 	if err != nil {
 		return nil, err
 	}
-	headers.Set(liveAttestationHeader, attestation)
+	if attestation != "" {
+		headers.Set(liveAttestationHeader, attestation)
+	}
 	s.applyLiveUpstreamRouting(ctx, account, headers, tlsRouterMatch)
 	return headers, nil
 }

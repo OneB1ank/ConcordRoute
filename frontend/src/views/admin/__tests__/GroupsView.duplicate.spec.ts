@@ -161,6 +161,15 @@ function mountView() {
   })
 }
 
+// 通过真实视图动作核对运行态门禁，避免只测一个脱离按钮调用的布尔函数。
+function liveActions(wrapper: ReturnType<typeof mountView>) {
+  return wrapper.vm as unknown as {
+    toggleLive(target: 'create' | 'edit'): Promise<void>
+    createForm: { allow_live: boolean }
+    pendingLiveForm: 'create' | 'edit' | null
+  }
+}
+
 describe('GroupsView duplicate action', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -199,6 +208,60 @@ describe('GroupsView duplicate action', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('allows supported Live transport without an optional attestation source', async () => {
+    getLiveCapability.mockResolvedValue({
+      supported: true,
+      attestation_source_available: false,
+      live_client_supported: true,
+      client_attestation_relay: true
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const actions = liveActions(wrapper)
+
+    await actions.toggleLive('create')
+
+    expect(actions.createForm.allow_live).toBe(true)
+    expect(actions.pendingLiveForm).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('refreshes transport capability each time Live is enabled', async () => {
+    getLiveCapability
+      .mockResolvedValueOnce({ supported: true, attestation_source_available: true })
+      .mockResolvedValueOnce({ supported: false, attestation_source_available: false })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const actions = liveActions(wrapper)
+    await actions.toggleLive('create')
+    expect(actions.createForm.allow_live).toBe(true)
+    await actions.toggleLive('create')
+    await actions.toggleLive('create')
+
+    expect(getLiveCapability).toHaveBeenCalledTimes(2)
+    expect(actions.createForm.allow_live).toBe(false)
+    expect(actions.pendingLiveForm).toBe('create')
+    wrapper.unmount()
+  })
+
+  it('allows supported transport and warns when the capability request fails', async () => {
+    getLiveCapability.mockResolvedValue({ supported: true, attestation_source_available: true })
+    const wrapper = mountView()
+    await flushPromises()
+    const actions = liveActions(wrapper)
+    await actions.toggleLive('create')
+    expect(actions.createForm.allow_live).toBe(true)
+    expect(actions.pendingLiveForm).toBeNull()
+
+    await actions.toggleLive('create')
+    getLiveCapability.mockRejectedValueOnce(new Error('capability unavailable'))
+    await actions.toggleLive('create')
+    expect(actions.createForm.allow_live).toBe(false)
+    expect(actions.pendingLiveForm).toBe('create')
+    wrapper.unmount()
   })
 
   it('duplicates the selected group, reports success, and refreshes the list', async () => {

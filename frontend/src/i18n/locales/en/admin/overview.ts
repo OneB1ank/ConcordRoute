@@ -1200,9 +1200,9 @@ affiliates: {
       openaiLive: {
         title: 'OpenAI Live',
         allow: 'Allow Live access',
-        hint: 'When enabled, API keys in this OpenAI group can create and control Live voice sessions. Disabled by default. The ConcordRoute server must run on Apple Silicon macOS with the official ChatGPT app installed; client platforms are unrestricted.',
-        unsupportedTitle: 'Current server does not support Live',
-        unsupportedMessage: 'This ConcordRoute server cannot generate the required Live attestation. Live will not work even if enabled. Continue anyway?',
+        hint: 'Allows this OpenAI group to request Live voice sessions. Disabled by default. Linux supports WebRTC signaling and Sideband forwarding. Genuine attestations are included when available; otherwise omitted, with acceptance decided upstream. A voice-capable client, eligible OAuth account and allowed voice model are still required. Enabling access does not verify a working call.',
+        unsupportedTitle: 'Live transport support not confirmed',
+        unsupportedMessage: 'The capability query failed or the server did not declare Live support. You may enable group access first, then check the client, account and voice model configuration. A real voice call is required for final verification. Continue anyway?',
         enableAnyway: 'Enable anyway'
       },
       invalidRequestFallback: {

@@ -182,6 +182,8 @@ func liveCallIdentity(
 		SubscriptionID:            subscriptionID,
 		UserAgent:                 c.GetHeader("User-Agent"),
 		Originator:                c.GetHeader("originator"),
+		ClientSessionID:           c.GetHeader("session-id"),
+		ClientThreadID:            c.GetHeader("thread-id"),
 		ClientAttestationEnvelope: c.GetHeader("x-oai-attestation"),
 		IPAddress:                 ip.GetClientIP(c),
 		InboundEndpoint:           GetInboundEndpoint(c),
@@ -198,6 +200,9 @@ func (h *OpenAIGatewayHandler) writeLiveCreateError(c *gin.Context, err error) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", "Live client is not allowed by the available account policy")
 	case errors.Is(err, service.ErrLiveUnavailable):
 		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Live is unavailable")
+	case errors.Is(err, service.ErrNoAvailableAccounts):
+		// 本地调度未选出账号，不应误报为已经访问上游后的 502。
+		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No eligible accounts are available for Live")
 	default:
 		var attestationErr *service.LiveAttestationUnavailableError
 		if errors.As(err, &attestationErr) {
