@@ -29,7 +29,8 @@ func TestRelayFirstResponseTurnTiming(t *testing.T) {
 	require.Nil(t, observeFirstResponse(&timing, []byte(`{"type":"notification"}`), base.Add(13*time.Second)), "闲置通知不制造请求")
 }
 
-// 先收到无 ID 的数据，随后补 ID，仍使用第一块数据；并发响应按各自 ID 隔离。
+// 先收到无 ID 的数据，随后补 ID，仍使用第一块数据；带 ID 的交错响应各自隔离。
+// 无 ID 帧沿用活动响应，不猜测归属；生产入口仍拒绝重叠 response.create。
 func TestRelayFirstResponseMissingIDAndOverlap(t *testing.T) {
 	base := time.Unix(1000, 0)
 	var timing relayFirstResponse
@@ -37,6 +38,7 @@ func TestRelayFirstResponseMissingIDAndOverlap(t *testing.T) {
 	require.Equal(t, 500, *observeFirstResponse(&timing, []byte(`{"type":"notice"}`), base.Add(500*time.Millisecond)))
 	require.Equal(t, 500, *observeFirstResponse(&timing, []byte(`{"type":"response.created","response":{"id":"resp_1"}}`), base.Add(time.Second)))
 	timing.begin(base.Add(2 * time.Second))
+	require.Equal(t, 500, *observeFirstResponse(&timing, []byte(`{"type":"notice"}`), base.Add(2500*time.Millisecond)), "无 ID 帧不抢占新请求的 pending 样本")
 	require.Equal(t, 1000, *observeFirstResponse(&timing, []byte(`{"type":"response.created","response":{"id":"resp_2"}}`), base.Add(3*time.Second)))
 	require.Equal(t, 500, *observeFirstResponse(&timing, []byte(`{"type":"response.completed","response":{"id":"resp_1"}}`), base.Add(4*time.Second)))
 	require.Equal(t, 1000, *observeFirstResponse(&timing, []byte(`{"type":"response.completed"}`), base.Add(5*time.Second)), "旧响应结束不丢失新活动轮次")

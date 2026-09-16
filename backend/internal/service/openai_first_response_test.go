@@ -147,3 +147,61 @@ func TestOpenAIFirstResponseRecordUsage(t *testing.T) {
 	require.Equal(t, 4*time.Second, result.Duration)
 	require.Zero(t, repo.lastLog.TotalCost)
 }
+
+// 用非零用量对照完整结算命令，防止展示时间改动影响扣费、额度或幂等指纹。
+func TestOpenAIFirstResponseBillingUnchanged(t *testing.T) {
+	for _, ws := range []bool{false, true} {
+		t.Run(map[bool]string{false: "http", true: "websocket"}[ws], func(t *testing.T) {
+			record := func(withFirstResponse bool) (*UsageLog, *UsageBillingCommand) {
+				t.Helper()
+				repo := &openAIRecordUsageLogRepoStub{inserted: true}
+				billing := &openAIRecordUsageBillingRepoStub{}
+				svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(repo, billing,
+					&openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+				result := &OpenAIForwardResult{
+					RequestID: "resp_first_response_billing", Model: "gpt-5.1",
+					Stream: true, OpenAIWSMode: ws,
+					Usage: OpenAIUsage{
+						InputTokens: 1200, OutputTokens: 300, CacheReadInputTokens: 400,
+					},
+					Duration: 10 * time.Second, FirstTokenMs: valuePtr(8000),
+					SemanticFirstTokenMs: valuePtr(500),
+				}
+				if withFirstResponse {
+					result.FirstResponseMs = valuePtr(120)
+					result.ResponseDuration = 12 * time.Second
+				}
+				require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+					Result: result,
+					APIKey: &APIKey{ID: 1000, Quota: 100, Group: &Group{RateMultiplier: 1.25}},
+					User:   &User{ID: 2000},
+					Account: &Account{
+						ID: 3000, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+					},
+					APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{},
+				}))
+				require.Equal(t, 1, billing.calls)
+				require.Equal(t, 1, repo.calls)
+				require.NotNil(t, billing.lastCmd)
+				require.NotNil(t, repo.lastLog)
+				require.Positive(t, billing.lastCmd.BillableAmountUSD)
+				require.Equal(t, 8000, *result.FirstTokenMs, "调度反馈不使用展示样本")
+				require.Equal(t, 10*time.Second, result.Duration, "内部耗时不被展示值覆盖")
+				return repo.lastLog, billing.lastCmd
+			}
+			before, beforeBilling := record(false)
+			after, afterBilling := record(true)
+			require.Equal(t, beforeBilling, afterBilling, "所有结算字段与幂等指纹保持一致")
+			require.Equal(t, before.TotalCost, after.TotalCost)
+			require.Equal(t, before.ActualCost, after.ActualCost)
+			require.Equal(t, before.AccountStatsCost, after.AccountStatsCost)
+			require.Equal(t, 500, *before.FirstTokenMs)
+			require.Equal(t, 120, *after.FirstTokenMs)
+			if ws {
+				require.Equal(t, 12000, *after.DurationMs, "仅 WS 展示总耗时对齐首响应起点")
+			} else {
+				require.Equal(t, *before.DurationMs, *after.DurationMs, "HTTP 总耗时不变")
+			}
+		})
+	}
+}
