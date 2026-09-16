@@ -118,6 +118,48 @@ func TestLiveCapabilityOnlyAllowsOpenAIOAuth(t *testing.T) {
 	}).SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityLive))
 }
 
+// 使用真实语音模型覆盖创建与 Sideband 共用的账号映射链，防止 codex 后缀触发文字模型兜底。
+func TestLiveModelSurvivesCreateAndSidebandRouting(t *testing.T) {
+	for _, requestedModel := range []string{"gpt-live-1-codex", "voice-alias"} {
+		t.Run(requestedModel, func(t *testing.T) {
+			account := &Account{
+				ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+				Status: StatusActive, Schedulable: true,
+				Credentials: map[string]any{
+					"access_token": "test-token", "chatgpt_account_id": "test-account",
+					"model_mapping":   map[string]any{"voice-alias": "gpt-live-1-codex"},
+					"model_whitelist": []any{"gpt-live-1-codex"},
+				},
+			}
+			upstream := &liveHTTPUpstreamStub{}
+			service := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			routingModel, err := service.ResolveOpenAIWSRoutingModelForAccount(
+				context.Background(), nil, account, requestedModel, OpenAIEndpointCapabilityLive)
+			require.NoError(t, err)
+			upstreamModel := resolveOpenAIAccountUpstreamModelForRequest(account, routingModel, false, false)
+			require.Equal(t, "gpt-live-1-codex", upstreamModel)
+
+			session, err := json.Marshal(map[string]any{
+				"model": upstreamModel, "delegation": map[string]string{"type": "client"},
+			})
+			require.NoError(t, err)
+			_, err = service.createUpstreamLiveCall(context.Background(), account, &LiveCallRequest{
+				SDP: "v=offer\r\n", Session: session,
+			}, "", TLSFingerprintRouterMatchResult{})
+			require.NoError(t, err)
+			require.JSONEq(t, `{"sdp":"v=offer\r\n","session":{"model":"gpt-live-1-codex","delegation":{"type":"client"}}}`, string(upstream.body))
+
+			// 后续更新走真实帧改写入口，不能把已创建的语音会话切为文字模型。
+			frame := []byte(`{"type":"session.update","session":{"model":"` + requestedModel + `","instructions":"keep"}}`)
+			rewritten, clientModel, _, err := service.rewriteLiveSidebandClientPayload(
+				context.Background(), &LiveCallRecord{Model: requestedModel}, account, frame)
+			require.NoError(t, err)
+			require.Equal(t, requestedModel, clientModel)
+			require.JSONEq(t, `{"type":"session.update","session":{"model":"gpt-live-1-codex","instructions":"keep"}}`, string(rewritten))
+		})
+	}
+}
+
 func TestValidateLiveCallRequestDoesNotRequireDelegation(t *testing.T) {
 	request := &LiveCallRequest{
 		SDP:     "v=0\r\n",

@@ -6,6 +6,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Live 的 codex 后缀表示语音接入渠道，不表示 GPT-5.3 文字模型。
+func TestNormalizeKnownOpenAICodexModel_PreservesLiveFamily(t *testing.T) {
+	for _, input := range []string{"gpt-live-1-codex", "gpt-live-2-codex"} {
+		t.Run(input, func(t *testing.T) {
+			require.Equal(t, input, normalizeKnownOpenAICodexModel(input))
+			require.Equal(t, input, normalizeCodexModel(input))
+		})
+	}
+}
+
 func TestNormalizeKnownOpenAICodexModel_BareGPT56RoutesToSol(t *testing.T) {
 	tests := map[string]string{
 		"gpt-5.6":            "gpt-5.6-sol",

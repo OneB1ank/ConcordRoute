@@ -111,6 +111,9 @@ func normalizeKnownOpenAICodexModel(model string) string {
 	}
 
 	switch {
+	case strings.HasPrefix(normalized, "gpt-live-"):
+		// Live 的 codex 后缀不是文字模型别名，创建及 Sideband 必须保留语音模型。
+		return normalized
 	case normalized == "gpt-6-astra":
 		return "gpt-6-astra"
 	case strings.HasPrefix(normalized, "gpt-6-astra-"):
