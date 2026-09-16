@@ -590,6 +590,27 @@ func (s *UsageLogRepoSuite) TestGetByID_ReturnsRequestTypeAndLegacyFallback() {
 	s.Require().True(got.OpenAIWSMode)
 }
 
+// 使用真实Repository锁定完整迁移后的Live枚举与零费用会话记录落库。
+func (s *UsageLogRepoSuite) TestCreateLiveSessionUsage() {
+	user := mustCreateUser(s.T(), s.client, &service.User{Email: "live-usage@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-live-usage", Name: "live"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "live-usage"})
+	duration := 1500
+	log := &service.UsageLog{
+		UserID: user.ID, APIKeyID: apiKey.ID, AccountID: account.ID,
+		RequestID: uuid.NewString(), Model: "gpt-live-1-codex",
+		RequestType: service.RequestTypeLive, DurationMs: &duration, CreatedAt: time.Now(),
+	}
+	_, err := s.repo.Create(s.ctx, log)
+	s.Require().NoError(err)
+	got, err := s.repo.GetByID(s.ctx, log.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(service.RequestTypeLive, got.RequestType)
+	s.Require().Equal("gpt-live-1-codex", got.Model)
+	s.Require().Zero(got.TotalCost)
+	s.Require().Equal(&duration, got.DurationMs)
+}
+
 // --- Delete ---
 
 func (s *UsageLogRepoSuite) TestDelete() {
