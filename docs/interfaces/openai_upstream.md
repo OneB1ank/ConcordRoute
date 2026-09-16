@@ -68,7 +68,7 @@ OpenAI 兼容非流式响应的 usage 按 `usage`、`response.usage`、`data.usa
 <a id="openai_live_runtime"></a>
 ### Live 语音接入与验证边界
 
-当前 Live 路由支持 `POST /v1/live` 或 `POST /backend-api/codex/realtime/calls` 创建 WebRTC 会话并返回 SDP，以及相应 call ID 的 Sideband 控制连接；它不是默认 `GET /v1/live` 的纯音频 WebSocket 服务。客户端验证必须明确选择匹配的 WebRTC transport，不能把 Responses SSE、证明 bridge 或 CLI 默认音频 WebSocket 当作同一种通道。
+当前 Live 路由支持 `POST /v1/live` 或 `POST /backend-api/codex/realtime/calls` 创建 WebRTC 会话，以 `201 Created`、`application/sdp` 和网关同路径族的 Sideband `Location` 返回结果，以及相应 call ID 的 Sideband 控制连接；它不是默认 `GET /v1/live` 的纯音频 WebSocket 服务。创建响应不得改为200，否则严格遵循原生201契约的客户端会丢弃已创建会话的SDP。客户端验证必须明确选择匹配的 WebRTC transport，不能把 Responses SSE、证明 bridge 或 CLI 默认音频 WebSocket 当作同一种通道。
 
 上游信令创建使用 ChatGPT 的 `/backend-api/codex/realtime/calls`，Frameless Sideband 则使用 `wss://api.openai.com/v1/live/{call_id}`，与核对的 Codex 原生默认路径一致；不得把 call ID 直接追加在 ChatGPT Codex 根路径后。两条连接都继续使用创建会话的账号凭据、代理、UA/TLS 规则；控制连接不重新调度到其它账号。
 

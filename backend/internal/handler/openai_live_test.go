@@ -77,6 +77,27 @@ func TestLiveSidebandLocationMatchesCreateRoute(t *testing.T) {
 	)
 }
 
+// Pi 等客户端按原生201判断创建成功；200会导致有效SDP被丢弃并留下空闲会话。
+func TestLiveCreatedResponseMatchesNativeContract(t *testing.T) {
+	for _, route := range []string{"/v1/live", "/backend-api/codex/realtime/calls"} {
+		t.Run(route, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.POST(route, func(c *gin.Context) {
+				writeLiveCallCreated(c, &service.LiveCallCreated{
+					CallID: "call_test", SDP: []byte("v=answer\r\n"),
+				})
+			})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, route, nil))
+			require.Equal(t, http.StatusCreated, response.Code)
+			require.Equal(t, "application/sdp", response.Header().Get("Content-Type"))
+			require.Equal(t, liveSidebandLocation(route, "call_test"), response.Header().Get("Location"))
+			require.Equal(t, "v=answer\r\n", response.Body.String())
+		})
+	}
+}
+
 func TestLiveEnabledForAPIKey(t *testing.T) {
 	require.False(t, liveEnabledForAPIKey(nil))
 	require.False(t, liveEnabledForAPIKey(&service.APIKey{}))

@@ -125,8 +125,13 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 		h.writeLiveCreateError(c, err)
 		return
 	}
+	writeLiveCallCreated(c, created)
+}
+
+// writeLiveCallCreated 为两种入口统一返回创建结果和同身份控制通道地址。
+func writeLiveCallCreated(c *gin.Context, created *service.LiveCallCreated) {
 	c.Header("Location", liveSidebandLocation(c.FullPath(), created.CallID))
-	c.Data(http.StatusOK, "application/sdp", created.SDP)
+	c.Data(http.StatusCreated, "application/sdp", created.SDP)
 }
 
 func parseLiveCallRequest(c *gin.Context) (*service.LiveCallRequest, error) {
