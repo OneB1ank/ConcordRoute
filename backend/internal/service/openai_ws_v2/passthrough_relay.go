@@ -36,7 +36,6 @@ type RelayResult struct {
 	TerminalEventType       string
 	TerminalResponseBody    []byte
 	FirstTokenMs            *int
-	ResponseDuration        time.Duration // 展示总耗时与首响应使用同一起点。
 	FirstResponseMs         *int
 	SemanticFirstTokenMs    *int // 展示用首语义事件，与真实首内容分离。
 	Duration                time.Duration
@@ -1117,7 +1116,6 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.TerminalResponseBody = cloneBytes(state.terminalResponseBody)
 	result.FirstTokenMs = state.firstTokenMs
 	result.FirstResponseMs = state.firstResponse.snapshot()
-	result.ResponseDuration = duration
 	result.SemanticFirstTokenMs = openAIWSRelayCloneIntPtr(state.semanticFirstTokenMs)
 }
 

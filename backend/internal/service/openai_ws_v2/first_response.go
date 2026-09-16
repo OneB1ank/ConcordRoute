@@ -66,7 +66,8 @@ func (r *relayFirstResponse) observe(kind, id string, now time.Time) *int {
 	if r.first == nil {
 		r.first = openAIWSRelayCloneIntPtr(sample.first)
 	}
-	result := openAIWSRelayCloneIntPtr(sample.first)
+	// 采样发布后不再修改；内部复用指针，避免每个后续帧都分配一次，输出边界再复制。
+	result := sample.first
 	if terminal {
 		delete(r.byID, sample.id)
 		if r.active == sample {
