@@ -86,6 +86,7 @@ func (c *liveTestFrameConn) Close() error {
 type liveTestDialer struct {
 	conn       *liveTestFrameConn
 	url        string
+	proxyURL   string
 	headers    http.Header
 	tlsProfile *tlsfingerprint.Profile
 }
@@ -94,10 +95,11 @@ func (d *liveTestDialer) Dial(
 	_ context.Context,
 	wsURL string,
 	headers http.Header,
-	_ string,
+	proxyURL string,
 	profile *tlsfingerprint.Profile,
 ) (openAIWSClientConn, int, http.Header, error) {
 	d.url = wsURL
+	d.proxyURL = proxyURL
 	d.headers = headers.Clone()
 	d.tlsProfile = profile
 	return d.conn, http.StatusSwitchingProtocols, nil, nil
@@ -110,6 +112,35 @@ type liveTestAccountRepo struct {
 
 func (r *liveTestAccountRepo) GetByID(context.Context, int64) (*Account, error) {
 	return r.account, nil
+}
+
+// Frameless 的创建入口与 Sideband 入口分属不同域名；代理和 TLS 仍复用账号规则。
+func TestLiveSidebandUsesNativeEndpointWithoutAttestation(t *testing.T) {
+	profiles, routers := newLiveTLSRoutingServices()
+	proxyID := int64(17)
+	account := &Account{
+		ID: 11, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		ProxyID: &proxyID, Proxy: &Proxy{Protocol: "socks5", Host: "127.0.0.1", Port: 1080},
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"},
+		Extra:       map[string]any{"enable_tls_fingerprint": true, "tls_fingerprint_router_id": int64(9)},
+	}
+	dialer := &liveTestDialer{conn: newLiveTestFrameConn()}
+	service := &OpenAIGatewayService{
+		cfg: &config.Config{}, openaiWSPassthroughDialer: dialer,
+		tlsFPProfileService: profiles, tlsFPRouterService: routers,
+	}
+	conn, err := service.dialLiveSidebandForAccount(context.Background(), &LiveCallRecord{
+		CallID: "rtc_test", AccountID: account.ID, UserAgent: "test-live-client",
+	}, account)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.Equal(t, "wss://api.openai.com/v1/live/rtc_test", dialer.url)
+	require.Equal(t, "socks5://127.0.0.1:1080", dialer.proxyURL)
+	require.NotContains(t, dialer.headers, http.CanonicalHeaderKey(liveAttestationHeader))
+	require.Equal(t, "Bearer test-token", dialer.headers.Get("Authorization"))
+	require.Equal(t, "codex_vscode/0.145.0 live-test", dialer.headers.Get("User-Agent"))
+	require.NotNil(t, dialer.tlsProfile)
+	require.Equal(t, "live-routed", dialer.tlsProfile.Name)
 }
 
 type liveTestStore struct {
@@ -483,7 +514,7 @@ func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 	require.Equal(t, coderws.MessageBinary, messageType)
 	require.Equal(t, []byte{4, 5, 6}, payload)
 
-	require.Equal(t, "wss://chatgpt.com/backend-api/codex/call_proxy", dialer.url)
+	require.Equal(t, "wss://api.openai.com/v1/live/call_proxy", dialer.url)
 	require.Equal(t, "Bearer test-access-token", dialer.headers.Get("Authorization"))
 	require.Equal(t, "acct_test", dialer.headers.Get("Chatgpt-Account-Id"))
 	require.Equal(t, `{"v":1,"s":0,"t":"v1.sideband"}`, dialer.headers.Get(liveAttestationHeader))

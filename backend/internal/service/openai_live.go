@@ -39,8 +39,9 @@ const (
 var liveObserverStoreRetryInterval = time.Second
 
 var (
-	chatGPTLiveCallsURL        = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
-	chatGPTLiveSidebandBaseURL = "wss://chatgpt.com/backend-api/codex"
+	chatGPTLiveCallsURL = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
+	// Frameless 创建仍走 ChatGPT，控制连接与原生 Codex 一样加入独立 Live 入口。
+	openAILiveSidebandBaseURL = "wss://api.openai.com/v1/live"
 )
 
 type liveFrameConn interface {
@@ -590,7 +591,7 @@ func (s *OpenAIGatewayService) dialLiveSidebandForAccount(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
-	target := strings.TrimRight(chatGPTLiveSidebandBaseURL, "/") + "/" + url.PathEscape(record.CallID)
+	target := strings.TrimRight(openAILiveSidebandBaseURL, "/") + "/" + url.PathEscape(record.CallID)
 	tlsProfile, _ := s.resolveOpenAIWSTLSProfile(account, tlsRouterMatch)
 	conn, status, _, err := s.getOpenAIWSPassthroughDialer().Dial(ctx, target, headers, resolveAccountProxyURL(account), tlsProfile)
 	if err != nil {

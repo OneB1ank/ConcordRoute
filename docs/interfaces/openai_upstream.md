@@ -70,6 +70,8 @@ OpenAI 兼容非流式响应的 usage 按 `usage`、`response.usage`、`data.usa
 
 当前 Live 路由支持 `POST /v1/live` 或 `POST /backend-api/codex/realtime/calls` 创建 WebRTC 会话并返回 SDP，以及相应 call ID 的 Sideband 控制连接；它不是默认 `GET /v1/live` 的纯音频 WebSocket 服务。客户端验证必须明确选择匹配的 WebRTC transport，不能把 Responses SSE、证明 bridge 或 CLI 默认音频 WebSocket 当作同一种通道。
 
+上游信令创建使用 ChatGPT 的 `/backend-api/codex/realtime/calls`，Frameless Sideband 则使用 `wss://api.openai.com/v1/live/{call_id}`，与核对的 Codex 原生默认路径一致；不得把 call ID 直接追加在 ChatGPT Codex 根路径后。两条连接都继续使用创建会话的账号凭据、代理、UA/TLS 规则；控制连接不重新调度到其它账号。
+
 Codex app-server 的 `initialize.params.capabilities.experimentalApi` 与线程的 `features.realtime_conversation` 是不同开关；在核对的 0.153.4 中，仅启用 experimental API 并不会使线程具备 realtime 能力。该版本 v3 语音使用 audio 输出，text 输出只适用于 v2。排障先在隔离配置和本地假上游核对客户端请求是否真正到达 Live 创建路由，再验证有效账号、真实证明、SDP、控制连接和双向音频。网关的能力状态、单元测试或成功返回 RPC 确认均不替代真实通话验收；旧版本客户端的具体参数需按其自身协议核对。
 
 Live 的证明按来源可选：存在协商客户端、可信直接 Header 或平台提供器时沿用原校验与加密中继；没有来源（Linux 未配置 helper、本机平台不支持或 macOS 未安装对应 App）时不设置 `x-oai-attestation`，由真实上游决定账号资格。已配置 helper 的执行故障、格式错误、客户端异常 envelope 和已有密文解密失败仍明确报错，不静默降级。创建时未携带证明的会话，其 Sideband 同样不设置该头；已有证明的会话继续使用加密快照，不迁移、不混用。平台是否能生成证明不等于 Live 传输是否可用，也不保证所有账号都接受无证明请求。
