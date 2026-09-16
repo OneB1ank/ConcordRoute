@@ -25,6 +25,7 @@ import (
 type openaiStreamingResult struct {
 	usage                *OpenAIUsage
 	firstTokenMs         *int
+	firstResponseMs      *int
 	semanticFirstTokenMs *int
 	responseID           string
 	responseBindingEvent string
@@ -170,7 +171,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	responseID := ""
 	var firstOutputScanGuard atomic.Bool
 	firstOutputScanGuard.Store(guardFirstOutput)
-	scanner := bufio.NewScanner(resp.Body)
+	firstResponse := &openAIFirstResponseReader{reader: resp.Body, started: startTime}
+	scanner := bufio.NewScanner(firstResponse)
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	if guardFirstOutput {
@@ -358,6 +360,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		return &openaiStreamingResult{
 			usage:                usage,
 			firstTokenMs:         firstTokenMs,
+			firstResponseMs:      firstResponse.snapshot(),
 			semanticFirstTokenMs: semanticFirstTokenMs,
 			responseID:           responseID,
 			responseBindingEvent: responseBindingEvent,

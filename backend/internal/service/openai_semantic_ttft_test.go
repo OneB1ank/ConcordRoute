@@ -99,7 +99,9 @@ func TestOpenAISemanticTTFTForward(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result.SemanticFirstTokenMs)
 			require.Nil(t, result.FirstTokenMs, "空推理结构不应成为调度用的真实首内容")
-			require.Equal(t, result.SemanticFirstTokenMs, result.usageFirstTokenMs(account))
+			require.NotNil(t, result.FirstResponseMs)
+			require.LessOrEqual(t, *result.FirstResponseMs, *result.SemanticFirstTokenMs)
+			require.Equal(t, result.FirstResponseMs, result.usageFirstTokenMs(account))
 			require.Equal(t, 1, result.Usage.OutputTokens)
 			require.NotNil(t, upstream.lastReq)
 		})
@@ -130,7 +132,9 @@ func TestOpenAISemanticTTFTHTTPBridge(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.SemanticFirstTokenMs)
 	require.Nil(t, result.FirstTokenMs)
-	require.Equal(t, result.SemanticFirstTokenMs, result.usageFirstTokenMs(account))
+	require.NotNil(t, result.FirstResponseMs)
+	require.LessOrEqual(t, *result.FirstResponseMs, *result.SemanticFirstTokenMs)
+	require.Equal(t, result.FirstResponseMs, result.usageFirstTokenMs(account))
 	require.Len(t, frames, 2)
 }
 
@@ -187,11 +191,13 @@ func TestOpenAISemanticTTFTStatusOnly(t *testing.T) {
 		if raw {
 			result, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "test", "test")
 			require.NoError(t, err)
+			require.NotNil(t, result.firstResponseMs)
 			require.Nil(t, result.semanticFirstTokenMs)
 			require.Nil(t, result.firstTokenMs)
 		} else {
 			result, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test", "test")
 			require.NoError(t, err)
+			require.NotNil(t, result.firstResponseMs)
 			require.Nil(t, result.semanticFirstTokenMs)
 			require.Nil(t, result.firstTokenMs)
 		}

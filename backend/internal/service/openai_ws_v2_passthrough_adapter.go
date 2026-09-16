@@ -780,6 +780,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	firstFingerprintIDs *codexFingerprintIDs,
 	fingerprintAccount *Account,
 ) error {
+	firstResponseStart := time.Now()
 	if s == nil {
 		return errors.New("service is nil")
 	}
@@ -1317,6 +1318,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			IdleTimeout:                     0,
 			FirstMessageType:                coderws.MessageText,
 			FirstMessageSent:                upstreamFirstMessageSent,
+			FirstResponseStartAt:            firstResponseStart,
 			StartClientAfterFirstDownstream: true,
 			ReadClientFrame:                 readNextClientFrame,
 			OnUsageParseFailure: func(eventType string, usageRaw string) {
@@ -1387,6 +1389,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					Duration:                    turn.Duration,
 					FirstTokenMs:                turn.FirstTokenMs,
 					SemanticFirstTokenMs:        turn.SemanticFirstTokenMs,
+					FirstResponseMs:             turn.FirstResponseMs,
+					ResponseDuration:            turn.ResponseDuration,
 				}
 				if normalizeOpenAIWSTerminalEvent(turn.TerminalEventType) == "response.completed" {
 					s.ObserveCodexQuotaOverdraftBusinessSuccess(ctx, account, turnPayload.UpstreamModel, handshakeHeaders)
@@ -1603,6 +1607,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		Duration:                    relayResult.Duration,
 		FirstTokenMs:                relayResult.FirstTokenMs,
 		SemanticFirstTokenMs:        relayResult.SemanticFirstTokenMs,
+		FirstResponseMs:             relayResult.FirstResponseMs,
+		ResponseDuration:            time.Since(firstResponseStart),
 	}
 
 	turnCount := int(completedTurns.Load())

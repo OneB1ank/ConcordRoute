@@ -141,13 +141,11 @@ Responses WebSocket 与 HTTP 共用真实首内容判断：非空 delta、完整
 
 Responses HTTP/SSE 同样区分结构进度与可见输出：`response.created`、空 reasoning item 等进度可以提交当前 attempt、解除首输出超时并关闭 pre-output failover 窗口，但不记录真实首内容；非空文本/工具 delta、完整文本或工具参数、图片结果以及终态内实际 output 才开始首内容计时。只携带 usage 的终态保持首内容未观测。
 
-使用记录的首字展示另采用首语义事件口径：OpenAI 原生 Responses 的 HTTP 普通/透传、WS
-连接池、中继及 HTTP 桥接路径额外观测 `SemanticFirstTokenMs`，空推理 item、合法空 part
-和字符串型空 delta 均可触发；前导状态、心跳、错误及纯用量终态不计入。
-`RecordUsage` 在 OpenAI 流式/WS 记录中优先选择这个值写入 `first_token_ms`，没有样本时沿用原值。
-内部 `FirstTokenMs`、首内容阶段诊断与调度反馈保持原语义；帧转发、故障转移、身份与计费不使用新增值。
-历史使用记录不回填，其它平台、非流式以及未产生该样本的兼容协议保持原口径。
-详情见[首字指南](../guides/first-token-latency.md)。
+使用记录的“首字”展示采用首响应（首块）口径：OpenAI 原生 Responses HTTP 普通/透传、WS
+及 HTTP 桥接从本次转发开始到首个非空上游正文块/应用消息；创建通知算，本地心跳不算。
+`FirstResponseMs` 优先于语义样本，真实首内容 `FirstTokenMs` 与调度反馈仍保留原值。
+WS passthrough 展示总耗时对齐请求起点，内部旧耗时与协议生命周期不变。未接入的旧路径、
+其它平台及历史记录不改写；完整边界见[首字指南](../guides/first-token-latency.md)。
 
 OAuth 普通 Responses 与 OAuth passthrough 保留客户端显式提供的原生 `stream_options.reasoning_summary_delivery="sequential_cutoff"`，不主动补入该字段，也不改变 `reasoning.effort` 或 `reasoning.summary`。同一对象中的 Chat 专用 `include_usage` 及其它未支持成员仍移除；未支持的值、异常类型与旧版 Compact 请求沿用原有过滤规则。仅含原生选项的透传对象保持原始字节。该规则修正参数丢失，不承诺上游更早产生摘要或降低实际推理耗时。
 

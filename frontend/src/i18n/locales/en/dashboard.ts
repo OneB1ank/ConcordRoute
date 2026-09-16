@@ -380,7 +380,7 @@ export default {
     duration: 'Duration',
     latency: 'Latency',
     latencyFirstToken: 'First',
-    latencyFirstTokenHint: 'New native OpenAI Responses (HTTP/WS) records measure the first semantic event, including empty reasoning structures, not the arrival of actual text. Older records and other protocols may still measure first content.',
+    latencyFirstTokenHint: 'New native OpenAI Responses (HTTP/WS) records show first response: from forwarding start to the first non-empty upstream body chunk/application message, including creation notifications but excluding gateway-generated heartbeats. This is not actual text arrival or client receipt. Older records and other protocols may use different timing.',
     latencyFirstTokenNotApplicable: 'N/A',
     latencyFirstTokenNotApplicableHint: 'No independent first-content timing was recorded for this non-streaming request; total duration is not TTFT.',
     latencyFirstTokenNotRecorded: 'Not recorded',

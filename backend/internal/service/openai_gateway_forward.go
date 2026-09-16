@@ -996,6 +996,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		var usage *OpenAIUsage
 		var firstTokenMs *int
+		var firstResponseMs *int
 		var semanticFirstTokenMs *int
 		responseID := ""
 		responseBindingEvent := ""
@@ -1010,6 +1011,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
+			firstResponseMs = streamResult.firstResponseMs
 			semanticFirstTokenMs = streamResult.semanticFirstTokenMs
 			responseID = strings.TrimSpace(streamResult.responseID)
 			responseBindingEvent = streamResult.responseBindingEvent
@@ -1054,6 +1056,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			ResponseBody:                cloneDataSharingRequestBody(responseBody),
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                firstTokenMs,
+			FirstResponseMs:             firstResponseMs,
 			SemanticFirstTokenMs:        semanticFirstTokenMs,
 		}
 		if imageCount > 0 {

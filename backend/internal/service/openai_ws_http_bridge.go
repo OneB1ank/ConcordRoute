@@ -329,6 +329,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	var semanticFirstTokenMs *int
+	firstResponse := &openAIFirstResponseReader{reader: resp.Body, started: turnStart}
 	reqStream := openAIWSPayloadBoolFromRaw(body, "stream", true)
 	eventCount := 0
 	tokenEventCount := 0
@@ -359,6 +360,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			ResponseHeaders:             cloneHeader(resp.Header),
 			Duration:                    time.Since(turnStart),
 			FirstTokenMs:                firstTokenMs,
+			FirstResponseMs:             firstResponse.snapshot(),
 			SemanticFirstTokenMs:        semanticFirstTokenMs,
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
@@ -375,7 +377,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		return result
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(firstResponse)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize

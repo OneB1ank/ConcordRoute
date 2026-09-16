@@ -273,7 +273,9 @@ type OpenAIForwardResult struct {
 	DataShareSessionID    string // 数据共享聚合使用的稳定会话标识。
 	Duration              time.Duration
 	FirstTokenMs          *int
-	// SemanticFirstTokenMs 仅供使用记录展示；FirstTokenMs 继续为真实首内容，保留调度反馈口径。
+	// 展示用统计独立于 FirstTokenMs；后者继续用于真实首内容与调度反馈。
+	ResponseDuration     time.Duration // WS 中继展示总耗时；零值沿用 Duration。
+	FirstResponseMs      *int          // 展示用上游首块；不参与调度和真实首内容计时。
 	SemanticFirstTokenMs *int
 	ClientDisconnect     bool
 	ImageCount           int

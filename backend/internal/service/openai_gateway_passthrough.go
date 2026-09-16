@@ -285,6 +285,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	var usage *OpenAIUsage
 	var firstTokenMs *int
+	var firstResponseMs *int
 	var semanticFirstTokenMs *int
 	responseID := ""
 	responseBindingEvent := ""
@@ -298,6 +299,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		usage = result.usage
 		firstTokenMs = result.firstTokenMs
+		firstResponseMs = result.firstResponseMs
 		semanticFirstTokenMs = result.semanticFirstTokenMs
 		responseID = strings.TrimSpace(result.responseID)
 		responseBindingEvent = result.responseBindingEvent
@@ -341,6 +343,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		ResponseBody:                cloneDataSharingRequestBody(responseBody),
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                firstTokenMs,
+		FirstResponseMs:             firstResponseMs,
 		SemanticFirstTokenMs:        semanticFirstTokenMs,
 	}
 	if imageCount > 0 {
@@ -860,6 +863,7 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 type openaiStreamingResultPassthrough struct {
 	usage                *OpenAIUsage
 	firstTokenMs         *int
+	firstResponseMs      *int
 	semanticFirstTokenMs *int
 	responseID           string
 	responseBindingEvent string
@@ -1426,7 +1430,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		return true
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
+	firstResponse := &openAIFirstResponseReader{reader: resp.Body, started: startTime}
+	scanner := bufio.NewScanner(firstResponse)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -1452,6 +1457,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		return &openaiStreamingResultPassthrough{
 			usage:                usage,
 			firstTokenMs:         firstTokenMs,
+			firstResponseMs:      firstResponse.snapshot(),
 			semanticFirstTokenMs: semanticFirstTokenMs,
 			responseID:           responseID,
 			responseBindingEvent: responseBindingEvent,

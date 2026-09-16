@@ -966,6 +966,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		usage := OpenAIUsage{}
 		imageCounter := newOpenAIImageOutputCounter()
 		var firstTokenMs *int
+		var firstResponseMs *int
 		var semanticFirstTokenMs *int
 		reqStream := openAIWSPayloadBoolFromRaw(payload, "stream", true)
 		turnPreviousResponseID := openAIWSPayloadStringFromRaw(payload, "previous_response_id")
@@ -993,6 +994,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
+			if readErr == nil {
+				recordOpenAIFirstResponseMs(&firstResponseMs, turnStart, upstreamMessage)
+			}
 			if readErr != nil {
 				lease.MarkBroken()
 				return nil, wrapOpenAIWSIngressTurnError(
@@ -1243,6 +1247,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					ResponseBody:                cloneDataSharingRequestBody(terminalResponseBody),
 					Duration:                    time.Since(turnStart),
 					FirstTokenMs:                firstTokenMs,
+					FirstResponseMs:             firstResponseMs,
 					SemanticFirstTokenMs:        semanticFirstTokenMs,
 				}
 				if replayInput := replayCollector.Items(); len(replayInput) > 0 {

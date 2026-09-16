@@ -385,7 +385,7 @@ export default {
     duration: '耗时',
     latency: '延迟',
     latencyFirstToken: '首字',
-    latencyFirstTokenHint: 'OpenAI 原生 Responses（HTTP/WS）的新记录按首语义事件计时，空推理结构也可计入，并非实际文字到达时间。历史记录及其他协议可能仍按首内容计时。',
+    latencyFirstTokenHint: 'OpenAI 原生 Responses（HTTP/WS）的新记录显示首响应：从本次转发开始到收到上游首个非空数据块/应用消息，创建通知也计入，不含网关自身心跳；并非实际文字到达或客户端收到时间。历史记录及其他协议可能采用不同口径。',
     latencyFirstTokenNotApplicable: '不适用',
     latencyFirstTokenNotApplicableHint: '本次非流式请求未记录独立首内容时间；总耗时不是首字时间。',
     latencyFirstTokenNotRecorded: '未记录',

@@ -36,6 +36,8 @@ type RelayResult struct {
 	TerminalEventType       string
 	TerminalResponseBody    []byte
 	FirstTokenMs            *int
+	ResponseDuration        time.Duration // 展示总耗时与首响应使用同一起点。
+	FirstResponseMs         *int
 	SemanticFirstTokenMs    *int // 展示用首语义事件，与真实首内容分离。
 	Duration                time.Duration
 	ClientToUpstreamFrames  int64
@@ -51,6 +53,8 @@ type RelayTurnResult struct {
 	TerminalResponseBody []byte
 	Duration             time.Duration
 	FirstTokenMs         *int
+	ResponseDuration     time.Duration // 展示总耗时与首响应使用同一起点。
+	FirstResponseMs      *int
 	SemanticFirstTokenMs *int
 }
 
@@ -66,6 +70,8 @@ type RelayExit struct {
 var ErrDropDownstreamFrame = errors.New("drop upstream frame before downstream write")
 
 type RelayOptions struct {
+	// 首帧可能在进入中继前已发出，由调用方提供真实转发起点。
+	FirstResponseStartAt            time.Time
 	WriteTimeout                    time.Duration
 	IdleTimeout                     time.Duration
 	UpstreamDrainTimeout            time.Duration
@@ -99,6 +105,7 @@ type RelayTraceEvent struct {
 }
 
 type relayState struct {
+	firstResponse relayFirstResponse
 	// pendingTurns 覆盖请求已发送、尚未获得响应 ID 的空档；不参与首字计时。
 	pendingTurns atomic.Int64
 	// turnOutputState 高位为轮次代数，最低位为本轮已写出，避免上一轮迟到的写完成覆盖新轮次。
@@ -130,6 +137,8 @@ type observedUpstreamEvent struct {
 	duration           time.Duration
 	firstToken         *int
 	semanticFirstToken *int
+	firstResponse      *int
+	responseDuration   time.Duration
 }
 
 type relayTurnTiming struct {
@@ -173,6 +182,11 @@ func Relay(
 	state := &relayState{requestModel: result.RequestModel}
 	if isClientResponseCreateFrame(firstMessageType, firstClientMessage) {
 		state.beginPendingTurn()
+		firstStart := options.FirstResponseStartAt
+		if firstStart.IsZero() {
+			firstStart = startAt
+		}
+		state.firstResponse.begin(firstStart)
 	}
 	onTrace := options.OnTrace
 
@@ -194,6 +208,7 @@ func Relay(
 		if isClientResponseCreateFrame(msgType, payload) {
 			// 在写入前登记，保证上游立即应答时已经能观察到当前轮次。
 			state.beginPendingTurn()
+			state.firstResponse.begin(nowFn())
 		}
 		return writeUpstream(msgType, payload)
 	}
@@ -520,6 +535,8 @@ func runUpstreamToClient(
 			}
 			return
 		}
+		// 到达时采样；后续校验/回调/下游写出均不计入首块。
+		receivedAt := nowFn()
 		markActivity()
 		turnOutputState := uint64(0)
 		if state != nil {
@@ -565,11 +582,15 @@ func runUpstreamToClient(
 		terminal := false
 		switch msgType {
 		case coderws.MessageText:
-			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure, onUpstreamEvent)
+			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure, onUpstreamEvent, receivedAt)
 			terminal = observedEvent.terminal
 		case coderws.MessageBinary:
 			// 二进制帧仍不解析用量，但其中明确的终止事件需要结算连接生命周期。
-			terminal = isTerminalEvent(strings.TrimSpace(gjson.GetBytes(payload, "type").String()))
+			eventType, responseID := relayEventEnvelope(payload)
+			if len(payload) > 0 {
+				state.firstResponse.observe(eventType, responseID, receivedAt)
+			}
+			terminal = isTerminalEvent(eventType)
 			if terminal {
 				state.settleUnobservedTurn(strings.TrimSpace(gjson.GetBytes(payload, "response.id").String()))
 			}
@@ -710,6 +731,23 @@ func relayErrorString(err error) string {
 	return err.Error()
 }
 
+// relayEventEnvelope 统一真实内容统计与首响应统计的响应关联字段。
+func relayEventEnvelope(message []byte) (eventType, responseID string) {
+	values := gjson.GetManyBytes(message, "type", "response.id", "response_id", "id")
+	eventType = strings.TrimSpace(values[0].String())
+	responseID = strings.TrimSpace(values[1].String())
+	if responseID == "" {
+		responseID = strings.TrimSpace(values[2].String())
+	}
+	if responseID == "" && isTerminalEvent(eventType) {
+		topLevelID := strings.TrimSpace(values[3].String())
+		if strings.HasPrefix(topLevelID, "resp_") {
+			responseID = topLevelID
+		}
+	}
+	return eventType, responseID
+}
+
 func observeUpstreamMessage(
 	state *relayState,
 	message []byte,
@@ -717,12 +755,21 @@ func observeUpstreamMessage(
 	nowFn func() time.Time,
 	onUsageParseFailure func(eventType string, usageRaw string),
 	onUpstreamEvent func(eventType string, payload []byte),
+	receivedAt ...time.Time,
 ) observedUpstreamEvent {
 	if state == nil || len(message) == 0 {
 		return observedUpstreamEvent{}
 	}
-	values := gjson.GetManyBytes(message, "type", "response.id", "response_id", "id")
-	eventType := strings.TrimSpace(values[0].String())
+	eventType, responseID := relayEventEnvelope(message)
+	arrival := time.Time{}
+	if len(receivedAt) > 0 {
+		arrival = receivedAt[0]
+	}
+	if arrival.IsZero() {
+		arrival = nowFn()
+	}
+	// 复用 envelope，首块计时不重复解析每个文本帧；被重试丢弃的帧不会到此处。
+	firstResponse := state.firstResponse.observe(eventType, responseID, arrival)
 	if eventType == "" {
 		return observedUpstreamEvent{}
 	}
@@ -730,18 +777,7 @@ func observeUpstreamMessage(
 		bodyCopy := append([]byte(nil), message...)
 		onUpstreamEvent(eventType, bodyCopy)
 	}
-	responseID := strings.TrimSpace(values[1].String())
-	if responseID == "" {
-		responseID = strings.TrimSpace(values[2].String())
-	}
-	// 仅 terminal 事件兜底读取符合 OpenAI response ID 格式的顶层 id，
-	// 避免把 evt_* 等 event ID 当成 response_id 关联到 turn。
-	if responseID == "" && isTerminalEvent(eventType) {
-		topLevelID := strings.TrimSpace(values[3].String())
-		if strings.HasPrefix(topLevelID, "resp_") {
-			responseID = topLevelID
-		}
-	}
+
 	now := nowFn()
 	if eventType == "error" && responseID == "" && state.activeTurn == nil {
 		// 首响应前的明确拒绝不是无响应断流；仍透传错误，不合成成功终止事件。
@@ -771,9 +807,10 @@ func observeUpstreamMessage(
 	}
 	parsedUsage := parseUsageAndAccumulate(state, message, eventType, onUsageParseFailure)
 	observed := observedUpstreamEvent{
-		eventType:  eventType,
-		responseID: responseID,
-		usage:      parsedUsage,
+		eventType:     eventType,
+		responseID:    responseID,
+		usage:         parsedUsage,
+		firstResponse: firstResponse,
 	}
 	if responseID != "" {
 		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
@@ -785,6 +822,7 @@ func observeUpstreamMessage(
 	if !isTerminalEvent(eventType) {
 		return observed
 	}
+	observed.responseDuration = state.firstResponse.settledDuration()
 	observed.terminal = true
 	observed.responseBody = terminalEventResponseBody(message)
 	state.terminalEventType = eventType
@@ -832,6 +870,8 @@ func emitTurnComplete(
 		Duration:             observed.duration,
 		FirstTokenMs:         openAIWSRelayCloneIntPtr(observed.firstToken),
 		SemanticFirstTokenMs: openAIWSRelayCloneIntPtr(observed.semanticFirstToken),
+		FirstResponseMs:      openAIWSRelayCloneIntPtr(observed.firstResponse),
+		ResponseDuration:     observed.responseDuration,
 	})
 }
 
@@ -1076,6 +1116,8 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.TerminalEventType = state.terminalEventType
 	result.TerminalResponseBody = cloneBytes(state.terminalResponseBody)
 	result.FirstTokenMs = state.firstTokenMs
+	result.FirstResponseMs = state.firstResponse.snapshot()
+	result.ResponseDuration = duration
 	result.SemanticFirstTokenMs = openAIWSRelayCloneIntPtr(state.semanticFirstTokenMs)
 }
 

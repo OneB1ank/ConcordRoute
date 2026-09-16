@@ -278,6 +278,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Create usage log
 	durationMs := int(result.Duration.Milliseconds())
+	// WS 首响应纳入请求到创建事件前的等待，展示总耗时也保持同一区间。
+	if account.Platform == PlatformOpenAI && result.OpenAIWSMode && result.FirstResponseMs != nil && result.ResponseDuration > 0 {
+		durationMs = int(result.ResponseDuration.Milliseconds())
+	}
 	accountRateMultiplier := account.BillingRateMultiplier()
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
 	if result.OpenAIWSMode {

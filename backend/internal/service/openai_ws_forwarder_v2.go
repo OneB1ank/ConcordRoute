@@ -374,6 +374,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
+	var firstResponseMs *int
 	var semanticFirstTokenMs *int
 	responseID := ""
 	var finalResponse []byte
@@ -483,6 +484,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			pendingJSONDocuments = pendingJSONDocuments[1:]
 		} else {
 			message, readErr = lease.ReadMessageWithContextTimeout(ctx, readTimeout)
+			if readErr == nil {
+				recordOpenAIFirstResponseMs(&firstResponseMs, startTime, message)
+			}
 			if readErr == nil {
 				if documents, repaired := splitOpenAIConcatenatedJSONDocuments(message); repaired {
 					logOpenAIWSModeInfo(
@@ -898,6 +902,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		ResponseBody:                cloneDataSharingRequestBody(finalResponse),
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                firstTokenMs,
+		FirstResponseMs:             firstResponseMs,
 		SemanticFirstTokenMs:        semanticFirstTokenMs,
 		UpstreamWarning:             upstreamWarning,
 	}, nil
