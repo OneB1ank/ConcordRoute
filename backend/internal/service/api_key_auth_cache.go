@@ -153,6 +153,7 @@ type APIKeyAuthGroupSnapshot struct {
 	// AllowedClientProtocols 不使用 omitempty，确保空集合按 [] 写入快照。
 	AllowedClientProtocols      []GroupClientProtocol             `json:"allowed_client_protocols"`
 	AllowLive                   bool                              `json:"allow_live"`
+	AllowAudioTranscription     bool                              `json:"allow_audio_transcription"`
 	DefaultMappedModel          string                            `json:"default_mapped_model,omitempty"`
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
 	ModelsListConfig            GroupModelsListConfig             `json:"models_list_config,omitempty"`

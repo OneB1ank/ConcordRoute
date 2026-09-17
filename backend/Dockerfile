@@ -5,7 +5,7 @@ ARG MIHOMO_VERSION=1.19.30
 WORKDIR /app
 
 # 安装必要的工具
-RUN apk add --no-cache git ca-certificates wget && \
+RUN apk add --no-cache git ca-certificates wget ffmpeg && \
     case "$(apk --print-arch)" in \
       x86_64) MIHOMO_ARCH=amd64; MIHOMO_SHA256=cf06ce2c7d1421bdbda14ee4a5b6046672dc35ebf8eecd8e77504ec3c0ed9a84 ;; \
       aarch64) MIHOMO_ARCH=arm64; MIHOMO_SHA256=58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069 ;; \

@@ -123,8 +123,10 @@ LABEL maintainer="Wei-Shaw <github.com/Wei-Shaw>"
 LABEL description="Sub2API - AI API Gateway Platform"
 LABEL org.opencontainers.image.source="https://github.com/OneB1ank/ConcordRoute"
 
+# 压缩听写音频需在内存中解码计时；PCM WAV 不依赖外部解码器。
 # Install runtime dependencies
 RUN apk add --no-cache \
+    ffmpeg \
     ca-certificates \
     tzdata \
     su-exec \

@@ -117,6 +117,7 @@ func isForcedUsageBillingRequestID(requestID string) bool {
 	return strings.HasPrefix(id, "web_search:") ||
 		strings.HasPrefix(id, "grok-video:") ||
 		strings.HasPrefix(id, "grok_audio:") ||
+		strings.HasPrefix(id, "openai_audio:") ||
 		strings.HasPrefix(id, "grok_realtime:")
 }
 

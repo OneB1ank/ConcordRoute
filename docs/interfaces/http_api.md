@@ -45,6 +45,7 @@ RequestLogger
 | `/api/v1/payment/public/*` | 签名 resume token 或遗留订单验证约束 | 支付结果恢复；不得扩展为匿名订单枚举接口 |
 | `/api/v1/payment/webhook/*` | 提供商验签 | EasyPay、Alipay、WeChat Pay、Stripe、Airwallex 通知 |
 | `/v1/*` 和兼容裸别名 | ConcordRoute API Key | Anthropic/OpenAI 兼容消息、Responses、Chat、图片、视频、模型、用量与批任务 |
+| `/v1/audio/transcriptions`、`/audio/transcriptions`、`/transcribe`、`/backend-api/transcribe` | ConcordRoute API Key | 非流式听写；OpenAI 分组显式开启 `allow_audio_transcription`，见[听写转录](audio_transcription.md) |
 | `/v1beta/*` | ConcordRoute API Key | Gemini 原生模型 URL、生成、流式生成和 token 统计 |
 | `/antigravity/*` | ConcordRoute API Key + 强制平台 | Antigravity 专用 Claude/Gemini 入口与管理型自省 |
 | `/backend-api/codex/*` | ConcordRoute API Key | Codex Responses、Realtime、sideband 与独立 app-server JSON-RPC bridge 入口 |

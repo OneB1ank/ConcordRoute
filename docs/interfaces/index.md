@@ -12,6 +12,7 @@
 - [配置边界](configuration.md)：默认值、YAML、环境变量、数据库运行时设置和首次初始化之间的边界。读取时机：新增配置项、修改加载优先级、设置页面或部署变量时读取。
 - [上游账号能力矩阵](upstream_account_matrix.md)：六个平台、七类账号和全部公开网关协议的正式支持、兼容保留与不支持边界。读取时机：新增平台/账号类型、修改创建导入校验、路由分派或能力承诺时读取。
 - [Anthropic 上游](anthropic_upstream.md)：OAuth、Setup Token、API Key、Bedrock、Vertex，以及 Messages/OpenAI 兼容转换和缓存/限流契约。读取时机：修改 Anthropic 认证、协议、beta、thinking、缓存或错误分类时读取。
+- [听写转录](audio_transcription.md)：独立录音上传、桌面形状别名、音频计量、鉴权与原生客户端接入边界。读取时机：修改非流式听写、STT 定价、转录路由或客户端认证对接时读取。
 - [OpenAI 上游](openai_upstream.md)：OAuth/API Key、Responses、Chat、Messages、Embeddings、Images、Realtime 和 Codex 传输契约。读取时机：修改 OpenAI 认证、endpoint capability、WebSocket、模型或配额调度时读取。
 - [Gemini 上游](gemini_upstream.md)：OAuth 变体、API Key、Vertex Service Account、v1beta 原生和兼容协议契约。读取时机：修改 Gemini 认证、project/tier、协议转换、thought signature 或配额时读取。
 - [Antigravity 上游](antigravity_upstream.md)：Antigravity 专用端点、混合调度及模型协议边界。读取时机：修改 Antigravity 账号、OAuth、Claude/Gemini 转换或调度隔离时读取。

@@ -21,6 +21,7 @@ const (
 	EndpointChatCompletions      = "/v1/chat/completions"
 	EndpointEmbeddings           = "/v1/embeddings"
 	EndpointAlphaSearch          = "/v1/alpha/search"
+	EndpointAudioTranscriptions  = "/v1/audio/transcriptions"
 	EndpointResponses            = "/v1/responses"
 	EndpointResponsesCompact     = "/v1/responses/compact"
 	EndpointResponsesInputTokens = "/v1/responses/input_tokens"
@@ -78,6 +79,8 @@ const (
 func NormalizeInboundEndpoint(path string) string {
 	path = strings.TrimSpace(path)
 	switch {
+	case path == EndpointAudioTranscriptions || path == "/audio/transcriptions" || path == "/transcribe" || path == "/backend-api/transcribe":
+		return EndpointAudioTranscriptions
 	case strings.Contains(path, EndpointResponsesInputTokens) || isResponsesInputTokensAliasPath(path):
 		return EndpointResponsesInputTokens
 	case strings.Contains(path, EndpointEmbeddings):
@@ -177,7 +180,7 @@ func DeriveUpstreamEndpoint(inbound, rawRequestPath, platform string) string {
 
 	switch platform {
 	case service.PlatformOpenAI, service.PlatformGrok:
-		if inbound == EndpointEmbeddings || inbound == EndpointAlphaSearch || inbound == EndpointResponsesInputTokens || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits || inbound == EndpointVideosGenerations || inbound == EndpointVideosEdits || inbound == EndpointVideosExtensions || inbound == EndpointVideos {
+		if inbound == EndpointAudioTranscriptions || inbound == EndpointEmbeddings || inbound == EndpointAlphaSearch || inbound == EndpointResponsesInputTokens || inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits || inbound == EndpointVideosGenerations || inbound == EndpointVideosEdits || inbound == EndpointVideosExtensions || inbound == EndpointVideos {
 			return inbound
 		}
 		// OpenAI 的非原生端点统一转到 Responses API。

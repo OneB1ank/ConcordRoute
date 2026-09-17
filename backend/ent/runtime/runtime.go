@@ -1395,56 +1395,60 @@ func init() {
 	groupDescAllowedClientProtocols := groupFields[47].Descriptor()
 	// group.DefaultAllowedClientProtocols holds the default value on creation for the allowed_client_protocols field.
 	group.DefaultAllowedClientProtocols = groupDescAllowedClientProtocols.Default.([]domain.GroupClientProtocol)
+	// groupDescAllowAudioTranscription is the schema descriptor for allow_audio_transcription field.
+	groupDescAllowAudioTranscription := groupFields[48].Descriptor()
+	// group.DefaultAllowAudioTranscription holds the default value on creation for the allow_audio_transcription field.
+	group.DefaultAllowAudioTranscription = groupDescAllowAudioTranscription.Default.(bool)
 	// groupDescAllowLive is the schema descriptor for allow_live field.
-	groupDescAllowLive := groupFields[48].Descriptor()
+	groupDescAllowLive := groupFields[49].Descriptor()
 	// group.DefaultAllowLive holds the default value on creation for the allow_live field.
 	group.DefaultAllowLive = groupDescAllowLive.Default.(bool)
 	// groupDescRequireOauthOnly is the schema descriptor for require_oauth_only field.
-	groupDescRequireOauthOnly := groupFields[49].Descriptor()
+	groupDescRequireOauthOnly := groupFields[50].Descriptor()
 	// group.DefaultRequireOauthOnly holds the default value on creation for the require_oauth_only field.
 	group.DefaultRequireOauthOnly = groupDescRequireOauthOnly.Default.(bool)
 	// groupDescRequirePrivacySet is the schema descriptor for require_privacy_set field.
-	groupDescRequirePrivacySet := groupFields[50].Descriptor()
+	groupDescRequirePrivacySet := groupFields[51].Descriptor()
 	// group.DefaultRequirePrivacySet holds the default value on creation for the require_privacy_set field.
 	group.DefaultRequirePrivacySet = groupDescRequirePrivacySet.Default.(bool)
 	// groupDescDefaultMappedModel is the schema descriptor for default_mapped_model field.
-	groupDescDefaultMappedModel := groupFields[51].Descriptor()
+	groupDescDefaultMappedModel := groupFields[52].Descriptor()
 	// group.DefaultDefaultMappedModel holds the default value on creation for the default_mapped_model field.
 	group.DefaultDefaultMappedModel = groupDescDefaultMappedModel.Default.(string)
 	// group.DefaultMappedModelValidator is a validator for the "default_mapped_model" field. It is called by the builders before save.
 	group.DefaultMappedModelValidator = groupDescDefaultMappedModel.Validators[0].(func(string) error)
 	// groupDescMessagesDispatchModelConfig is the schema descriptor for messages_dispatch_model_config field.
-	groupDescMessagesDispatchModelConfig := groupFields[52].Descriptor()
+	groupDescMessagesDispatchModelConfig := groupFields[53].Descriptor()
 	// group.DefaultMessagesDispatchModelConfig holds the default value on creation for the messages_dispatch_model_config field.
 	group.DefaultMessagesDispatchModelConfig = groupDescMessagesDispatchModelConfig.Default.(domain.OpenAIMessagesDispatchModelConfig)
 	// groupDescModelsListConfig is the schema descriptor for models_list_config field.
-	groupDescModelsListConfig := groupFields[53].Descriptor()
+	groupDescModelsListConfig := groupFields[54].Descriptor()
 	// group.DefaultModelsListConfig holds the default value on creation for the models_list_config field.
 	group.DefaultModelsListConfig = groupDescModelsListConfig.Default.(domain.GroupModelsListConfig)
 	// groupDescAvailabilityProbeConfig is the schema descriptor for availability_probe_config field.
-	groupDescAvailabilityProbeConfig := groupFields[54].Descriptor()
+	groupDescAvailabilityProbeConfig := groupFields[55].Descriptor()
 	// group.DefaultAvailabilityProbeConfig holds the default value on creation for the availability_probe_config field.
 	group.DefaultAvailabilityProbeConfig = groupDescAvailabilityProbeConfig.Default.(domain.GroupAvailabilityProbeConfig)
 	// groupDescRpmLimit is the schema descriptor for rpm_limit field.
-	groupDescRpmLimit := groupFields[55].Descriptor()
+	groupDescRpmLimit := groupFields[56].Descriptor()
 	// group.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	group.DefaultRpmLimit = groupDescRpmLimit.Default.(int)
 	// groupDescMaxReasoningEffort is the schema descriptor for max_reasoning_effort field.
-	groupDescMaxReasoningEffort := groupFields[56].Descriptor()
+	groupDescMaxReasoningEffort := groupFields[57].Descriptor()
 	// group.DefaultMaxReasoningEffort holds the default value on creation for the max_reasoning_effort field.
 	group.DefaultMaxReasoningEffort = groupDescMaxReasoningEffort.Default.(string)
 	// group.MaxReasoningEffortValidator is a validator for the "max_reasoning_effort" field. It is called by the builders before save.
 	group.MaxReasoningEffortValidator = groupDescMaxReasoningEffort.Validators[0].(func(string) error)
 	// groupDescReasoningEffortMappings is the schema descriptor for reasoning_effort_mappings field.
-	groupDescReasoningEffortMappings := groupFields[57].Descriptor()
+	groupDescReasoningEffortMappings := groupFields[58].Descriptor()
 	// group.DefaultReasoningEffortMappings holds the default value on creation for the reasoning_effort_mappings field.
 	group.DefaultReasoningEffortMappings = groupDescReasoningEffortMappings.Default.([]domain.ReasoningEffortMapping)
 	// groupDescDataSharingEnabled is the schema descriptor for data_sharing_enabled field.
-	groupDescDataSharingEnabled := groupFields[58].Descriptor()
+	groupDescDataSharingEnabled := groupFields[59].Descriptor()
 	// group.DefaultDataSharingEnabled holds the default value on creation for the data_sharing_enabled field.
 	group.DefaultDataSharingEnabled = groupDescDataSharingEnabled.Default.(bool)
 	// groupDescSessionIsolationEnabled is the schema descriptor for session_isolation_enabled field.
-	groupDescSessionIsolationEnabled := groupFields[59].Descriptor()
+	groupDescSessionIsolationEnabled := groupFields[60].Descriptor()
 	// group.DefaultSessionIsolationEnabled holds the default value on creation for the session_isolation_enabled field.
 	group.DefaultSessionIsolationEnabled = groupDescSessionIsolationEnabled.Default.(bool)
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()

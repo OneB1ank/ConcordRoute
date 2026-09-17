@@ -276,6 +276,7 @@ type CreateGroupInput struct {
 	// AllowMessagesDispatch 仅在 OpenAI 分组且新字段缺省时作为兼容输入。
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
+	AllowAudioTranscription     bool
 	DefaultMappedModel          string
 	RequireOAuthOnly            bool
 	RequirePrivacySet           bool
@@ -360,6 +361,7 @@ type UpdateGroupInput struct {
 	// AllowMessagesDispatch 仅在 OpenAI 分组且新字段缺省时作为兼容输入。
 	AllowMessagesDispatch       *bool
 	AllowLive                   *bool
+	AllowAudioTranscription     *bool
 	DefaultMappedModel          *string
 	RequireOAuthOnly            *bool
 	RequirePrivacySet           *bool

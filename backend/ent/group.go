@@ -121,6 +121,8 @@ type Group struct {
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch,omitempty"`
 	// 允许客户端调用分组的文本协议完整集合
 	AllowedClientProtocols []domain.GroupClientProtocol `json:"allowed_client_protocols,omitempty"`
+	// 是否允许此 OpenAI 分组访问听写转录接口
+	AllowAudioTranscription bool `json:"allow_audio_transcription,omitempty"`
 	// 是否允许此 OpenAI 分组访问 Live 接口
 	AllowLive bool `json:"allow_live,omitempty"`
 	// 仅允许非 apikey 类型账号关联到此分组
@@ -264,7 +266,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldAdvancedSchedulerOverrides, group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldAllowedClientProtocols, group.FieldMessagesDispatchModelConfig, group.FieldModelsListConfig, group.FieldAvailabilityProbeConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldIsDefault, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldDataSharingEnabled, group.FieldSessionIsolationEnabled:
+		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldIsDefault, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowAudioTranscription, group.FieldAllowLive, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldDataSharingEnabled, group.FieldSessionIsolationEnabled:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour:
 			values[i] = new(sql.NullFloat64)
@@ -630,6 +632,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 					return fmt.Errorf("unmarshal field allowed_client_protocols: %w", err)
 				}
 			}
+		case group.FieldAllowAudioTranscription:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field allow_audio_transcription", values[i])
+			} else if value.Valid {
+				_m.AllowAudioTranscription = value.Bool
+			}
 		case group.FieldAllowLive:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field allow_live", values[i])
@@ -977,6 +985,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("allowed_client_protocols=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowedClientProtocols))
+	builder.WriteString(", ")
+	builder.WriteString("allow_audio_transcription=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AllowAudioTranscription))
 	builder.WriteString(", ")
 	builder.WriteString("allow_live=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowLive))

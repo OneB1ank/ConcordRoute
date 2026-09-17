@@ -30,6 +30,12 @@
 
 管理后台的数据管理功能还依赖一个通过 Unix Socket 通信的可选 `datamanagementd` 进程。本仓库保留主进程客户端、systemd unit 和安装脚本，但当前检出内容不包含 `datamanagement/` 源码目录，因此根 Makefile 的构建目标和安装脚本的 `--source` 模式不能在本仓库单独完成构建。只有在另行取得兼容二进制或完整源码时才应启用；现成二进制的部署步骤见 [datamanagementd 指南](../guides/deployment/datamanagementd.md)。
 
+### 听写运行时依赖
+
+压缩音频（例如 WebM/MP3/OGG）的实际时长通过本机 `ffmpeg` 管道解码计数；发布与源码容器安装该运行时包。裸二进制部署应由运维安装系统维护的 FFmpeg 并确保服务 PATH 可解析；应用不自动下载或安装。PCM WAV 不需要额外依赖；压缩音频缺解码器时明确返回 503，避免按文件大小估算费用。
+
+迁移 `280_add_group_allow_audio_transcription.sql` 只新增默认关闭的独立分组开关，不自动开通现有分组。升级全部服务实例后再在分组表单开启听写；回退旧应用时保留新增列与迁移记录即可。新增列不影响旧实例，但旧实例没有转录路由，不应参与已开通功能的负载均衡。
+
 ## 初始化与启动
 
 进程入口先判断是否需要 setup。未安装时可使用 Web setup、`--setup` CLI 或容器的 `AUTO_SETUP`；setup 测试 PostgreSQL/Redis，执行迁移，创建首个管理员，写入配置，最后创建只读安装锁。安装锁用于阻止重新初始化攻击，不能用删除它的方式修复普通配置问题。

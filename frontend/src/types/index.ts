@@ -756,6 +756,7 @@ export interface Group {
   // OpenAI Messages 调度开关（弃用兼容字段，新代码读取 allowed_client_protocols）
   allow_messages_dispatch?: boolean
   // OpenAI Live 接口开关
+  allow_audio_transcription: boolean
   allow_live: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
@@ -965,6 +966,7 @@ export interface CreateGroupRequest {
   availability_probe_config?: GroupAvailabilityProbeConfig
   allowed_client_protocols?: GroupClientProtocol[]
   allow_messages_dispatch?: boolean
+  allow_audio_transcription?: boolean
   allow_live?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
@@ -1029,6 +1031,7 @@ export interface UpdateGroupRequest {
   availability_probe_config?: GroupAvailabilityProbeConfig
   allowed_client_protocols?: GroupClientProtocol[]
   allow_messages_dispatch?: boolean
+  allow_audio_transcription?: boolean
   allow_live?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig

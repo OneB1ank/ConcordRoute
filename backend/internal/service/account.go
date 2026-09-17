@@ -104,6 +104,8 @@ const (
 	OpenAIEndpointCapabilityAlphaSearch     OpenAIEndpointCapability = "alpha_search"
 	// OpenAIEndpointCapabilityLive 表示仅 ChatGPT OAuth 账号支持的 Frameless Live 能力。
 	OpenAIEndpointCapabilityLive OpenAIEndpointCapability = "live"
+	// 听写使用独立能力，不根据文本模型列表推断音频支持。
+	OpenAIEndpointCapabilityAudioTranscriptions OpenAIEndpointCapability = "audio_transcriptions"
 	// OpenAIEndpointCapabilityGrokMediaGeneration 用于排除被显式禁用或计费资格
 	// 探测遭拒的 Grok 账号；视频状态查询不要求该能力，以便继续查询已提交的任务。
 	OpenAIEndpointCapabilityGrokMediaGeneration OpenAIEndpointCapability = "grok_media_generation"
@@ -1741,6 +1743,9 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	switch capability {
 	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityAudioTranscriptions:
+		return a.Platform == PlatformOpenAI && (a.Type == AccountTypeAPIKey ||
+			(a.Type == AccountTypeOAuth && !a.IsOpenAIPersonalAccessToken() && !a.IsOpenAIAgentIdentity()))
 	case OpenAIEndpointCapabilityLive:
 		return a.Platform == PlatformOpenAI &&
 			a.Type == AccountTypeOAuth &&

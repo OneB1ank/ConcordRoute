@@ -280,6 +280,11 @@ func AllowMessagesDispatch(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowMessagesDispatch, v))
 }
 
+// AllowAudioTranscription applies equality check predicate on the "allow_audio_transcription" field. It's identical to AllowAudioTranscriptionEQ.
+func AllowAudioTranscription(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldAllowAudioTranscription, v))
+}
+
 // AllowLive applies equality check predicate on the "allow_live" field. It's identical to AllowLiveEQ.
 func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
@@ -2183,6 +2188,16 @@ func AllowMessagesDispatchEQ(v bool) predicate.Group {
 // AllowMessagesDispatchNEQ applies the NEQ predicate on the "allow_messages_dispatch" field.
 func AllowMessagesDispatchNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldAllowMessagesDispatch, v))
+}
+
+// AllowAudioTranscriptionEQ applies the EQ predicate on the "allow_audio_transcription" field.
+func AllowAudioTranscriptionEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldAllowAudioTranscription, v))
+}
+
+// AllowAudioTranscriptionNEQ applies the NEQ predicate on the "allow_audio_transcription" field.
+func AllowAudioTranscriptionNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldAllowAudioTranscription, v))
 }
 
 // AllowLiveEQ applies the EQ predicate on the "allow_live" field.

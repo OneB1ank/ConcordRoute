@@ -356,6 +356,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.RateMultiplier = videoMultiplier
 	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
+	} else if result.AudioUsage != nil {
+		// 音频按时长/单位计算，显示倍率与费用计算保持一致，不叠加文本高峰。
+		usageLog.RateMultiplier = baseMultiplier
 	} else {
 		usageLog.RateMultiplier = multiplier
 	}

@@ -47,6 +47,8 @@ Cockpit 在客户端提供 `context_window_id` 时，按账号、映射后的 th
 <a id="openai_protocol_dispatch"></a>
 ## 协议与传输
 
+非流式录音转文字使用独立的 `/v1/audio/transcriptions` 和 `/transcribe` 兼容入口，分组开关、时长计费、上游认证和桌面原生按钮的验收边界见[听写转录](audio_transcription.md)。听写不是 Live，也不参与推理会话收敛。
+
 OpenAI 平台拥有以下正式协议族：
 
 | 协议 | 处理边界 |

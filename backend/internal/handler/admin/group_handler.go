@@ -118,6 +118,7 @@ type CreateGroupRequest struct {
 	// OpenAI Messages 旧兼容开关。
 	AllowMessagesDispatch       bool                                      `json:"allow_messages_dispatch"`
 	AllowLive                   bool                                      `json:"allow_live"`
+	AllowAudioTranscription     bool                                      `json:"allow_audio_transcription"`
 	RequireOAuthOnly            bool                                      `json:"require_oauth_only"`
 	RequirePrivacySet           bool                                      `json:"require_privacy_set"`
 	DefaultMappedModel          string                                    `json:"default_mapped_model"`
@@ -194,6 +195,7 @@ type UpdateGroupRequest struct {
 	// OpenAI Messages 旧兼容开关。
 	AllowMessagesDispatch       *bool                                      `json:"allow_messages_dispatch"`
 	AllowLive                   *bool                                      `json:"allow_live"`
+	AllowAudioTranscription     *bool                                      `json:"allow_audio_transcription"`
 	RequireOAuthOnly            *bool                                      `json:"require_oauth_only"`
 	RequirePrivacySet           *bool                                      `json:"require_privacy_set"`
 	DefaultMappedModel          *string                                    `json:"default_mapped_model"`
@@ -380,6 +382,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		AllowedClientProtocols:          req.AllowedClientProtocols,
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		AllowLive:                       req.AllowLive,
+		AllowAudioTranscription:         req.AllowAudioTranscription,
 		RequireOAuthOnly:                req.RequireOAuthOnly,
 		RequirePrivacySet:               req.RequirePrivacySet,
 		DefaultMappedModel:              req.DefaultMappedModel,
@@ -512,6 +515,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		AllowedClientProtocols:          req.AllowedClientProtocols,
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		AllowLive:                       req.AllowLive,
+		AllowAudioTranscription:         req.AllowAudioTranscription,
 		RequireOAuthOnly:                req.RequireOAuthOnly,
 		RequirePrivacySet:               req.RequirePrivacySet,
 		DefaultMappedModel:              req.DefaultMappedModel,

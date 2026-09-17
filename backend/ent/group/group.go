@@ -118,6 +118,8 @@ const (
 	FieldAllowMessagesDispatch = "allow_messages_dispatch"
 	// FieldAllowedClientProtocols holds the string denoting the allowed_client_protocols field in the database.
 	FieldAllowedClientProtocols = "allowed_client_protocols"
+	// FieldAllowAudioTranscription holds the string denoting the allow_audio_transcription field in the database.
+	FieldAllowAudioTranscription = "allow_audio_transcription"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
 	// FieldRequireOauthOnly holds the string denoting the require_oauth_only field in the database.
@@ -275,6 +277,7 @@ var Columns = []string{
 	FieldSortOrder,
 	FieldAllowMessagesDispatch,
 	FieldAllowedClientProtocols,
+	FieldAllowAudioTranscription,
 	FieldAllowLive,
 	FieldRequireOauthOnly,
 	FieldRequirePrivacySet,
@@ -405,6 +408,8 @@ var (
 	DefaultAllowMessagesDispatch bool
 	// DefaultAllowedClientProtocols holds the default value on creation for the "allowed_client_protocols" field.
 	DefaultAllowedClientProtocols []domain.GroupClientProtocol
+	// DefaultAllowAudioTranscription holds the default value on creation for the "allow_audio_transcription" field.
+	DefaultAllowAudioTranscription bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
 	// DefaultRequireOauthOnly holds the default value on creation for the "require_oauth_only" field.
@@ -666,6 +671,11 @@ func BySortOrder(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowMessagesDispatch orders the results by the allow_messages_dispatch field.
 func ByAllowMessagesDispatch(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowMessagesDispatch, opts...).ToFunc()
+}
+
+// ByAllowAudioTranscription orders the results by the allow_audio_transcription field.
+func ByAllowAudioTranscription(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAllowAudioTranscription, opts...).ToFunc()
 }
 
 // ByAllowLive orders the results by the allow_live field.

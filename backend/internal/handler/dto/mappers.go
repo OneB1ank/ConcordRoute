@@ -305,6 +305,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		AllowedClientProtocols:          g.EffectiveAllowedClientProtocols(),
 		AllowMessagesDispatch:           g.AllowsClientProtocol(service.GroupClientProtocolAnthropicMessages),
 		AllowLive:                       g.AllowLive,
+		AllowAudioTranscription:         g.AllowAudioTranscription,
 		RequireOAuthOnly:                g.RequireOAuthOnly,
 		RequirePrivacySet:               g.RequirePrivacySet,
 		RPMLimit:                        g.RPMLimit,

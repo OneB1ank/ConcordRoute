@@ -443,6 +443,7 @@ func TestAPIContracts(t *testing.T) {
 						],
 						"allow_messages_dispatch": true,
 						"allow_live": false,
+						"allow_audio_transcription": false,
 						"data_sharing_enabled": false,
 						"session_isolation_enabled": false,
 						"fallback_group_id": null,

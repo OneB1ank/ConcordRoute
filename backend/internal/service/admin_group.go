@@ -347,6 +347,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		SupportedModelScopes:            input.SupportedModelScopes,
 		AllowedClientProtocols:          allowedClientProtocols,
 		AllowLive:                       input.AllowLive,
+		AllowAudioTranscription:         input.AllowAudioTranscription,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
@@ -360,6 +361,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	sanitizeGroupMessagesDispatchFields(group)
 	if group.Platform != PlatformOpenAI {
 		group.AllowLive = false
+		group.AllowAudioTranscription = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
 	normalizeGroupDefaultState(group)
@@ -774,6 +776,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 
 	// 旧开关已在协议集合归一化阶段处理，此处只保留其它 OpenAI 专用配置。
+	if input.AllowAudioTranscription != nil {
+		group.AllowAudioTranscription = *input.AllowAudioTranscription
+	}
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive
 	}
@@ -819,6 +824,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	sanitizeGroupMessagesDispatchFields(group)
 	if group.Platform != PlatformOpenAI {
 		group.AllowLive = false
+		group.AllowAudioTranscription = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
 	normalizeGroupDefaultState(group)

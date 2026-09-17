@@ -1195,7 +1195,12 @@ affiliates: {
         targetModelPlaceholder: '例如: gpt-5.4',
         removeExactMapping: '删除精确映射'
       },
-      openaiLive: {
+      audioTranscription: {
+      allow: '允许听写转录',
+      hint: '独立于 Live。按录音时长使用 STT 价格；客户端需单独接入转录端点。',
+      price: '听写价格（美元/小时）',
+    },
+    openaiLive: {
         title: 'OpenAI Live',
         allow: '允许访问 Live',
         hint: '启用后，此 OpenAI 分组的 API Key 可请求 Live 语音会话，默认关闭。Linux 支持 WebRTC 信令与 Sideband 转发；有真实证明时携带，无来源时省略，由上游判定是否接受。还需语音客户端、有效 OAuth 账号和模型准入，开启权限不等于通话已验证。',

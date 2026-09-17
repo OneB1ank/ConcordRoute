@@ -173,7 +173,8 @@ type Group struct {
 	// AllowMessagesDispatch 是从协议集合派生的弃用兼容字段。
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
 	// OpenAI Live 接口开关
-	AllowLive bool `json:"allow_live"`
+	AllowLive               bool `json:"allow_live"`
+	AllowAudioTranscription bool `json:"allow_audio_transcription"`
 
 	// 账号过滤控制（仅 OpenAI/Antigravity 平台有效）
 	RequireOAuthOnly  bool `json:"require_oauth_only"`

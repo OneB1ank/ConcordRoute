@@ -1633,6 +1633,19 @@
           </p>
         </div>
 
+        <!-- 听写开关独立于 Live，由管理员显式启用。 -->
+        <div v-if="createForm.platform === 'openai'" class="mt-4 border-t pt-4">
+          <label class="flex items-center gap-2">
+            <input v-model="createForm.allow_audio_transcription" type="checkbox" class="rounded" />
+            {{ t("admin.groups.audioTranscription.allow") }}
+          </label>
+          <p class="mt-1 text-xs text-gray-500">{{ t("admin.groups.audioTranscription.hint") }}</p>
+          <label v-if="createForm.allow_audio_transcription" class="mt-2 block text-sm">
+            {{ t("admin.groups.audioTranscription.price") }}
+            <input v-model.number="createForm.audio_stt_price_per_hour" type="number" min="0" step="0.01" class="input mt-1" placeholder="0.10" />
+          </label>
+        </div>
+
         <GroupClientProtocolSelector
           v-model="createForm.allowed_client_protocols"
           :platform="createForm.platform"
@@ -3437,6 +3450,19 @@
           </p>
         </div>
 
+        <!-- 听写开关独立于 Live，由管理员显式启用。 -->
+        <div v-if="editForm.platform === 'openai'" class="mt-4 border-t pt-4">
+          <label class="flex items-center gap-2">
+            <input v-model="editForm.allow_audio_transcription" type="checkbox" class="rounded" />
+            {{ t("admin.groups.audioTranscription.allow") }}
+          </label>
+          <p class="mt-1 text-xs text-gray-500">{{ t("admin.groups.audioTranscription.hint") }}</p>
+          <label v-if="editForm.allow_audio_transcription" class="mt-2 block text-sm">
+            {{ t("admin.groups.audioTranscription.price") }}
+            <input v-model.number="editForm.audio_stt_price_per_hour" type="number" min="0" step="0.01" class="input mt-1" placeholder="0.10" />
+          </label>
+        </div>
+
         <GroupClientProtocolSelector
           v-model="editForm.allowed_client_protocols"
           :platform="editForm.platform"
@@ -4829,6 +4855,7 @@ const createForm = reactive({
   unavailable_fallback_group_id: null as number | null,
   // OpenAI Messages 模型映射（仅 openai 平台使用）
   allow_live: false,
+  allow_audio_transcription: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: createMessagesDispatchDefaults.sonnet_mapped_model,
   haiku_mapped_model: createMessagesDispatchDefaults.haiku_mapped_model,
@@ -5264,6 +5291,7 @@ const editForm = reactive({
   unavailable_fallback_group_id: null as number | null,
   // OpenAI Messages 模型映射（仅 openai 平台使用）
   allow_live: false,
+  allow_audio_transcription: false,
   default_mapped_model: '',
   opus_mapped_model: editMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: editMessagesDispatchDefaults.sonnet_mapped_model,
@@ -5728,6 +5756,7 @@ const closeCreateModal = () => {
   createForm.unavailable_fallback_group_id = null;
   resetMessagesDispatchFormState(createForm);
   createForm.allow_live = false;
+  createForm.allow_audio_transcription = false;
   createForm.require_oauth_only = false;
   createForm.require_privacy_set = false;
   createForm.supported_model_scopes = ["claude", "gemini_text", "gemini_image"];
@@ -5938,6 +5967,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.allowed_client_protocols,
   );
   editForm.allow_live = group.allow_live ?? false;
+  editForm.allow_audio_transcription = group.allow_audio_transcription ?? false;
   editForm.opus_mapped_model = messagesDispatchFormState.opus_mapped_model;
   editForm.sonnet_mapped_model = messagesDispatchFormState.sonnet_mapped_model;
   editForm.haiku_mapped_model = messagesDispatchFormState.haiku_mapped_model;
@@ -6010,6 +6040,7 @@ const closeEditModal = () => {
   editForm.audio_stt_price_per_hour = null;
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
+  editForm.allow_audio_transcription = false;
   resetModelsListState(editModelsListState);
 };
 
@@ -6236,6 +6267,7 @@ watch(
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(createForm);
       createForm.allow_live = false;
+      createForm.allow_audio_transcription = false;
     }
     createForm.max_reasoning_effort = normalizeReasoningEffortForPlatform(
       newVal,
@@ -6327,6 +6359,7 @@ watch(
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(editForm);
       editForm.allow_live = false;
+      editForm.allow_audio_transcription = false;
     }
     editForm.max_reasoning_effort = normalizeReasoningEffortForPlatform(
       newVal,

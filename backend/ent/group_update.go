@@ -953,6 +953,20 @@ func (_u *GroupUpdate) AppendAllowedClientProtocols(v []domain.GroupClientProtoc
 	return _u
 }
 
+// SetAllowAudioTranscription sets the "allow_audio_transcription" field.
+func (_u *GroupUpdate) SetAllowAudioTranscription(v bool) *GroupUpdate {
+	_u.mutation.SetAllowAudioTranscription(v)
+	return _u
+}
+
+// SetNillableAllowAudioTranscription sets the "allow_audio_transcription" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableAllowAudioTranscription(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetAllowAudioTranscription(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdate) SetAllowLive(v bool) *GroupUpdate {
 	_u.mutation.SetAllowLive(v)
@@ -1755,6 +1769,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
 			sqljson.Append(u, group.FieldAllowedClientProtocols, value)
 		})
+	}
+	if value, ok := _u.mutation.AllowAudioTranscription(); ok {
+		_spec.SetField(group.FieldAllowAudioTranscription, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -3043,6 +3060,20 @@ func (_u *GroupUpdateOne) AppendAllowedClientProtocols(v []domain.GroupClientPro
 	return _u
 }
 
+// SetAllowAudioTranscription sets the "allow_audio_transcription" field.
+func (_u *GroupUpdateOne) SetAllowAudioTranscription(v bool) *GroupUpdateOne {
+	_u.mutation.SetAllowAudioTranscription(v)
+	return _u
+}
+
+// SetNillableAllowAudioTranscription sets the "allow_audio_transcription" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableAllowAudioTranscription(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetAllowAudioTranscription(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdateOne) SetAllowLive(v bool) *GroupUpdateOne {
 	_u.mutation.SetAllowLive(v)
@@ -3875,6 +3906,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
 			sqljson.Append(u, group.FieldAllowedClientProtocols, value)
 		})
+	}
+	if value, ok := _u.mutation.AllowAudioTranscription(); ok {
+		_spec.SetField(group.FieldAllowAudioTranscription, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)

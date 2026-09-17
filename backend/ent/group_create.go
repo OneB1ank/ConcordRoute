@@ -695,6 +695,20 @@ func (_c *GroupCreate) SetAllowedClientProtocols(v []domain.GroupClientProtocol)
 	return _c
 }
 
+// SetAllowAudioTranscription sets the "allow_audio_transcription" field.
+func (_c *GroupCreate) SetAllowAudioTranscription(v bool) *GroupCreate {
+	_c.mutation.SetAllowAudioTranscription(v)
+	return _c
+}
+
+// SetNillableAllowAudioTranscription sets the "allow_audio_transcription" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableAllowAudioTranscription(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetAllowAudioTranscription(*v)
+	}
+	return _c
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_c *GroupCreate) SetAllowLive(v bool) *GroupCreate {
 	_c.mutation.SetAllowLive(v)
@@ -1108,6 +1122,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultAllowedClientProtocols
 		_c.mutation.SetAllowedClientProtocols(v)
 	}
+	if _, ok := _c.mutation.AllowAudioTranscription(); !ok {
+		v := group.DefaultAllowAudioTranscription
+		_c.mutation.SetAllowAudioTranscription(v)
+	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
@@ -1313,6 +1331,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.AllowedClientProtocols(); !ok {
 		return &ValidationError{Name: "allowed_client_protocols", err: errors.New(`ent: missing required field "Group.allowed_client_protocols"`)}
+	}
+	if _, ok := _c.mutation.AllowAudioTranscription(); !ok {
+		return &ValidationError{Name: "allow_audio_transcription", err: errors.New(`ent: missing required field "Group.allow_audio_transcription"`)}
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
@@ -1590,6 +1611,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AllowedClientProtocols(); ok {
 		_spec.SetField(group.FieldAllowedClientProtocols, field.TypeJSON, value)
 		_node.AllowedClientProtocols = value
+	}
+	if value, ok := _c.mutation.AllowAudioTranscription(); ok {
+		_spec.SetField(group.FieldAllowAudioTranscription, field.TypeBool, value)
+		_node.AllowAudioTranscription = value
 	}
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -2624,6 +2649,18 @@ func (u *GroupUpsert) SetAllowedClientProtocols(v []domain.GroupClientProtocol) 
 // UpdateAllowedClientProtocols sets the "allowed_client_protocols" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateAllowedClientProtocols() *GroupUpsert {
 	u.SetExcluded(group.FieldAllowedClientProtocols)
+	return u
+}
+
+// SetAllowAudioTranscription sets the "allow_audio_transcription" field.
+func (u *GroupUpsert) SetAllowAudioTranscription(v bool) *GroupUpsert {
+	u.Set(group.FieldAllowAudioTranscription, v)
+	return u
+}
+
+// UpdateAllowAudioTranscription sets the "allow_audio_transcription" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateAllowAudioTranscription() *GroupUpsert {
+	u.SetExcluded(group.FieldAllowAudioTranscription)
 	return u
 }
 
@@ -3788,6 +3825,20 @@ func (u *GroupUpsertOne) SetAllowedClientProtocols(v []domain.GroupClientProtoco
 func (u *GroupUpsertOne) UpdateAllowedClientProtocols() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowedClientProtocols()
+	})
+}
+
+// SetAllowAudioTranscription sets the "allow_audio_transcription" field.
+func (u *GroupUpsertOne) SetAllowAudioTranscription(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAllowAudioTranscription(v)
+	})
+}
+
+// UpdateAllowAudioTranscription sets the "allow_audio_transcription" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateAllowAudioTranscription() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAllowAudioTranscription()
 	})
 }
 
@@ -5143,6 +5194,20 @@ func (u *GroupUpsertBulk) SetAllowedClientProtocols(v []domain.GroupClientProtoc
 func (u *GroupUpsertBulk) UpdateAllowedClientProtocols() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowedClientProtocols()
+	})
+}
+
+// SetAllowAudioTranscription sets the "allow_audio_transcription" field.
+func (u *GroupUpsertBulk) SetAllowAudioTranscription(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetAllowAudioTranscription(v)
+	})
+}
+
+// UpdateAllowAudioTranscription sets the "allow_audio_transcription" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateAllowAudioTranscription() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateAllowAudioTranscription()
 	})
 }
 

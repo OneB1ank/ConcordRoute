@@ -65,6 +65,7 @@
 | OpenAI Chat Completions：`/v1/chat/completions`、`/chat/completions` | 最终分组允许 Chat 时，六个平台均按平台转换或原生转发 | 六个平台专题 |
 | 模型与用量：`/v1/models`、`/models`、`/v1/usage` | 按 Key、分组、账号和渠道解析可请求模型与本地额度；不是上游模型列表或账单的原样代理 | [模型目录与市场](model_catalog_and_marketplace.md)及各平台专题 |
 | Embeddings：`/v1/embeddings`、`/embeddings` | 仅 OpenAI 分组 | [OpenAI 上游](openai_upstream.md) |
+| 非流式听写：`/v1/audio/transcriptions` 及兼容别名 | 仅 OpenAI 分组，独立听写开关；OAuth（排除 PAT/agent identity）与 API Key | [听写转录](audio_transcription.md) |
 | Realtime、Live 与 Alpha Search | Live/sideband、Codex realtime 和 alpha search 仅 OpenAI 平台；是否可用还受分组和账号能力限制 | [OpenAI 上游](openai_upstream.md) |
 | 同步图片生成/编辑 | 仅 OpenAI 与 Grok；分组图片开关和账号能力继续收窄范围 | [OpenAI 上游](openai_upstream.md)、[Grok / xAI 上游](grok_upstream.md) |
 | 批量图片作业 | Gemini/Vertex 使用独立任务生命周期；供应商范围由批量图片领域契约定义 | [批量图片作业](../domains/batch_image_jobs.md) |

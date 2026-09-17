@@ -1197,7 +1197,12 @@ affiliates: {
         targetModelPlaceholder: 'e.g., gpt-5.4',
         removeExactMapping: 'Remove Exact Mapping'
       },
-      openaiLive: {
+      audioTranscription: {
+      allow: 'Allow audio transcription',
+      hint: 'Independent of Live. Billed by audio duration at the STT rate; clients must connect to the transcription endpoint.',
+      price: 'Transcription price (USD/hour)',
+    },
+    openaiLive: {
         title: 'OpenAI Live',
         allow: 'Allow Live access',
         hint: 'Allows this OpenAI group to request Live voice sessions. Disabled by default. Linux supports WebRTC signaling and Sideband forwarding. Genuine attestations are included when available; otherwise omitted, with acceptance decided upstream. A voice-capable client, eligible OAuth account and allowed voice model are still required. Enabling access does not verify a working call.',
