@@ -386,6 +386,9 @@ func shouldBypassEmbeddedFrontend(request *http.Request) bool {
 		trimmed == "/responses" ||
 		strings.HasPrefix(trimmed, "/responses/") ||
 		trimmed == "/alpha/search" ||
+		// 听写别名交给 API 鉴权，避免嵌入式前端提前返回 200 HTML。
+		trimmed == "/audio/transcriptions" ||
+		trimmed == "/transcribe" ||
 		strings.HasPrefix(trimmed, "/images/") ||
 		strings.HasPrefix(trimmed, "/videos/")
 }

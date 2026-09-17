@@ -39,6 +39,13 @@ jobs:
       - name: Unit tests
         working-directory: backend
         run: make test-unit
+      - name: Embedded audio gateway routing
+        working-directory: backend
+        run: |
+          # 最小嵌入资源即可覆盖真实前端中间件，不依赖完整 UI 构建。
+          mkdir -p internal/web/dist
+          printf '<!doctype html><html><head><title>Test</title></head><body></body></html>' > internal/web/dist/index.html
+          go test -tags=embed ./internal/web -run '^TestAudioTranscriptionEmbeddedRouting$' -count=1
       - name: Integration tests
         working-directory: backend
         run: make test-integration

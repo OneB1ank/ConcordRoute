@@ -8,6 +8,7 @@
 - `POST /v1/audio/transcriptions` 与 `/audio/transcriptions`：OpenAI Audio API 的 multipart 兼容子集，必填 `file`、`model`。
 - `POST /transcribe` 与 `/backend-api/transcribe`：桌面形状兼容别名，允许省略 model，缺省使用 `gpt-transcribe` 作为本地请求/计费别名。
 - 四个入口均要求 ConcordRoute API Key，并执行用户/团队/余额或订阅、分组、渠道、用户与账号并发准入。匿名请求不会进入音频解码和上游上传。
+- 嵌入式前端的普通与兼容中间件均放行上述 API 路径；无 `/v1` 前缀的别名同样进入鉴权，而非返回 SPA HTML。该边界有 `embed` 构建回归并纳入 CI。
 - 分组必须是 OpenAI，且管理员显式开启 `allow_audio_transcription`。默认关闭，与 `allow_live`、文本协议开关独立；创建、更新、复制、认证缓存与 DTO 均携带该字段。
 - 复合 Key 仍需明确的模型前缀选组。无 model 的桌面请求应使用绑定单组的 Key。
 
