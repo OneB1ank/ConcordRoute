@@ -45,6 +45,7 @@ type AdminHandlers struct {
 	CodexInviteReset          *admin.CodexInviteResetHandler
 	AuditLog                  *admin.AuditLogHandler
 	Team                      *admin.TeamHandler
+	Plugin                    *admin.PluginHandler
 }
 
 // Handlers contains all HTTP handlers

@@ -100,6 +100,7 @@ type Config struct {
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	Team                    TeamConfig                    `mapstructure:"team"`
+	Plugins                 PluginConfig                  `mapstructure:"plugins"`
 }
 
 // TeamConfig 控制团队功能的默认开放策略。
@@ -109,6 +110,25 @@ type TeamConfig struct {
 	DefaultMemberLimit int  `mapstructure:"default_member_limit"`
 }
 
+// PluginConfig 控制管理员手动上传的本地进程插件，默认不安装、不启用未签名插件。
+type PluginConfig struct {
+	DataDir              string              `mapstructure:"data_dir"`
+	AllowUnsigned        bool                `mapstructure:"allow_unsigned"`
+	TrustedPublishers    map[string]string   `mapstructure:"trusted_publishers"`
+	MaxUploadBytes       int64               `mapstructure:"max_upload_bytes"`
+	MaxUncompressedBytes int64               `mapstructure:"max_uncompressed_bytes"`
+	StartTimeoutSeconds  int                 `mapstructure:"start_timeout_seconds"`
+	V2Sandbox            PluginSandboxConfig `mapstructure:"v2_sandbox"`
+}
+
+// PluginSandboxConfig 控制 v2 插件的进程/容器隔离参数。
+type PluginSandboxConfig struct {
+	Mode      string `mapstructure:"mode"`
+	Image     string `mapstructure:"image"`
+	MemoryMB  int    `mapstructure:"memory_mb"`
+	CPUMilli  int    `mapstructure:"cpu_milli"`
+	PidsLimit int    `mapstructure:"pids_limit"`
+}
 type LogConfig struct {
 	Level           string            `mapstructure:"level"`
 	Format          string            `mapstructure:"format"`
@@ -2215,6 +2235,22 @@ func setDefaults() {
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
 
+	// 本地进程插件默认停用；安装、启用和发布者信任均由管理员显式操作。
+	viper.SetDefault("plugins.data_dir", "")
+	viper.SetDefault("plugins.allow_unsigned", false)
+	viper.SetDefault("plugins.trusted_publishers", map[string]string{})
+	if PluginPreviewEnabled() {
+		viper.SetDefault("plugins.trusted_publishers", PreviewTrustedPublishers())
+	}
+	viper.SetDefault("plugins.max_upload_bytes", int64(128*1024*1024))
+	viper.SetDefault("plugins.max_uncompressed_bytes", int64(256*1024*1024))
+	viper.SetDefault("plugins.start_timeout_seconds", 15)
+	viper.SetDefault("plugins.v2_sandbox.mode", "process")
+	viper.SetDefault("plugins.v2_sandbox.image", "sub2api-plugin-sandbox:1")
+	viper.SetDefault("plugins.v2_sandbox.memory_mb", 256)
+	viper.SetDefault("plugins.v2_sandbox.cpu_milli", 1000)
+	viper.SetDefault("plugins.v2_sandbox.pids_limit", 64)
+
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
 	viper.SetDefault("team.enabled", true)
@@ -2564,6 +2600,18 @@ func (c *Config) Validate() error {
 	}
 	c.Security.ForwardedClientIPHeaders = forwardedClientIPHeaders
 	c.SetForwardedClientIPSettings(c.Security.TrustForwardedIPForAPIKeyACL, forwardedClientIPHeaders)
+	if c.Plugins.MaxUploadBytes <= 0 || c.Plugins.MaxUploadBytes > 1024*1024*1024 {
+		return fmt.Errorf("plugins.max_upload_bytes must be between 1 and 1073741824")
+	}
+	if c.Plugins.MaxUncompressedBytes < c.Plugins.MaxUploadBytes || c.Plugins.MaxUncompressedBytes > 2*1024*1024*1024 {
+		return fmt.Errorf("plugins.max_uncompressed_bytes must be between max_upload_bytes and 2147483648")
+	}
+	if c.Plugins.StartTimeoutSeconds < 1 || c.Plugins.StartTimeoutSeconds > 120 {
+		return fmt.Errorf("plugins.start_timeout_seconds must be between 1 and 120")
+	}
+	if err := c.Plugins.V2Sandbox.Validate(); err != nil {
+		return err
+	}
 	if c.Server.ReadHeaderTimeout < 1 || c.Server.ReadHeaderTimeout > 60 {
 		return fmt.Errorf("server.read_header_timeout must be between 1 and 60 seconds")
 	}

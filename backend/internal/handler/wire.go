@@ -49,6 +49,7 @@ func ProvideAdminHandlers(
 	codexInviteResetHandler *admin.CodexInviteResetHandler,
 	auditLogHandler *admin.AuditLogHandler,
 	teamHandler *admin.TeamHandler,
+	pluginHandler *admin.PluginHandler,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 ) *AdminHandlers {
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
@@ -92,6 +93,7 @@ func ProvideAdminHandlers(
 		CodexInviteReset:          codexInviteResetHandler,
 		AuditLog:                  auditLogHandler,
 		Team:                      teamHandler,
+		Plugin:                    pluginHandler,
 	}
 }
 
@@ -99,6 +101,11 @@ func ProvideAdminHandlers(
 // 证明采集器管理处理器。
 func ProvideCodexAttestationCollectorHandler(gateway *service.OpenAIGatewayService) *admin.CodexAttestationCollectorHandler {
 	return admin.NewCodexAttestationCollectorHandler(gateway)
+}
+
+// ProvidePluginHandler 注入插件宿主管理处理器；插件默认停用，不参与普通请求链。
+func ProvidePluginHandler(manager *service.PluginManager) *admin.PluginHandler {
+	return admin.NewPluginHandler(manager)
 }
 
 // ProvideOpenAIGatewayHandler 创建并注入 Grok 媒体资格探测器。
@@ -272,6 +279,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewCodexInviteResetHandler,
 	admin.NewAuditLogHandler,
 	admin.NewTeamHandler,
+	ProvidePluginHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

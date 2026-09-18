@@ -166,6 +166,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
@@ -481,6 +482,10 @@ const ServerIcon = {
     )
 }
 
+const PluginIcon = {
+  render: () => h(Icon, { name: 'cube' })
+}
+
 const BellIcon = {
   render: () =>
     h(
@@ -738,6 +743,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: ChartIcon, hideInSimpleMode: true, featureFlag: flagChannelMonitor },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+    { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     { path: '/admin/proxies/clash', label: t('nav.clashProxy'), icon: ServerIcon },

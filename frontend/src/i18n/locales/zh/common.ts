@@ -134,6 +134,7 @@ export default {
     channelStatus: '渠道状态',
     subscriptions: '订阅管理',
     accounts: '账号管理',
+    plugins: '插件管理',
     proxies: 'IP管理',
     clashProxy: 'Clash 代理',
     redeemCodes: '兑换码',

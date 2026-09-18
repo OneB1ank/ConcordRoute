@@ -38,6 +38,7 @@ import riskControlAPI from './riskControl'
 import adminDataSharingAPI from './dataSharing'
 import auditAPI from './audit'
 import teamsAPI from './teams'
+import pluginsAPI from './plugins'
 
 /**
  * Unified admin API object for convenient access
@@ -77,7 +78,8 @@ export const adminAPI = {
   riskControl: riskControlAPI,
   dataSharing: adminDataSharingAPI,
   audit: auditAPI,
-  teams: teamsAPI
+  teams: teamsAPI,
+  plugins: pluginsAPI
 }
 
 export {
@@ -115,7 +117,8 @@ export {
   riskControlAPI,
   adminDataSharingAPI,
   auditAPI,
-  teamsAPI
+  teamsAPI,
+  pluginsAPI
 }
 
 export default adminAPI
@@ -147,3 +150,19 @@ export type {
 } from './tlsFingerprintRouter'
 export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'
 export type { DataShareStats, AdminDataShareSessionFilters } from './dataSharing'
+export type {
+  PluginCapability,
+  PluginRequirements,
+  PluginManifest,
+  PluginCompatibility,
+  PluginBinding,
+  PluginRoutingPolicy,
+  PluginSecretGrant,
+  PluginHostSnapshot,
+  PluginInstallation,
+  PluginPackageInspection,
+  PluginPublisherApproval,
+  PluginTestResult,
+  PluginVersion,
+  PluginUISession
+} from './plugins'

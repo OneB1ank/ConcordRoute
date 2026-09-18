@@ -950,6 +950,7 @@ var ProviderSet = wire.NewSet(
 	NewChannelMonitorRequestTemplateService,
 	NewModelPricingResolver,
 	ProvideContentModerationService,
+	NewPluginManager,
 	ProvidePaymentConfigService,
 	ProvidePaymentService,
 	ProvidePaymentOrderExpiryService,

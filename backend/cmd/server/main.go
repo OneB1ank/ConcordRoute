@@ -156,6 +156,13 @@ func runMainServer() {
 	}
 	defer app.Cleanup()
 
+	// 插件宿主只负责插件生命周期与管理面；默认插件停用，不参与普通网关请求链。
+	if app.PluginManager != nil {
+		if err := app.PluginManager.Start(context.Background()); err != nil {
+			log.Fatalf("Failed to start plugin manager: %v", err)
+		}
+	}
+
 	// 启动服务器
 	go func() {
 		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

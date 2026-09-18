@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sub2api.local/schemas/plugin-manifest-v2.json",
+  "title": "Sub2API Plugin Manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "name", "version", "requires", "capabilities", "runtimes", "ui", "files"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "id": { "type": "string", "maxLength": 160, "pattern": "^[a-z0-9]+([._-][a-z0-9]+)+$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "version": { "type": "string", "pattern": "^v?(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$" },
+    "description": { "type": "string" },
+    "author": { "type": "string", "maxLength": 160 },
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sub2api", "plugin_protocol", "extension_api", "ui_bridge"],
+      "properties": {
+        "sub2api": { "type": "string", "minLength": 1 },
+        "recommended_sub2api_version": { "type": "string" },
+        "tested_sub2api_versions": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "plugin_protocol": { "const": 2 },
+        "extension_api": { "const": 1 },
+        "ui_bridge": { "const": 1 }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "permissions", "timeout_ms", "failure_mode", "synchronous"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+\\.v[1-9][0-9]*$" },
+          "kind": { "enum": ["hook", "provider", "event_sink", "worker"] },
+          "platform": { "type": "string" },
+          "account_type": { "type": "string" },
+          "permissions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000 },
+          "failure_mode": { "enum": ["fail_closed", "fail_open", "async"] },
+          "synchronous": { "type": "boolean" }
+        }
+      }
+    },
+    "runtimes": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9]+-[a-z0-9]+$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": { "path": { "$ref": "#/$defs/safePath" } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint"],
+      "properties": { "entrypoint": { "type": "string", "pattern": "^ui/.+" } }
+    },
+    "files": {
+      "type": "object",
+      "minProperties": 2,
+      "propertyNames": { "$ref": "#/$defs/safePath" },
+      "additionalProperties": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+    }
+  },
+  "$defs": {
+    "safePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    }
+  }
+}

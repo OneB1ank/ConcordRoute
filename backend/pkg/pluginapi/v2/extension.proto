@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package sub2api.plugin.v2;
+
+option go_package = "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2/wire;wire";
+
+// ExtensionPlugin is the generic user-space extension contract. The existing
+// v1 TransportPlugin remains available for backwards compatibility.
+service ExtensionPlugin {
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc ValidateConfig(ConfigRequest) returns (ConfigResponse);
+  rpc ApplyConfig(ConfigRequest) returns (ApplyResponse);
+  rpc TestConfig(ConfigRequest) returns (TestResponse);
+  rpc Preprocess(PreprocessRequest) returns (PreprocessResponse);
+  rpc AttachHost(AttachHostRequest) returns (ApplyResponse);
+}
+
+message AttachHostRequest {
+  uint32 broker_id = 1;
+  uint32 host_api_version = 2;
+}
+
+// Each HostServices server is bound by the host to one verified installation.
+// No operation accepts an installation ID, environment key, or database query.
+service HostServices {
+  rpc Log(HostLogRequest) returns (HostAck);
+  rpc Metric(HostMetricRequest) returns (HostAck);
+  rpc ReadConfig(HostCapabilityRequest) returns (HostConfigResponse);
+  rpc ReadSecret(HostSecretRequest) returns (HostSecretResponse);
+  rpc PublishEvent(HostEventRequest) returns (HostAck);
+}
+message HostCapabilityRequest { string capability = 1; }
+message HostLogRequest {
+  string capability = 1;
+  string level = 2;
+  string code = 3;
+}
+message HostMetricRequest {
+  string capability = 1;
+  string name = 2;
+  double value = 3;
+}
+message HostConfigResponse { bytes config_json = 1; }
+message HostSecretRequest {
+  string capability = 1;
+  string alias = 2;
+}
+message HostSecretResponse {
+  bytes value = 1;
+  int64 expires_unix_millis = 2;
+}
+message HostEventRequest {
+  string capability = 1;
+  string name = 2;
+  int64 value = 3;
+}
+message HostAck { bool accepted = 1; }
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  string plugin_id = 1;
+  string plugin_version = 2;
+  uint32 protocol_version = 3;
+  repeated Capability capabilities = 4;
+}
+
+message Capability {
+  string id = 1;
+  string kind = 2;
+  string platform = 3;
+  string account_type = 4;
+  repeated string permissions = 5;
+  int64 timeout_ms = 6;
+  string failure_mode = 7;
+  bool synchronous = 8;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string message = 2;
+}
+
+message ConfigRequest {
+  bytes config_json = 1;
+}
+
+message ConfigResponse {
+  bool valid = 1;
+  bytes normalized_config_json = 2;
+  string message = 3;
+}
+
+message ApplyResponse {
+  bool applied = 1;
+  string message = 2;
+}
+
+message TestResponse {
+  bool success = 1;
+  string message = 2;
+  int64 latency_ms = 3;
+}
+
+message RequestContext {
+  string request_id = 1;
+  string trace_id = 2;
+  int64 deadline_unix_millis = 3;
+  string platform = 4;
+  string account_type = 5;
+  int64 account_id = 6;
+  int64 user_id = 7;
+  int64 group_id = 8;
+  string method = 9;
+  string path = 10;
+  string host = 11;
+  string model = 12;
+  map<string, HeaderValues> headers = 13;
+}
+
+message HeaderValues {
+  repeated string values = 1;
+}
+
+message PreprocessRequest {
+  string capability = 1;
+  RequestContext context = 2;
+  bytes body_json = 3;
+}
+
+message RequestPatch {
+  string method = 1;
+  string path = 2;
+  map<string, HeaderValues> headers = 3;
+  bytes body_json = 4;
+  bool body_changed = 5;
+}
+
+message PreprocessResponse {
+  string decision = 1;
+  RequestPatch patch = 2;
+  string code = 3;
+  string reason = 4;
+}

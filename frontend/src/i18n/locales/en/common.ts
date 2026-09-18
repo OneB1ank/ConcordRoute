@@ -134,6 +134,7 @@ export default {
     channelStatus: 'Channel Status',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
+    plugins: 'Plugins',
     proxies: 'Proxies',
     clashProxy: 'Clash Proxy',
     redeemCodes: 'Redeem Codes',

@@ -6,6 +6,7 @@ import ops from './ops'
 import settings from './settings'
 import audit from './audit'
 import clashProxy from './clashProxy'
+import plugins from './plugins'
 
 export default {
   ...overview,
@@ -16,4 +17,5 @@ export default {
   ...settings,
   ...audit,
   ...clashProxy,
+  ...plugins,
 }

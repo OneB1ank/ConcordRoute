@@ -101,6 +101,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // ollamaCloudUsage
 		nil, // auditLog
 		nil, // clashProxy
+		nil, // pluginManager
 	)
 
 	require.NotPanics(t, func() {

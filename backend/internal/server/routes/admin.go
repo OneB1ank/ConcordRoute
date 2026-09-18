@@ -24,6 +24,9 @@ func RegisterAdminRoutes(
 ) {
 	// 管理端数据共享下载只允许读取已预生成文件，避免下载请求中实时处理大批量数据。
 	v1.GET("/admin/data-sharing/exports/download", h.Admin.DataSharing.DownloadExportArtifact)
+	if h.Admin.Plugin != nil {
+		v1.GET("/plugin-ui/:token/*path", h.Admin.Plugin.ServeUIAsset)
+	}
 
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
@@ -32,6 +35,9 @@ func RegisterAdminRoutes(
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 	admin.Use(gin.HandlerFunc(auditLog))
 	{
+		if h.Admin.Plugin != nil {
+			registerPluginRoutes(admin, h, stepUpAuth)
+		}
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
 
@@ -159,6 +165,37 @@ func registerCodexAttestationCollectorRoutes(admin *gin.RouterGroup, h *handler.
 		collector.POST("/sessions", h.Admin.CodexAttestationCollector.CreateSession)
 		collector.GET("/sessions/:token/captures", h.Admin.CodexAttestationCollector.ListCaptures)
 		collector.DELETE("/sessions/:token", h.Admin.CodexAttestationCollector.DeleteSession)
+	}
+}
+
+// registerPluginRoutes 注册签名插件的安装、配置、路由和生命周期接口。
+// 插件管理沿用管理员认证与 step-up；普通网关请求不会因插件宿主启用而改变。
+func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
+	if h.Admin.Plugin == nil {
+		return
+	}
+	plugins := admin.Group("/plugins")
+	{
+		plugins.GET("", h.Admin.Plugin.List)
+		plugins.GET("/:id", h.Admin.Plugin.Get)
+		plugins.POST("/authorize-upload", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.AuthorizeUpload)
+		plugins.POST("/inspect", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Inspect)
+		plugins.POST("/upload", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Upload)
+		plugins.GET("/:id/config", h.Admin.Plugin.GetConfig)
+		plugins.PUT("/:id/config", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.SaveConfig)
+		plugins.POST("/:id/test", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Test)
+		plugins.POST("/:id/enable", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Enable)
+		plugins.POST("/:id/disable", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Disable)
+		plugins.GET("/:id/versions", h.Admin.Plugin.Versions)
+		plugins.PUT("/:id/routing", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.SaveRouting)
+		plugins.GET("/:id/host", h.Admin.Plugin.HostStats)
+		plugins.GET("/:id/secret-grants", h.Admin.Plugin.SecretGrants)
+		plugins.PUT("/:id/secret-grants", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.PutSecretGrant)
+		plugins.DELETE("/:id/secret-grants", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.DeleteSecretGrant)
+		plugins.POST("/:id/upgrade", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Upgrade)
+		plugins.POST("/:id/rollback", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Rollback)
+		plugins.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Delete)
+		plugins.POST("/:id/ui-session", h.Admin.Plugin.CreateUISession)
 	}
 }
 

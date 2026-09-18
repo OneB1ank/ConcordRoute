@@ -1,0 +1,10 @@
+syntax = "proto3";
+package sub2api.plugin.v2;
+option go_package = "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v2/wire;wire";
+import "plugin.proto";
+
+// Optional service, authorized by openai.oauth.protection_transport.v1.
+// Reuses the established streaming framing without changing legacy dispatch.
+service ProtectionTransport {
+  rpc Forward(stream sub2api.plugin.v1.ForwardRequest) returns (stream sub2api.plugin.v1.ForwardResponse);
+}
