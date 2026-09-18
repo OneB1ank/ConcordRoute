@@ -786,9 +786,9 @@ export default {
         codex292StateInjectionDesc: '仅用于 OpenAI OAuth 的 HTTP 推理请求。按响应头字符串长度判定：Pro 为 292 满血、312 降级，Team 为 332 满血、356 降级；HTTP 状态通常仍为 200。默认关闭。',
         codex292AcquireProxy: '获取满血 State 代理 IP',
         codex292AcquireProxyHint: '尚未持有对应套餐的有效满血 state，或收到对应降级 state 后使用；留空表示本阶段服务器直连。',
-        codex292EgressProxy: '之后出口代理 IP',
-        codex292EgressProxyHint: '已获取对应套餐的满血 state 后使用；留空表示本阶段服务器直连。',
-        codex292MainProxyIgnoredHint: '开启后，账号主代理不参与受支持的 HTTP 推理请求；令牌刷新、探测、原生 WebSocket 及其它账号流量仍沿用主代理。',
+        codex292EgressProxy: '旧版业务出口代理（已弃用）',
+        codex292EgressProxyHint: '仅为兼容旧配置保留；业务 HTTP 推理现在始终沿用账号主代理，该字段不再参与路由。',
+        codex292MainProxyIgnoredHint: '开启后，仅无有效满血 state 的采集阶段使用采集代理；持有 state 后的业务 HTTP 推理仍沿用账号主代理。',
         codexImageTool: 'Codex 图片桥接策略',
         codexImageToolDesc:
           '统一控制 Codex /responses 文本请求的 hosted image_generation 桥接和客户端图片工具声明。hosted 工具自动注入仅适用于非 Responses Lite 请求；账号级策略优先于渠道和全局配置，不影响独立图片生成接口。',

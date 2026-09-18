@@ -16,7 +16,8 @@ const (
 	Codex292StateInjectionEnabledExtraKey = "codex_292_state_injection_enabled"
 	// Codex292StateAcquireProxyIDExtraKey 指定没有可用满血 state 时的采集出口代理。
 	Codex292StateAcquireProxyIDExtraKey = "codex_292_state_acquire_proxy_id"
-	// Codex292StateEgressProxyIDExtraKey 指定持有 state 后业务请求使用的出口代理。
+	// Codex292StateEgressProxyIDExtraKey 旧版兼容配置键；业务请求现在始终沿用账号主代理。
+	// 读取该键仅为兼容旧缓存/配置，不再改变业务出口路由。
 	Codex292StateEgressProxyIDExtraKey = "codex_292_state_egress_proxy_id"
 
 	// Turn-State 是响应头中的 opaque ASCII 字符串；HTTP 响应通常仍为 200。
@@ -55,8 +56,8 @@ func (a *Account) GetCodex292StateEgressProxyID() int64 {
 	return int64(a.getExtraInt(Codex292StateEgressProxyIDExtraKey))
 }
 
-// validateCodex292StateConfig 在账号写入前验证实验开关与辅助代理引用。
-// 两个代理都允许留空，表示对应阶段直连；账号通用 proxy_id 不作为隐式回退。
+// validateCodex292StateConfig 在账号写入前验证实验开关与采集代理引用。
+// 采集代理允许留空，表示采集阶段服务器直连；业务阶段始终沿用账号主代理。
 func validateCodex292StateConfig(ctx context.Context, proxyRepo ProxyRepository, account *Account) error {
 	if account == nil || !resolveAccountExtraBool(account.Extra, Codex292StateInjectionEnabledExtraKey) {
 		return nil
@@ -67,7 +68,7 @@ func validateCodex292StateConfig(ctx context.Context, proxyRepo ProxyRepository,
 			"Codex turn-state injection requires a non-shadow OpenAI OAuth account",
 		)
 	}
-	ids := []int64{account.GetCodex292StateAcquireProxyID(), account.GetCodex292StateEgressProxyID()}
+	ids := []int64{account.GetCodex292StateAcquireProxyID()}
 	seen := make(map[int64]struct{}, len(ids))
 	for _, proxyID := range ids {
 		if proxyID < 0 {
@@ -158,8 +159,9 @@ func normalizeOpenAICodex292Model(model string) string {
 }
 
 // prepareOpenAICodex292Request 在开关关闭时完整保留原账号代理与客户端回带头。
-// 开关开启后，账号通用 proxy_id 不参与模型请求：无 state 走采集代理，有 state
-// 走业务出口代理，并由服务端状态覆盖客户端值。
+// 开关开启后，仅在没有有效缓存时切到采集代理；持有缓存的业务请求始终沿用账号
+// 主代理，并由服务端状态覆盖客户端值。无缓存阶段仍保留客户端回带的 state，避免
+// 丢弃客户端自己持有的合法回合状态。
 func (s *OpenAIGatewayService) prepareOpenAICodex292Request(
 	ctx context.Context,
 	account *Account,
@@ -181,23 +183,17 @@ func (s *OpenAIGatewayService) prepareOpenAICodex292Request(
 	if raw, ok := s.openaiCodex292States.Load(plan.key); ok {
 		entry, valid := raw.(openAICodex292StateEntry)
 		if valid && entry.value != "" && now.Before(entry.expiresAt) &&
-			entry.acquireProxyID == plan.acquireProxyID && entry.egressProxyID == plan.egressProxyID {
+			entry.acquireProxyID == plan.acquireProxyID {
 			req.Header.Set(openAICodexTurnStateHeader, entry.value)
 			plan.usedState = true
 		} else {
 			s.openaiCodex292States.Delete(plan.key)
 		}
 	}
-	if !plan.usedState {
-		// 采集阶段不沿用客户端或旧实例带来的 state，避免把未知来源误判为本账号租约。
-		req.Header.Del(openAICodexTurnStateHeader)
-	}
-
-	proxyID := plan.acquireProxyID
 	if plan.usedState {
-		proxyID = plan.egressProxyID
+		return plan, resolveAccountProxyURL(account), nil
 	}
-	proxyURL, err := s.resolveOpenAICodex292ProxyURL(ctx, proxyID)
+	proxyURL, err := s.resolveOpenAICodex292ProxyURL(ctx, plan.acquireProxyID)
 	if err != nil {
 		return openAICodex292RequestPlan{}, "", err
 	}

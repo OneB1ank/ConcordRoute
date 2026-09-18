@@ -705,9 +705,9 @@ export default {
         codex292StateInjectionDesc: 'For OpenAI OAuth HTTP inference only. Classification uses the response header string length: Pro uses 292 for full and 312 for degraded; Team uses 332 for full and 356 for degraded. HTTP normally remains 200. Disabled by default.',
         codex292AcquireProxy: 'Full-state acquisition proxy',
         codex292AcquireProxyHint: 'Used while no valid full state for the account plan is held, or after its degraded state is observed. Leave empty to connect directly from the server.',
-        codex292EgressProxy: 'Post-state egress proxy',
-        codex292EgressProxyHint: 'Used after a full state for the account plan has been acquired. Leave empty to connect directly from the server for this phase.',
-        codex292MainProxyIgnoredHint: 'While enabled, the account\'s main proxy is ignored for supported HTTP inference requests. It still applies to token refresh, probes, native WebSocket, and other account traffic.',
+        codex292EgressProxy: 'Legacy business egress proxy (deprecated)',
+        codex292EgressProxyHint: 'Kept only for compatibility with older settings; business HTTP inference now always uses the account main proxy, so this field no longer affects routing.',
+        codex292MainProxyIgnoredHint: 'When enabled, only the acquisition phase without a valid full state uses the acquisition proxy; business HTTP inference with a state continues to use the account main proxy.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

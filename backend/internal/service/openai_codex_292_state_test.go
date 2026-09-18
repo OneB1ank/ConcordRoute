@@ -121,7 +121,7 @@ func TestValidateCodex292StateConfig(t *testing.T) {
 	}}
 
 	require.NoError(t, validateCodex292StateConfig(context.Background(), repo, codex292TestAccount()))
-	require.Equal(t, []int64{11, 12}, repo.calls)
+	require.Equal(t, []int64{11}, repo.calls)
 
 	disabled := codex292TestAccount()
 	disabled.Extra[Codex292StateInjectionEnabledExtraKey] = false
@@ -139,7 +139,7 @@ func TestValidateCodex292StateConfig(t *testing.T) {
 
 	missing := codex292TestAccount()
 	missing.Extra[Codex292StateEgressProxyIDExtraKey] = float64(404)
-	require.ErrorContains(t, validateCodex292StateConfig(context.Background(), repo, missing), "does not exist")
+	require.NoError(t, validateCodex292StateConfig(context.Background(), repo, missing))
 
 	negative := codex292TestAccount()
 	negative.Extra[Codex292StateAcquireProxyIDExtraKey] = float64(-1)
@@ -151,9 +151,9 @@ func TestValidateCodex292StateConfig(t *testing.T) {
 	repo.proxies[11].Status = StatusActive
 
 	expiredAt := time.Now().Add(-time.Second)
-	repo.proxies[12].ExpiresAt = &expiredAt
+	repo.proxies[11].ExpiresAt = &expiredAt
 	require.ErrorContains(t, validateCodex292StateConfig(context.Background(), repo, codex292TestAccount()), "inactive or expired")
-	repo.proxies[12].ExpiresAt = nil
+	repo.proxies[11].ExpiresAt = nil
 }
 
 func TestAdminCodex292ExtraWritesUseUnifiedValidation(t *testing.T) {
@@ -197,7 +197,7 @@ func TestPrepareOpenAICodex292RequestDisabledPreservesLegacyProxyAndState(t *tes
 	require.Equal(t, "client-state", req.Header.Get(openAICodexTurnStateHeader))
 }
 
-func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testing.T) {
+func TestOpenAICodex292StateLifecycleUsesAcquireProxyAndAccountProxy(t *testing.T) {
 	repo := &codex292ProxyAccountRepo{proxies: map[int64]*Proxy{
 		11: codex292TestProxy(11, "acquire.test"),
 		12: codex292TestProxy(12, "egress.test"),
@@ -214,20 +214,22 @@ func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testin
 	require.True(t, acquirePlan.enabled)
 	require.False(t, acquirePlan.usedState)
 	require.Equal(t, repo.proxies[11].URL(), proxyURL)
-	require.Empty(t, acquireReq.Header.Get(openAICodexTurnStateHeader))
+	require.Equal(t, "unknown-client-state", acquireReq.Header.Get(openAICodexTurnStateHeader))
 	require.NotEqual(t, account.Proxy.URL(), proxyURL)
 
 	svc.observeOpenAICodex292Response(acquirePlan, &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{fullState}},
 	})
+	// 旧版出口代理配置即使变化，也不应使账号主代理业务缓存失效。
+	account.Extra[Codex292StateEgressProxyIDExtraKey] = float64(404)
 
 	egressReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	egressReq.Header.Set(openAICodexTurnStateHeader, "stale-client-state")
 	egressPlan, proxyURL, err := svc.prepareOpenAICodex292Request(context.Background(), account, "gpt-5.4", egressReq)
 	require.NoError(t, err)
 	require.True(t, egressPlan.usedState)
-	require.Equal(t, repo.proxies[12].URL(), proxyURL)
+	require.Equal(t, account.Proxy.URL(), proxyURL)
 	require.Equal(t, fullState, egressReq.Header.Get(openAICodexTurnStateHeader))
 
 	otherModelReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -272,6 +274,14 @@ func TestOpenAICodex292StateExpiresAndIgnoresUnknownLengths(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, plan.usedState)
 	require.Equal(t, repo.proxies[11].URL(), proxyURL)
+
+	clientStateReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	clientStateReq.Header.Set(openAICodexTurnStateHeader, "client-state-after-expiry")
+	plan, proxyURL, err = svc.prepareOpenAICodex292Request(context.Background(), account, "gpt-5.4", clientStateReq)
+	require.NoError(t, err)
+	require.False(t, plan.usedState)
+	require.Equal(t, repo.proxies[11].URL(), proxyURL)
+	require.Equal(t, "client-state-after-expiry", clientStateReq.Header.Get(openAICodexTurnStateHeader))
 
 	svc.observeOpenAICodex292Response(plan, &http.Response{
 		StatusCode: http.StatusOK,
@@ -418,7 +428,7 @@ func TestSendCCUpstreamRequestUsesCodex292ProxyLifecycle(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, repo.proxies[12].URL(), upstream.lastProxyURL)
+	require.Equal(t, account.Proxy.URL(), upstream.lastProxyURL)
 	require.Equal(t, fullState, upstream.lastReq.Header.Get(openAICodexTurnStateHeader))
 	require.NoError(t, resp.Body.Close())
 }
