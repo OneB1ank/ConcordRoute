@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 const apiMocks = vi.hoisted(() => ({
+  showError: vi.fn(),
   getPlatformQuotas: vi.fn(),
   updatePlatformQuotas: vi.fn(),
   resetPlatformQuotaWindow: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
-    showError: vi.fn(),
+    showError: apiMocks.showError,
     showSuccess: vi.fn(),
   }),
 }))
@@ -74,6 +75,45 @@ beforeEach(() => {
 })
 
 describe('UserPlatformQuotaModal', () => {
+  it.each([0, 4, 14])('拒绝第 %s 个窗口输入负额度，不将其归一化为无限额', async (index) => {
+    const w = await mountAndOpen()
+    await w.findAll('input[type=number]')[index].setValue('-1')
+    await w.findAll('button').find(b => b.text() === 'admin.users.platformQuota.save')!.trigger('click')
+    await flushPromises()
+    expect(apiMocks.updatePlatformQuotas).not.toHaveBeenCalled()
+    expect(apiMocks.showError).toHaveBeenCalledWith('admin.users.platformQuota.invalidNumber')
+    expect(w.emitted('success')).toBeUndefined()
+    w.unmount()
+  })
+
+  it.each([NaN, Infinity, -Infinity])('拒绝表单中的非有限额度 %s', async (value) => {
+    // 数字输入框会清空非有限字符串；通过加载边界注入，检查提交前的数值校验。
+    apiMocks.getPlatformQuotas.mockResolvedValueOnce({
+      platform_quotas: [{ platform: 'anthropic', daily_limit_usd: value }],
+    })
+    const w = await mountAndOpen()
+    await w.findAll('button').find(b => b.text() === 'admin.users.platformQuota.save')!.trigger('click')
+    await flushPromises()
+    expect(apiMocks.updatePlatformQuotas).not.toHaveBeenCalled()
+    expect(apiMocks.showError).toHaveBeenCalledWith('admin.users.platformQuota.invalidNumber')
+    expect(w.emitted('success')).toBeUndefined()
+    w.unmount()
+  })
+
+  it.each([['0', 0], ['', null], ['1.25', 1.25]] as const)(
+    '保留合法输入 %j 的额度语义',
+    async (input, expected) => {
+      const w = await mountAndOpen()
+      await w.findAll('input[type=number]')[0].setValue(input)
+      await w.findAll('button').find(b => b.text() === 'admin.users.platformQuota.save')!.trigger('click')
+      await flushPromises()
+      expect(apiMocks.updatePlatformQuotas).toHaveBeenCalledTimes(1)
+      expect(apiMocks.updatePlatformQuotas.mock.calls[0][1][0].daily_limit_usd).toBe(expected)
+      expect(apiMocks.showError).not.toHaveBeenCalled()
+      w.unmount()
+    }
+  )
+
   it('挂载并 show=true 时调用 getPlatformQuotas', async () => {
     await mountAndOpen()
     expect(apiMocks.getPlatformQuotas).toHaveBeenCalledWith(99)
