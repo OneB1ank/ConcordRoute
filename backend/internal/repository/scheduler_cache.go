@@ -1012,11 +1012,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		"openai_device_id",
-		// Turn-State 注入的开关与获取出口属于出站路由必要字段；
-		// 若精简快照丢失它们，选中账号会误判为 disabled 并沿用错误出口。
-		service.Codex292StateInjectionEnabledExtraKey,
-		service.Codex292StateAcquireProxyIDExtraKey,
-		service.Codex292StateEgressProxyIDExtraKey,
 		"codex_5h_used_percent",
 		"codex_7d_used_percent",
 		"codex_5h_reset_at",

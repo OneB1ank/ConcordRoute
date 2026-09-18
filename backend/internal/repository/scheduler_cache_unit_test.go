@@ -346,27 +346,6 @@ func TestBuildSchedulerMetadataAccount_KeepsCodexFingerprintIdentity(t *testing.
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
-func TestBuildSchedulerMetadataAccount_KeepsCodex292StateRouting(t *testing.T) {
-	account := service.Account{
-		ID:       50,
-		Platform: service.PlatformOpenAI,
-		Type:     service.AccountTypeOAuth,
-		Extra: map[string]any{
-			service.Codex292StateInjectionEnabledExtraKey: true,
-			service.Codex292StateAcquireProxyIDExtraKey:   float64(36),
-			service.Codex292StateEgressProxyIDExtraKey:    float64(31),
-			"unused_large_field":                          "drop-me",
-		},
-	}
-
-	got := buildSchedulerMetadataAccount(account)
-
-	require.Equal(t, true, got.Extra[service.Codex292StateInjectionEnabledExtraKey])
-	require.Equal(t, float64(36), got.Extra[service.Codex292StateAcquireProxyIDExtraKey])
-	require.Equal(t, float64(31), got.Extra[service.Codex292StateEgressProxyIDExtraKey])
-	require.Nil(t, got.Extra["unused_large_field"])
-}
-
 func TestBuildSchedulerMetadataAccount_KeepsGrokMediaEligibility(t *testing.T) {
 	t.Run("explicit override", func(t *testing.T) {
 		account := service.Account{
