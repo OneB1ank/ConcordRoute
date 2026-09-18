@@ -147,6 +147,26 @@ const SelectStub = defineComponent({
   `,
 })
 
+const ProxySelectorStub = defineComponent({
+  name: 'ProxySelector',
+  inheritAttrs: false,
+  props: {
+    modelValue: {
+      type: Number,
+      default: null,
+    },
+  },
+  emits: ['update:modelValue'],
+  setup(_props, { attrs, emit }) {
+    const selectProxy = () => {
+      const testID = String(attrs['data-testid'] ?? '')
+      emit('update:modelValue', testID.includes('acquire') ? 11 : 12)
+    }
+    return { selectProxy }
+  },
+  template: '<button type="button" v-bind="$attrs" @click="selectProxy">{{ modelValue }}</button>',
+})
+
 function mountModal() {
   return mount(CreateAccountModal, {
     props: { show: true, proxies: [], groups: [] },
@@ -158,7 +178,7 @@ function mountModal() {
         Select: SelectStub,
         Icon: true,
         PlatformIcon: true,
-        ProxySelector: true,
+        ProxySelector: ProxySelectorStub,
         ProxyAdBanner: true,
         GroupSelector: true,
         ModelWhitelistSelector: ModelWhitelistSelectorStub,
@@ -402,6 +422,36 @@ describe('CreateAccountModal OpenAI account options', () => {
     await flushPromises()
 
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('session')
+  })
+
+  it('persists the 292 state switch and split proxies for OpenAI OAuth imports', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+
+    expect(wrapper.find('[data-testid="create-codex-292-state-section"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="create-codex-292-state-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="create-codex-292-acquire-proxy"]').trigger('click')
+    await wrapper.get('[data-testid="create-codex-292-egress-proxy"]').trigger('click')
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex 292 import')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+
+    expect(importCodexSessionMock).toHaveBeenCalledTimes(1)
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra).toMatchObject({
+      codex_292_state_injection_enabled: true,
+      codex_292_state_acquire_proxy_id: 11,
+      codex_292_state_egress_proxy_id: 12,
+    })
+  })
+
+  it('hides the 292 state settings for OpenAI API-key accounts', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+
+    expect(wrapper.find('[data-testid="create-codex-292-state-section"]').exists()).toBe(false)
   })
 
 })

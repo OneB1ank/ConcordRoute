@@ -101,6 +101,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_status_code
+			sqlmock.AnyArg(), // codex_turn_state_bytes
 			sqlmock.AnyArg(), // session_id
 			createdAt,
 		).
@@ -196,6 +198,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_status_code
+			sqlmock.AnyArg(), // codex_turn_state_bytes
 			sqlmock.AnyArg(), // session_id
 			createdAt,
 		).
@@ -958,6 +962,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullFloat64{},
+			sql.NullInt64{}, // upstream_status_code
+			sql.NullInt64{}, // codex_turn_state_bytes
 			sql.NullString{},
 			now,
 		}})
@@ -1038,6 +1044,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullInt64{},   // upstream_status_code
+			sql.NullInt64{},   // codex_turn_state_bytes
 			sql.NullString{},  // session_id
 			now,
 		}})
@@ -1099,6 +1107,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullInt64{},   // upstream_status_code
+			sql.NullInt64{},   // codex_turn_state_bytes
 			sql.NullString{},  // session_id
 			now,
 		}})
@@ -1160,6 +1170,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullInt64{},   // upstream_status_code
+			sql.NullInt64{},   // codex_turn_state_bytes
 			sql.NullString{},  // session_id
 			now,
 		}})

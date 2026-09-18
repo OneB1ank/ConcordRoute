@@ -176,8 +176,11 @@ type UsageLog struct {
 	OpenAIWSMode bool
 	DurationMs   *int
 	FirstTokenMs *int
-	UserAgent    *string
-	IPAddress    *string
+	// 管理员被动观测字段；nil 表示历史或未接入，不推断默认 HTTP 200。
+	UpstreamStatusCode  *int
+	CodexTurnStateBytes *int
+	UserAgent           *string
+	IPAddress           *string
 	// SessionID 是客户端显式提供的请求关联标识，例如 session_id 或 X-Session-Id
 	// 请求头；客户端未提供有效值时为 nil，且绝不从 prompt_cache_key 或内容派生。
 	SessionID *string

@@ -24,8 +24,9 @@ OAuth 账号可受 Codex CLI-only、允许客户端、agent identity、privacy s
 远程证明桥的两秒预算覆盖互斥排队与完整 RPC，等待写锁也服从剩余预算。
 取消请求或预算耗尽按原有可选证明策略退出，业务请求保留原始上下文；
 账号不匹配时先跳过，拿到锁后再次校验绑定，避免排队期间串用账号。
+中继连接已声明的 session/thread 作用域必须逐项匹配，缺省其中一项不作为通配符；仅未限定作用域的唯一活动连接保留兼容匹配。
 
-Codex app-server 的 `initialize.params.capabilities.requestAttestation=true` 会话由网关短时记录，并按 API Key、连接、账号、session/thread 隔离。客户端通过独立的 `GET /backend-api/codex/app-server` WebSocket 接入 JSON-RPC bridge；首帧必须是 `initialize`，随后上游请求由该 bridge 发出与 Codex 源码一致的 just-in-time `attestation/generate`：`{"jsonrpc":"2.0","id":N,"method":"attestation/generate","params":{}}`。响应按 JSON-RPC ID 匹配，只接受 `v1.*` opaque token，再封装为 `{"v":1,"s":0,"t":"..."}`。超时、请求失败、取消和 malformed response 分别形成 `s=1/2/3/4`，不合成 token；Responses HTTP、Responses WebSocket 和 Live 创建都会复用同一条已协商连接。`app_server_attestation_transport` 是运行时字段：没有已完成协商的 bridge 时为 `false`，至少一条活动 bridge 完成 initialize 后为 `true`，全部断开后恢复 `false`。标准转发与 Live 保留真实客户端直接 Header 的兼容路径，检查客户端 UA/originator 配对和 envelope 格式后中继；这不等于设备证明已由网关验证为真。标准转发已绑定 app-server context 时不回退到直传 Header；Live 创建优先使用已协商 context，实际接受情况仍由对应上游请求确定。Linux 服务端不生成伪造 DeviceCheck 证明；配置真实 Linux helper 或接入真实 app-server bridge 后，才会启用对应服务端路径。Windows UA/TLS 模板只表示客户端身份与连接特征，不代表证明已经生成。证明状态仅短 TTL 保存在内存；Live Sideband 只保存加密后的会话 envelope，不写入账号凭据或普通日志。
+Codex app-server 的 `initialize.params.capabilities.requestAttestation=true` 会话由网关短时记录，并按 API Key、连接、账号、session/thread 隔离。客户端通过独立的 `GET /backend-api/codex/app-server` WebSocket 接入 JSON-RPC bridge；首帧必须是 `initialize`，随后上游请求由该 bridge 发出与 Codex 源码一致的 just-in-time `attestation/generate`：`{"id":N,"method":"attestation/generate","params":{}}`（原生省略 `jsonrpc`，入站兼容 `"2.0"`）。响应按 JSON-RPC ID 匹配，读取原生 `result.token`，旧接入端的 `result.headerValue` 仅在 token 字段缺失时兼容；显式空值、null、错误类型和双字段冲突均按 malformed 处理。不透明值只做类型/长度校验，不按 `v1.*` 前缀猜测真实性，再封装为 `{"v":1,"s":0,"t":"..."}`。超时、请求失败、取消和 malformed response 分别形成 `s=1/2/3/4`，不合成 token；Responses HTTP、Responses WebSocket 和 Live 创建都会复用同一条已协商连接。`app_server_attestation_transport` 是运行时字段：没有已完成协商的 bridge 时为 `false`，至少一条活动 bridge 完成 initialize 后为 `true`，全部断开后恢复 `false`。标准转发与 Live 保留真实客户端直接 Header 的兼容路径，检查客户端 UA/originator 配对和 envelope 格式后中继；这不等于设备证明已由网关验证为真。标准转发已绑定 app-server context 时不回退到直传 Header；Live 创建优先使用已协商 context，实际接受情况仍由对应上游请求确定。Linux 服务端不生成伪造 DeviceCheck 证明；配置真实 Linux helper 或接入真实 app-server bridge 后，才会启用对应服务端路径。Windows UA/TLS 模板只表示客户端身份与连接特征，不代表证明已经生成。证明状态仅短 TTL 保存在内存；Live Sideband 只保存加密后的会话 envelope，不写入账号凭据或普通日志。
 
 管理员可显式开启 app-server 证明采集器：`POST /admin/codex-attestation-collector/start` 后创建 `POST /admin/codex-attestation-collector/sessions`，将返回的 `collector_token` 作为 `collector_token` 查询参数或 `X-Codex-Attestation-Collector-Token` 握手头附加到 app-server WebSocket。管理页面会同时显示完整 WebSocket 地址，并提供显式删除当前采集会话的操作。采集器只记录 `initialize` 能力、`attestation/generate` 状态、请求 ID、客户端版本、连接/session/thread 关联以及 proof 长度和 SHA-256；`GET /admin/codex-attestation-collector/sessions/:token/captures` 不返回 opaque proof 原文。会话默认 30 分钟、每会话最多 100 条，停止采集会立即清除内存摘要；采集 token 不是上游认证凭据，也不能写入账号、TLS 模板或全局配置。采集器只覆盖证明层；账号现有 Codex 收敛策略和 TLS 模板/路由继续由各自配置决定，不在采集器内切换。
 管理页面入口位于“账号 → 更多操作 → 工具 → Codex app-server Attestation Collector”，采集器采用独立弹窗；TLS 指纹模板、TLS 路由器和 Codex 收敛仍保持独立配置。采集器只在管理员显式启动并创建会话后工作，不增加账号级自动证明开关。
@@ -78,6 +79,8 @@ Codex app-server 的 `initialize.params.capabilities.experimentalApi` 与线程�
 
 Live 的证明按来源可选：存在协商客户端、可信直接 Header 或平台提供器时沿用原校验与加密中继；没有来源（Linux 未配置 helper、本机平台不支持或 macOS 未安装对应 App）时不设置 `x-oai-attestation`，由真实上游决定账号资格。已配置 helper 的执行故障、格式错误、客户端异常 envelope 和已有密文解密失败仍明确报错，不静默降级。创建时未携带证明的会话，其 Sideband 同样不设置该头；已有证明的会话继续使用加密快照，不迁移、不混用。平台是否能生成证明不等于 Live 传输是否可用，也不保证所有账号都接受无证明请求。
 
+Live 请求一旦绑定 app-server context，就只使用该请求的协商结果；空 envelope、格式错误或账号归属冲突明确报错，不再转用入站 Header、平台 Provider 或无证明请求。协议定义的 `s=1/2/3/4` 是有效失败状态 envelope，仍原样表达生成失败，不当作成功证明，也不更换来源。未绑定任何通道的请求仍保留原有按来源可选策略。
+
 网关保持 Linux 部署也可接入外部真实证明或客户端证明中继，服务器平台不是最终可用性结论。分组 `allow_live` 仅授予调用权限，仍受账号类型、计费、并发和上游资格限制。能力查询不生成证明、不探测账号、不产生模型调用，传输能力和证明来源分别报告，语义详见 [HTTP 接口边界](http_api.md)。
 Live 创建仍尊重账号模型白名单；所请求语音模型必须获准，不能把文字模型白名单视为已包含 Live。调度返回无可用账号时响应 503 与明确的候选账号提示，不再误报为上游请求失败的 502。
 
@@ -86,6 +89,8 @@ Live 创建与 Sideband 的模型链仍执行 Key、渠道和账号的显式映�
 Live 选择证明中继时，优先读取原始 `session-id`、`thread-id` Header；缺省时才兼容旧调用方放在 Session JSON 中的同名下划线字段。原生客户端的 `session.session_id` 可能属于独立语音会话，不应覆盖 Header 中的根会话/线程提示。这些提示只用于 API Key 下的中继连接匹配，不改写 Session JSON、出站 UA/TLS 或 Cockpit 映射，跨线程/跨 Key 仍隔离。
 
 在核对的 0.153.4 源码与隔离客户端测试中，API Key 自定义 provider 即使声明 `requestAttestation=true`，也未发起 `attestation/generate`；其证明能力判定依赖 ChatGPT 认证模式。因此“打开能力位”不等于实际取得证明，独立运行 CLI 也不是设备证明提供器。这与无证明时正常发起 Live 请求是两个不同问题；不要通过伪造登录形状或成功状态完成验收。需要证明时仍须按客户端支持的登录和宿主能力接入，上游拒绝保持原有错误与准入处理。
+
+独立 Windows 音频适配器可将桌面创建请求交给本地 helper，并使原生 app-server 的 ExistingCall Sideband 通过同一网关 Key、同一 callId 连接。它只转发已存在的真实证明，不实现设备证明生成。安装缺省不启用 Live；启用时以严格201/SDP/Location及 WebSocket 握手验证、真实媒体和关闭验收为门槛。客户端接线、短期能力和回滚边界见 [独立桌面适配组件](audio_transcription.md#desktop_audio_adapter)。
 
 <a id="codex_identity_persistence"></a>
 ### 身份绑定持久化的等待与读取
@@ -157,6 +162,14 @@ OpenAI OAuth 的 HTTP、passthrough、旧版 Compact 与 WebSocket 出站会在�
 
 `x-codex-beta-features` 是 Codex 的会话级协商头：OAuth 普通 Responses HTTP 与 WebSocket 握手在客户端未声明时补入 `remote_compaction_v2`，客户端给出的非空值保持原样；原生 V2 请求无论账号类型都保证该 feature 存在。上游响应中的 `x-codex-turn-state` 会在 HTTP/SSE、SSE 转 JSON 与 passthrough 路径显式回传。网关按 API Key 与客户端原始 session 记录最近签发账号；故障转移后，已知由其它账号签发的客户端回带值会被剥离，未知或同账号的值保持透传。
 
+### 实验性 292 State 注入
+
+非影子 OpenAI OAuth 账号可显式开启 `extra.codex_292_state_injection_enabled`。该能力默认关闭，只覆盖普通 Responses、OAuth passthrough、Chat 转换、Messages 转换和 WS HTTP bridge 等 HTTP 推理路径；原生上游 WebSocket、令牌刷新、账号测试、额度/模型探测及其它账号流量继续使用账号主代理。外部观察把 HTTP `292` 且携带 `x-codex-turn-state` 解释为签发，把 `312` 解释为撤销；这不是稳定的上游公开协议，因此实现只按最终响应头做实验性状态机，不增加主动探测、后台轮询或响应体逐块解析。
+
+开启后，账号主 `proxy_id` 不参与上述 HTTP 推理请求。没有有效 state 时使用 `extra.codex_292_state_acquire_proxy_id`；收到有效 `292` 后，按账号 ID 与规范化模型在当前实例内存保存 state，并在后续同模型请求中覆盖客户端回带值，同时切换到 `extra.codex_292_state_egress_proxy_id`。任一代理 ID 留空都表示对应阶段显式直连，而不是回退到账号主代理。辅助代理不存在、停用、过期或解析失败时请求直接失败，不静默改走主代理或服务器直连。
+
+state 使用 55 分钟保守内存租约，最大 64 KiB；实例重启、租约到期、账号配置改变或收到 `312` 后，下一笔同模型业务请求重新进入获取阶段。state 原文不写入账号 Extra、数据库、Usage 或普通日志；既有被动观测只保存最终上游状态码和头长度。多实例不共享租约，因此每个实例独立获取。`292`/`312` 的普通错误分类、故障转移和客户端响应语义仍由现有网关策略决定，状态机只负责保存或撤销本账号本模型的注入值。
+
 WebSocket 连接池把 routing hint 视为拨号和普通复用的软亲和：优先复用相同提示建立的连接，池满时仍可在硬兼容连接上排队，显式 continuation 也不会仅因提示变化而断链。握手 beta feature 与本 fork 的 TLS fingerprint profile 仍是硬兼容键，任一变化都禁止复用，并会使尚未完成的旧目标预热拨号失效。路由诊断只记录网关推导的最终模型、规范化 tier、传输类型、账号 ID、是否生成提示和 WS 亲和决策，不记录提示头值、token 或凭据。
 
 Responses WebSocket 与 HTTP 共用真实首内容判断：非空 delta、完整文本或工具参数均可产生首内容样本；`response.completed`、`response.done` 以及 content part/output item 事件若携带实际文本、工具参数等内容，同样以内容到达时刻计时。仅含状态、usage 或空结构的事件不产生真实首内容样本，避免把纯终态耗时误记为首 token 延迟。文本终态缺少响应 ID 时保留活动轮次已观测的耗时与首内容样本，但不补造响应 ID。
@@ -214,3 +227,5 @@ OAuth 账号的 5 小时、7 天等上游窗口和重置时间保存在账号运
 流式错误要保持 SSE/WebSocket 协议完整；Responses 可产生 `response.failed`，非流接口返回相应 OpenAI envelope。入站 WebSocket 的下行写不得继承独立的 ingress 租约取消信号：旧 ingress 路径绑定客户端请求生命周期并叠加 write timeout，v2 relay 只受 write timeout 限制，退出路径再通过显式 Close/CloseNow 回收连接；这样租约丢失不会在终态事件写入期间抢先硬关 TCP，客户端可先收到终态事件，再收到 1013 关闭帧。上行写继续继承控制面取消，以便快速回收上游连接。HTTP 200 SSE 中的 `rate_limit_exceeded` 按语义状态 429 进入故障转移与池模式重试，但不使用该 200 响应的正常配额快照头写入默认账号冷却。上游容量降载通常先发 `error`、再以 `response.failed` 收尾；`server_is_overloaded` / `slow_down` 的前置错误帧在尚无业务输出时继续留在 attempt 缓冲中，触发有界同账号重试和 pre-output failover，并按请求级瞬时故障处理，不冷却当前账号。已有真实输出或重试耗尽后不能重放请求，SSE 与 WS HTTP bridge 会仅在客户端副本中把这两个致命码改为可重试的 `server_error`，原始事件仍用于账号策略与观测。客户端尚未收到业务输出时，池模式账号的其它瞬态流内处理错误也可在请求级预算内重试同一账号；旧版 Compact 桥接心跳注释不算业务输出，即使已提交 200 响应头，只要没有语义 SSE 载荷，最终失败仍必须追加 `response.failed`。OpenAI Responses 标准流与 passthrough 流若只收到前导事件和完全不含 output、usage、error 的 `response.completed` / `response.done`，会在尚未写出客户端业务内容时按静默拒绝切换账号，而不是记录 0/0 成功；终态含 usage、error、任一输出项，或此前已出现语义输出时均不触发该规则。一旦真实输出开始，网关不得重放请求或切换账号。最终错误还可命中[网关错误响应策略](gateway_error_policy.md)，但规则不会把失败结算成成功。排障应同时检查账号类型、required transport/capability、客户端限制、privacy status、模型映射、quota reset、代理/TLS 和 attempt 记录。
 
 相关文档：[网关请求生命周期](../architecture/gateway_request_lifecycle.md)、[账号调度与缓存一致性](../architecture/account_scheduling_and_cache.md)、[模型目录与市场](model_catalog_and_marketplace.md)。
+
+管理员使用记录的 HTTP 状态与 Codex 状态头长度属于默认被动观测，不代表模型能力或设备证明；字段空值、覆盖路径、迁移与性能边界见[使用记录上游状态观测](../operations/observability_and_data_lifecycle.md#使用记录上游状态观测)。该观测不构造或注入状态，不改变本节既有透传语义。

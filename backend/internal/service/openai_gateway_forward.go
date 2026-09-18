@@ -873,7 +873,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, err
 		}
 
-		proxyURL := resolveAccountProxyURL(account)
+		statePlan, proxyURL, err := s.prepareOpenAICodex292Request(ctx, account, upstreamModel, upstreamReq)
+		if err != nil {
+			if headerGuard != nil {
+				headerGuard.close()
+			}
+			return nil, err
+		}
 		// 回调固定绑定本次尝试；首字节等待本身仍混合连接与上游处理时间。
 		markUpstreamStage := BeginTTFTUpstreamAttempt(c, account.ID)
 		upstreamReq = withTTFTUpstreamTrace(c, upstreamReq, markUpstreamStage)
@@ -883,6 +889,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch))
 		if resp != nil {
 			markUpstreamStage("upstream_headers_received")
+			s.observeOpenAICodex292Response(statePlan, resp)
 		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
@@ -1042,6 +1049,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		forwardResult := &OpenAIForwardResult{
+			UpstreamResponse:            observeUpstreamResponse(resp),
 			RequestID:                   resp.Header.Get("x-request-id"),
 			ResponseID:                  responseID,
 			Usage:                       *usage,

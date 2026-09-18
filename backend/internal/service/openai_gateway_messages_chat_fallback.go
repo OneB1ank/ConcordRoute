@@ -107,7 +107,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "", tlsRouterMatch...)
+	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, upstreamModel, clientStream, apiKey, account.GetOpenAIUserAgent(), "", tlsRouterMatch...)
 	if err != nil {
 		return nil, err
 	}

@@ -701,6 +701,13 @@ export default {
         codexFingerprintFull: 'Full convergence',
         codexQuotaOverdraft: 'Codex quota overdraft (experimental)',
         codexQuotaOverdraftDesc: 'At 95%, enters preparation and keeps normal business requests eligible; at 98%, shows overdraft active. Only local quota reserve thresholds are bypassed. A real upstream 429 terminates the cycle through standard rate limiting. Request bodies, cache keys, and session identifiers remain unchanged.',
+        codex292StateInjection: '292 state injection (experimental)',
+        codex292StateInjectionDesc: 'For OpenAI OAuth HTTP inference only. Acquire an upstream turn state through one route, then automatically inject it on later requests through a separate egress route. Disabled by default.',
+        codex292AcquireProxy: '292 acquisition proxy',
+        codex292AcquireProxyHint: 'Used while no valid state is held. Leave empty to acquire through a direct connection.',
+        codex292EgressProxy: 'Post-state egress proxy',
+        codex292EgressProxyHint: 'Used after a 292 state has been acquired. Leave empty to use a direct connection for this phase.',
+        codex292MainProxyIgnoredHint: 'While enabled, the account\'s main proxy is ignored for supported HTTP inference requests. It still applies to token refresh, probes, native WebSocket, and other account traffic.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

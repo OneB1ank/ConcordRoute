@@ -2989,6 +2989,59 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
+      <!-- 292 state 注入（仅 OpenAI OAuth，默认关闭） -->
+      <div
+        v-if="form.platform === 'openai' && form.type === 'oauth'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="create-codex-292-state-section"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.codex292StateInjection') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.codex292StateInjectionDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="create-codex-292-state-toggle"
+            @click="codex292StateInjectionEnabled = !codex292StateInjectionEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              codex292StateInjectionEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                codex292StateInjectionEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div v-if="codex292StateInjectionEnabled" class="mt-4 grid gap-4 lg:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.openai.codex292AcquireProxy') }}</label>
+            <ProxySelector
+              v-model="codex292AcquireProxyId"
+              :proxies="proxies"
+              data-testid="create-codex-292-acquire-proxy"
+            />
+            <p class="input-hint">{{ t('admin.accounts.openai.codex292AcquireProxyHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.openai.codex292EgressProxy') }}</label>
+            <ProxySelector
+              v-model="codex292EgressProxyId"
+              :proxies="proxies"
+              data-testid="create-codex-292-egress-proxy"
+            />
+            <p class="input-hint">{{ t('admin.accounts.openai.codex292EgressProxyHint') }}</p>
+          </div>
+          <p class="input-hint lg:col-span-2">{{ t('admin.accounts.openai.codex292MainProxyIgnoredHint') }}</p>
+        </div>
+      </div>
+
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
@@ -4350,6 +4403,9 @@ const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexQuotaOverdraftEnabled = ref(false)
+const codex292StateInjectionEnabled = ref(false)
+const codex292AcquireProxyId = ref<number | null>(null)
+const codex292EgressProxyId = ref<number | null>(null)
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -5613,6 +5669,9 @@ const resetForm = () => {
   openAIOAuthClientPolicy.value = 'any'
   codexFingerprintMode.value = 'off'
   codexQuotaOverdraftEnabled.value = false
+  codex292StateInjectionEnabled.value = false
+  codex292AcquireProxyId.value = null
+  codex292EgressProxyId.value = null
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -5795,6 +5854,23 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_quota_overdraft_enabled = true
   } else {
     delete extra.codex_quota_overdraft_enabled
+  }
+  if (form.type === 'oauth' && codex292StateInjectionEnabled.value) {
+    extra.codex_292_state_injection_enabled = true
+    if (codex292AcquireProxyId.value) {
+      extra.codex_292_state_acquire_proxy_id = codex292AcquireProxyId.value
+    } else {
+      delete extra.codex_292_state_acquire_proxy_id
+    }
+    if (codex292EgressProxyId.value) {
+      extra.codex_292_state_egress_proxy_id = codex292EgressProxyId.value
+    } else {
+      delete extra.codex_292_state_egress_proxy_id
+    }
+  } else {
+    delete extra.codex_292_state_injection_enabled
+    delete extra.codex_292_state_acquire_proxy_id
+    delete extra.codex_292_state_egress_proxy_id
   }
   if (openAICompactMode.value !== 'auto') {
     extra.openai_compact_mode = openAICompactMode.value

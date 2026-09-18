@@ -38,6 +38,10 @@ const messages: Record<string, string> = {
   'usage.inputTokenPrice': 'Input price',
   'usage.outputTokenPrice': 'Output price',
   'usage.perMillionTokens': '/ 1M tokens',
+  'usage.upstreamStatusHint': 'Observed HTTP status, not model capability.',
+  'usage.upstreamStatusMissingHint': 'Not captured; no assumed 200.',
+  'usage.codexTurnStateHint': 'Only x-codex-turn-state bytes; no opaque value.',
+  'usage.codexTurnStateAbsent': 'state · absent',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
   'usage.serviceTierFlex': 'Flex',
@@ -93,6 +97,7 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-upstream_status" :row="row" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
@@ -646,6 +651,7 @@ const DataTableStubWithUser = {
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-user" :row="row" />
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-upstream_status" :row="row" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
@@ -791,5 +797,33 @@ describe('admin UsageTable deleted-user badge', () => {
 
     expect(wrapper.text()).not.toContain('Deleted')
     expect(wrapper.text()).toContain('a***e')
+  })
+})
+
+// 状态列只展示服务器给出的摘要，不从流类型或长度生成状态码。
+describe('admin UsageTable upstream observation', () => {
+  it.each([200, 290, 292, 312, 429, 502])('shows actual HTTP %i independently of state length', (code) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, upstream_status_code: code, codex_turn_state_bytes: 292 }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const cell = wrapper.get('[data-testid="upstream-observation"]')
+    expect(cell.text()).toContain(`HTTP ${code}`)
+    expect(cell.text()).toContain('state · 292 B')
+    expect(cell.attributes('title')).toBe(messages['usage.upstreamStatusHint'])
+    expect(cell.text()).not.toMatch(/degraded|healthy|降智|满血/)
+    wrapper.unmount()
+  })
+
+  it.each([undefined, null, 0])('distinguishes missing collection from absent state: %s', (state) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, codex_turn_state_bytes: state }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const cell = wrapper.get('[data-testid="upstream-observation"]')
+    expect(cell.text()).toContain('—')
+    expect(cell.text()).not.toContain('HTTP 200')
+    expect(cell.text().includes('state · absent')).toBe(state === 0)
+    wrapper.unmount()
   })
 })

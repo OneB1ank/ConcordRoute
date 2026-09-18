@@ -782,6 +782,13 @@ export default {
         codexFingerprintFull: '完全收敛',
         codexQuotaOverdraft: 'Codex 额度透支（实验性）',
         codexQuotaOverdraftDesc: '达到 95% 进入准备并保留普通业务调用，达到 98% 显示透支运行；仅越过本地额度预留阈值，真实上游 429 终止当前周期并按标准限流暂停。请求体、缓存键和会话标识保持原样。',
+        codex292StateInjection: '292 State 注入（实验性）',
+        codex292StateInjectionDesc: '仅用于 OpenAI OAuth 的 HTTP 推理请求：先通过独立线路获取上游回合状态，再通过另一条出口线路自动注入后续请求。默认关闭。',
+        codex292AcquireProxy: '获取 292 代理 IP',
+        codex292AcquireProxyHint: '尚未持有有效 state 时使用；留空表示本阶段直连。',
+        codex292EgressProxy: '之后出口代理 IP',
+        codex292EgressProxyHint: '已获取 292 state 后使用；留空表示本阶段直连。',
+        codex292MainProxyIgnoredHint: '开启后，账号主代理不参与受支持的 HTTP 推理请求；令牌刷新、探测、原生 WebSocket 及其它账号流量仍沿用主代理。',
         codexImageTool: 'Codex 图片桥接策略',
         codexImageToolDesc:
           '统一控制 Codex /responses 文本请求的 hosted image_generation 桥接和客户端图片工具声明。hosted 工具自动注入仅适用于非 Responses Lite 请求；账号级策略优先于渠道和全局配置，不影响独立图片生成接口。',

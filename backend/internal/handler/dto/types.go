@@ -626,6 +626,10 @@ type UsageLog struct {
 type AdminUsageLog struct {
 	UsageLog
 
+	// 被动观测仅管理员可见；无凭据内容，也不是会话健康分级。
+	UpstreamStatusCode  *int `json:"upstream_status_code,omitempty"`
+	CodexTurnStateBytes *int `json:"codex_turn_state_bytes,omitempty"`
+
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`

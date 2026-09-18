@@ -5,12 +5,15 @@ import "context"
 // openAIOutboundAccountConfig 是账号出站身份相关配置的轻量快照。
 // 凭据内容只保留规范化 UA，不保存 token 或代理 URL。
 type openAIOutboundAccountConfig struct {
-	Eligible     bool
-	UserAgent    string
-	RouterID     int64
-	TLSProfileID int64
-	TLSEnabled   bool
-	ProxyID      int64
+	Eligible               bool
+	UserAgent              string
+	RouterID               int64
+	TLSProfileID           int64
+	TLSEnabled             bool
+	ProxyID                int64
+	Codex292Enabled        bool
+	Codex292AcquireProxyID int64
+	Codex292EgressProxyID  int64
 }
 
 func openAIOutboundAccountConfigOf(account *Account) openAIOutboundAccountConfig {
@@ -22,12 +25,15 @@ func openAIOutboundAccountConfigOf(account *Account) openAIOutboundAccountConfig
 		proxyID = *account.ProxyID
 	}
 	return openAIOutboundAccountConfig{
-		Eligible:     true,
-		UserAgent:    openAIBackgroundIdentityBaseUA(account),
-		RouterID:     account.GetTLSFingerprintRouterID(),
-		TLSProfileID: account.GetTLSFingerprintProfileID(),
-		TLSEnabled:   account.IsTLSFingerprintEnabled(),
-		ProxyID:      proxyID,
+		Eligible:               true,
+		UserAgent:              openAIBackgroundIdentityBaseUA(account),
+		RouterID:               account.GetTLSFingerprintRouterID(),
+		TLSProfileID:           account.GetTLSFingerprintProfileID(),
+		TLSEnabled:             account.IsTLSFingerprintEnabled(),
+		ProxyID:                proxyID,
+		Codex292Enabled:        account.IsCodex292StateInjectionEnabled(),
+		Codex292AcquireProxyID: account.GetCodex292StateAcquireProxyID(),
+		Codex292EgressProxyID:  account.GetCodex292StateEgressProxyID(),
 	}
 }
 
@@ -36,6 +42,9 @@ func openAIOutboundIdentityExtraChanged(updates map[string]any) bool {
 		"enable_tls_fingerprint",
 		"tls_fingerprint_profile_id",
 		"tls_fingerprint_router_id",
+		Codex292StateInjectionEnabledExtraKey,
+		Codex292StateAcquireProxyIDExtraKey,
+		Codex292StateEgressProxyIDExtraKey,
 	} {
 		if _, ok := updates[key]; ok {
 			return true

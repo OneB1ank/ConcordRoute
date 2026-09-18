@@ -27,6 +27,8 @@ fallback 链循环、全部过期或目标缺失时保留可诊断失败，不�
 <a id="clash_account_binding"></a>
 Clash/mihomo 策略的运行状态与账号出口绑定是两个独立条件：策略 `running` 只证明本地 managed proxy 可用，只有 `clash_proxy_account_bindings` 中的 enabled binding 才会把账号 `proxy_id` 指向该出口。管理端可以对运行中策略批量绑定当前 `proxy_id IS NULL` 的 OpenAI OAuth 主账号；既有自定义代理不被覆盖，影子账号继续从主账号同步。批量操作允许单项失败并返回逐账号错误，已完成项保持有效；解除绑定恢复此前代理，策略停止时已绑定账号保持 fail-closed，不回退到服务器直连。
 
+OpenAI OAuth 的实验性 292 State 注入拥有两条独立辅助出口：未持有 state 时使用“获取 292 代理”，持有 state 后使用“之后出口代理”。开关开启期间，受支持的 HTTP 推理路径不读取账号主 `proxy_id`，但刷新、探测、原生上游 WebSocket 和其它账号流量仍沿用主代理。两个辅助代理各自允许留空并明确表示该阶段直连；配置了 ID 时则必须存在、启用且未过期，运行时错误保持 fail-closed，不借用账号主代理或其 fallback 链。代理更新会清理对应的短 TTL URL 缓存，账号配置更新会清理该账号的内存 state。协议和租约边界见 [OpenAI 上游](../interfaces/openai_upstream.md#实验性-292-state-注入)。
+
 ## 连接池隔离
 
 HTTP client 池可按 `proxy`、`account` 或 `account_proxy` 隔离，并有最大条目、空闲过期和逐出策略。隔离键还包含 TLS profile 等传输身份，防止不同账号或指纹错误复用连接。池配置变化要关闭/逐出旧 transport，不能只修改后续 key。

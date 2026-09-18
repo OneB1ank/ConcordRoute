@@ -435,6 +435,23 @@ describe('admin UsageView request ID column visibility', () => {
     },
   })
 
+  // 观测默认开启，列显隐只影响界面，且紧跟模型而不是藏进其它列。
+  it('shows upstream status immediately after model without another API call', async () => {
+    const wrapper = mountColumnView()
+    await flushPromises()
+    const keys = () => (wrapper.findComponent(UsageTableStub).props('columns') as Array<{ key: string }>).map(col => col.key)
+    expect(keys()[keys().indexOf('model') + 1]).toBe('upstream_status')
+    const calls = list.mock.calls.length
+    ;(wrapper.vm as any).toggleColumn('upstream_status')
+    await wrapper.vm.$nextTick()
+    expect(keys()).not.toContain('upstream_status')
+    ;(wrapper.vm as any).toggleColumn('upstream_status')
+    await wrapper.vm.$nextTick()
+    expect(keys()[keys().indexOf('model') + 1]).toBe('upstream_status')
+    expect(list.mock.calls.length).toBe(calls)
+    wrapper.unmount()
+  })
+
   it('keeps request ID hidden by default and persists an explicit enable', async () => {
     const wrapper = mountColumnView()
     await wrapper.vm.$nextTick()

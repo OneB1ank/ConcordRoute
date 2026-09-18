@@ -239,10 +239,12 @@ type OpenAIUsage struct {
 
 // OpenAIForwardResult represents the result of forwarding
 type OpenAIForwardResult struct {
-	RequestID  string
-	ResponseID string
-	Usage      OpenAIUsage
-	Model      string // 原始模型（用于响应和日志显示）
+	// 最终上游响应的被动观测摘要；不参与调度、计费或身份处理。
+	UpstreamResponse UpstreamResponseObservation
+	RequestID        string
+	ResponseID       string
+	Usage            OpenAIUsage
+	Model            string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
@@ -490,7 +492,10 @@ type OpenAIGatewayService struct {
 	// 下游会话最近收到的回合状态签发账号，用于故障转移时剥离跨账号回带状态。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
-	openaiOutboundIdentities    sync.Map // account ID -> openAIOutboundIdentitySnapshot
+	// 292 state 只在显式开关开启后按账号+模型保存在本实例内存；代理 URL 为短 TTL 缓存。
+	openaiCodex292States     sync.Map
+	openaiCodex292ProxyURLs  sync.Map
+	openaiOutboundIdentities sync.Map // account ID -> openAIOutboundIdentitySnapshot
 }
 
 type openAIOutboundIdentitySnapshot struct {
@@ -1612,6 +1617,7 @@ func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentity(accountID int64)
 		return
 	}
 	s.openaiOutboundIdentities.Delete(accountID)
+	s.invalidateOpenAICodex292State(accountID)
 }
 
 func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentitiesForTLSRouter(routerID int64) {
@@ -1644,6 +1650,7 @@ func (s *OpenAIGatewayService) invalidateOpenAIOutboundIdentitiesForProxy(proxyI
 	if s == nil || proxyID <= 0 {
 		return
 	}
+	s.invalidateOpenAICodex292Proxy(proxyID)
 	s.openaiOutboundIdentities.Range(func(key, value any) bool {
 		snapshot, ok := value.(openAIOutboundIdentitySnapshot)
 		if ok && snapshot.ProxyID == proxyID {
@@ -1657,6 +1664,14 @@ func (s *OpenAIGatewayService) invalidateAllOpenAIOutboundIdentities() {
 	if s == nil {
 		return
 	}
+	s.openaiCodex292ProxyURLs.Range(func(key, _ any) bool {
+		s.openaiCodex292ProxyURLs.Delete(key)
+		return true
+	})
+	s.openaiCodex292States.Range(func(key, _ any) bool {
+		s.openaiCodex292States.Delete(key)
+		return true
+	})
 	s.openaiOutboundIdentities.Range(func(key, _ any) bool {
 		s.openaiOutboundIdentities.Delete(key)
 		return true

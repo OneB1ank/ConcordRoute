@@ -88,6 +88,29 @@
           <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.model }}</span>
         </template>
 
+        <!-- 被动观测使用原生提示，无轮询、逐行请求或健康等级推断。 -->
+        <template #cell-upstream_status="{ row }">
+          <div
+            data-testid="upstream-observation"
+            class="space-y-1 whitespace-nowrap text-xs tabular-nums"
+            :title="t('usage.upstreamStatusHint')"
+          >
+            <span
+              v-if="row.upstream_status_code != null"
+              class="inline-flex items-center rounded px-1.5 py-0.5 font-medium"
+              :class="row.upstream_status_code >= 400
+                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'"
+            >HTTP {{ row.upstream_status_code }}</span>
+            <span v-else class="text-gray-400 dark:text-gray-500" :title="t('usage.upstreamStatusMissingHint')">—</span>
+            <div
+              v-if="row.codex_turn_state_bytes != null"
+              class="text-gray-500 dark:text-gray-400"
+              :title="t('usage.codexTurnStateHint')"
+            >{{ row.codex_turn_state_bytes > 0 ? `state · ${row.codex_turn_state_bytes} B` : t('usage.codexTurnStateAbsent') }}</div>
+          </div>
+        </template>
+
         <template #cell-reasoning_effort="{ row }">
           <span class="text-sm text-gray-900 dark:text-white">
             {{ formatReasoningEffort(row.reasoning_effort) }}

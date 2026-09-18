@@ -31,7 +31,7 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 // TestPrepareUsageLogInsert_SessionIDArgWiring 固定 session_id 在参数切片和类型表
 // 中的位置，确保所有 INSERT 列表保持同步；session_id 倒数第二，created_at 始终最后。
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 62, "arg-type table must include team attribution and session_id")
+	require.Len(t, usageLogInsertArgTypes, 64, "arg-type table must include team attribution and session_id")
 
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))

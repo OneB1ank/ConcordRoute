@@ -168,7 +168,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = grokGatewayUserAgent
 	}
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity, tlsRouterMatch...)
+	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, upstreamModel, clientStream, token, customUA, grokCacheIdentity, tlsRouterMatch...)
 	if err != nil {
 		return nil, err
 	}
@@ -394,6 +394,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	}
 
 	return &OpenAIForwardResult{
+		UpstreamResponse:            observeUpstreamResponse(resp),
 		RequestID:                   requestID,
 		Usage:                       usage,
 		Model:                       originalModel,
@@ -681,6 +682,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	_, _ = c.Writer.Write(respBody)
 
 	return &OpenAIForwardResult{
+		UpstreamResponse:            observeUpstreamResponse(resp),
 		RequestID:                   requestID,
 		Usage:                       usage,
 		Model:                       originalModel,

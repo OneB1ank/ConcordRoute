@@ -165,6 +165,26 @@ const GroupSelectorStub = defineComponent({
   `
 })
 
+const ProxySelectorStub = defineComponent({
+  name: 'ProxySelector',
+  inheritAttrs: false,
+  props: {
+    modelValue: {
+      type: Number,
+      default: null
+    }
+  },
+  emits: ['update:modelValue'],
+  setup(_props, { attrs, emit }) {
+    const selectProxy = () => {
+      const testID = String(attrs['data-testid'] ?? '')
+      emit('update:modelValue', testID.includes('acquire') ? 11 : 12)
+    }
+    return { selectProxy }
+  },
+  template: '<button type="button" v-bind="$attrs" @click="selectProxy">{{ modelValue }}</button>'
+})
+
 function buildAccount() {
   return {
     id: 1,
@@ -336,7 +356,7 @@ function mountModal(account = buildAccount()) {
         BaseDialog: BaseDialogStub,
         Select: SelectStub,
         Icon: true,
-        ProxySelector: true,
+        ProxySelector: ProxySelectorStub,
         GroupSelector: GroupSelectorStub,
         ModelWhitelistSelector: ModelWhitelistSelectorStub
       }
@@ -748,6 +768,59 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
       'codex_fingerprint_mode'
     )
+  })
+
+  it('loads and updates the 292 state split proxy settings for OpenAI OAuth', async () => {
+    const account = buildOpenAIOAuthAccount()
+    account.extra = {
+      preserved: 'value',
+      codex_292_state_injection_enabled: true,
+      codex_292_state_acquire_proxy_id: 21,
+      codex_292_state_egress_proxy_id: 22
+    }
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="edit-codex-292-acquire-proxy"]').text()).toBe('21')
+    expect(wrapper.get('[data-testid="edit-codex-292-egress-proxy"]').text()).toBe('22')
+
+    await wrapper.get('[data-testid="edit-codex-292-acquire-proxy"]').trigger('click')
+    await wrapper.get('[data-testid="edit-codex-292-egress-proxy"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      preserved: 'value',
+      codex_292_state_injection_enabled: true,
+      codex_292_state_acquire_proxy_id: 11,
+      codex_292_state_egress_proxy_id: 12
+    })
+  })
+
+  it('clears both 292 proxy references when the switch is disabled', async () => {
+    const account = buildOpenAIOAuthAccount()
+    account.extra = {
+      preserved: 'value',
+      codex_292_state_injection_enabled: true,
+      codex_292_state_acquire_proxy_id: 21,
+      codex_292_state_egress_proxy_id: 22
+    }
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-codex-292-state-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.preserved).toBe('value')
+    expect(extra).not.toHaveProperty('codex_292_state_injection_enabled')
+    expect(extra).not.toHaveProperty('codex_292_state_acquire_proxy_id')
+    expect(extra).not.toHaveProperty('codex_292_state_egress_proxy_id')
+  })
+
+  it('hides 292 state settings for API-key and shadow accounts', () => {
+    expect(mountModal(buildAccount()).find('[data-testid="edit-codex-292-state-section"]').exists()).toBe(false)
+    expect(mountModal(buildOpenAISparkShadowAccount()).find('[data-testid="edit-codex-292-state-section"]').exists()).toBe(false)
   })
 
   it('does not show the plan type override for OpenAI API-key accounts', () => {
