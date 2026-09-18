@@ -105,6 +105,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // codex_turn_state_bytes
 			sqlmock.AnyArg(), // session_id
 			createdAt,
+			sqlmock.AnyArg(), // codex_turn_state_request_mode
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -202,6 +203,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // codex_turn_state_bytes
 			sqlmock.AnyArg(), // session_id
 			createdAt,
+			sqlmock.AnyArg(), // codex_turn_state_request_mode
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -966,6 +968,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{}, // codex_turn_state_bytes
 			sql.NullString{},
 			now,
+			sql.NullString{}, // codex_turn_state_request_mode
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
@@ -1048,6 +1051,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},   // codex_turn_state_bytes
 			sql.NullString{},  // session_id
 			now,
+			sql.NullString{}, // codex_turn_state_request_mode
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1111,6 +1115,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},   // codex_turn_state_bytes
 			sql.NullString{},  // session_id
 			now,
+			sql.NullString{}, // codex_turn_state_request_mode
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1174,6 +1179,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullInt64{},   // codex_turn_state_bytes
 			sql.NullString{},  // session_id
 			now,
+			sql.NullString{}, // codex_turn_state_request_mode
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)

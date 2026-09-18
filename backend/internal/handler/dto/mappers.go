@@ -834,17 +834,18 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 	usageLog := usageLogFromServiceUser(l)
 	usageLog.UpstreamEndpoint = l.UpstreamEndpoint
 	return &AdminUsageLog{
-		UsageLog:              usageLog,
-		UpstreamStatusCode:    l.UpstreamStatusCode,
-		CodexTurnStateBytes:   l.CodexTurnStateBytes,
-		UpstreamModel:         l.UpstreamModel,
-		ChannelID:             l.ChannelID,
-		ModelMappingChain:     l.ModelMappingChain,
-		BillingTier:           l.BillingTier,
-		AccountRateMultiplier: l.AccountRateMultiplier,
-		AccountStatsCost:      l.AccountStatsCost,
-		IPAddress:             l.IPAddress,
-		Account:               AccountSummaryFromService(l.Account),
+		UsageLog:                  usageLog,
+		UpstreamStatusCode:        l.UpstreamStatusCode,
+		CodexTurnStateBytes:       l.CodexTurnStateBytes,
+		CodexTurnStateRequestMode: l.CodexTurnStateRequestMode,
+		UpstreamModel:             l.UpstreamModel,
+		ChannelID:                 l.ChannelID,
+		ModelMappingChain:         l.ModelMappingChain,
+		BillingTier:               l.BillingTier,
+		AccountRateMultiplier:     l.AccountRateMultiplier,
+		AccountStatsCost:          l.AccountStatsCost,
+		IPAddress:                 l.IPAddress,
+		Account:                   AccountSummaryFromService(l.Account),
 	}
 }
 

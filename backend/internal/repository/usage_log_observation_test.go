@@ -26,6 +26,8 @@ func TestUsageLogObservationSQLRoundTrip(t *testing.T) {
 			}
 			if code == 200 {
 				stateBytes = 356
+				mode := service.CodexTurnStateRequestModeInjected
+				log.CodexTurnStateRequestMode = &mode
 			}
 			prepared := prepareUsageLogInsert(log)
 			columns := strings.Split(usageLogSelectColumns, ", ")
@@ -45,6 +47,7 @@ func TestUsageLogObservationSQLRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, log.UpstreamStatusCode, got.UpstreamStatusCode)
 			require.Equal(t, log.CodexTurnStateBytes, got.CodexTurnStateBytes)
+			require.Equal(t, log.CodexTurnStateRequestMode, got.CodexTurnStateRequestMode)
 			require.Equal(t, 8, got.InputTokens)
 			require.NoError(t, mock.ExpectationsWereMet())
 
@@ -53,7 +56,7 @@ func TestUsageLogObservationSQLRoundTrip(t *testing.T) {
 			bestEffort, bestArgs := buildUsageLogBestEffortInsertQuery([]usageLogInsertPrepared{prepared})
 			require.Len(t, args, len(prepared.args)+1)
 			require.Len(t, bestArgs, len(prepared.args))
-			for _, field := range []string{"upstream_status_code", "codex_turn_state_bytes"} {
+			for _, field := range []string{"upstream_status_code", "codex_turn_state_bytes", "codex_turn_state_request_mode"} {
 				require.GreaterOrEqual(t, strings.Count(batch, field), 3)
 				require.GreaterOrEqual(t, strings.Count(bestEffort, field), 2)
 			}

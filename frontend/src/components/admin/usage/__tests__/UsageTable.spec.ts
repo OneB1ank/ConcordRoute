@@ -45,6 +45,12 @@ const messages: Record<string, string> = {
   'usage.codexTurnStateFull': 'state · {bytes} B · {plan} full',
   'usage.codexTurnStateDegraded': 'state · {bytes} B · {plan} degraded',
   'usage.codexTurnStateUnknown': 'state · {bytes} B · unknown',
+  'usage.codexTurnStateRequestModeHint': 'Request-side action.',
+  'usage.codexTurnStateRequestInjected': 'request · injected',
+  'usage.codexTurnStateRequestAcquire': 'request · acquire',
+  'usage.codexTurnStateRequestDisabled': 'request · disabled',
+  'usage.codexTurnStateRequestNotRecorded': 'request · not recorded',
+  'usage.codexTurnStateRequestUnknown': 'request · unknown',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
   'usage.serviceTierFlex': 'Flex',
@@ -820,6 +826,20 @@ describe('admin UsageTable upstream observation', () => {
     expect(cell.text()).toContain(`HTTP ${code}`)
     expect(cell.text()).toContain('state · 332 B · Team full')
     expect(cell.attributes('title')).toBe(messages['usage.upstreamStatusHint'])
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['injected', 'request · injected'],
+    ['acquire', 'request · acquire'],
+    ['disabled', 'request · disabled'],
+    ['not_recorded', 'request · not recorded'],
+  ] as const)('shows request-side Turn-State mode %s', (mode, label) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, codex_turn_state_request_mode: mode }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.get('[data-testid="upstream-observation"]').text()).toContain(label)
     wrapper.unmount()
   })
 

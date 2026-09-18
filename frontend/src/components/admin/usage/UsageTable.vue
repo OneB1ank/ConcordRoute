@@ -109,6 +109,12 @@
               :class="codexTurnStateClass(row.codex_turn_state_bytes)"
               :title="t('usage.codexTurnStateHint')"
             >{{ formatCodexTurnState(row.codex_turn_state_bytes) }}</div>
+            <div
+              v-if="row.codex_turn_state_request_mode != null"
+              class="font-medium"
+              :class="codexTurnStateRequestModeClass(row.codex_turn_state_request_mode)"
+              :title="t('usage.codexTurnStateRequestModeHint')"
+            >{{ formatCodexTurnStateRequestMode(row.codex_turn_state_request_mode) }}</div>
           </div>
         </template>
 
@@ -695,6 +701,34 @@ const codexTurnStateClass = (bytes: number): string => {
     return 'text-amber-700 dark:text-amber-300'
   }
   return 'text-gray-500 dark:text-gray-400'
+}
+
+const formatCodexTurnStateRequestMode = (mode: NonNullable<AdminUsageLog['codex_turn_state_request_mode']>): string => {
+  switch (mode) {
+    case 'injected':
+      return t('usage.codexTurnStateRequestInjected')
+    case 'acquire':
+      return t('usage.codexTurnStateRequestAcquire')
+    case 'disabled':
+      return t('usage.codexTurnStateRequestDisabled')
+    case 'not_recorded':
+      return t('usage.codexTurnStateRequestNotRecorded')
+    default:
+      return t('usage.codexTurnStateRequestUnknown')
+  }
+}
+
+const codexTurnStateRequestModeClass = (mode: NonNullable<AdminUsageLog['codex_turn_state_request_mode']>): string => {
+  switch (mode) {
+    case 'injected':
+      return 'text-emerald-600 dark:text-emerald-400'
+    case 'acquire':
+      return 'text-sky-600 dark:text-sky-400'
+    case 'disabled':
+      return 'text-gray-500 dark:text-gray-400'
+    default:
+      return 'text-amber-600 dark:text-amber-400'
+  }
 }
 
 // 未设置用户名时仅展示邮箱本地部分的首尾字符，减少成员列占用空间。

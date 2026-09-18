@@ -529,6 +529,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing
 	if handleErr == nil && result != nil {
+		applyCodexTurnStateRequestMode(result, account, statePlan)
 		result.DataShareSessionID = dataShareSessionIDFromCompatPromptCacheKey(promptCacheKey)
 		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
 			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)

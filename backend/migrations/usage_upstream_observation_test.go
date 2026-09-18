@@ -19,3 +19,15 @@ func TestUsageUpstreamObservationMigration(t *testing.T) {
 		require.NotContains(t, sql, forbidden)
 	}
 }
+
+// 请求侧 Turn-State 观测迁移只增加可空文本列，不回填历史用量或保存状态原文。
+func TestCodexTurnStateRequestModeMigration(t *testing.T) {
+	content, err := FS.ReadFile("282_add_codex_turn_state_request_mode.sql")
+	require.NoError(t, err)
+	sql := strings.ToUpper(string(content))
+	require.Contains(t, sql, "SET LOCAL LOCK_TIMEOUT = '5S'")
+	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS CODEX_TURN_STATE_REQUEST_MODE TEXT")
+	for _, forbidden := range []string{"CREATE INDEX", "UPDATE USAGE_LOGS", "NOT NULL", "DEFAULT ", "DROP COLUMN"} {
+		require.NotContains(t, sql, forbidden)
+	}
+}

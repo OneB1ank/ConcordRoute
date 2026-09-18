@@ -241,10 +241,12 @@ type OpenAIUsage struct {
 type OpenAIForwardResult struct {
 	// 最终上游响应的被动观测摘要；不参与调度、计费或身份处理。
 	UpstreamResponse UpstreamResponseObservation
-	RequestID        string
-	ResponseID       string
-	Usage            OpenAIUsage
-	Model            string // 原始模型（用于响应和日志显示）
+	// 请求侧 Turn-State 处理摘要；只记录模式，不记录 opaque state 原文。
+	CodexTurnStateRequestMode *string
+	RequestID                 string
+	ResponseID                string
+	Usage                     OpenAIUsage
+	Model                     string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where

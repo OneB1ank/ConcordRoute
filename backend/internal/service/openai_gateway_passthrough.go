@@ -228,6 +228,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	agentTaskRecoveryTried := false
 	var resp *http.Response
+	var statePlan openAICodex292RequestPlan
+	var proxyURL string
 	for {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token, tlsRouterMatch...)
@@ -235,7 +237,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		statePlan, proxyURL, buildErr := s.prepareOpenAICodex292Request(ctx, account, upstreamPassthroughModel, upstreamReq)
+		statePlan, proxyURL, buildErr = s.prepareOpenAICodex292Request(ctx, account, upstreamPassthroughModel, upstreamReq)
 		if buildErr != nil {
 			return nil, buildErr
 		}
@@ -334,6 +336,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	forwardResult := &OpenAIForwardResult{
 		UpstreamResponse:            observeUpstreamResponse(resp),
+		CodexTurnStateRequestMode:   codexTurnStateRequestModeForPlan(account, statePlan),
 		RequestID:                   resp.Header.Get("x-request-id"),
 		ResponseID:                  responseID,
 		Usage:                       *usage,

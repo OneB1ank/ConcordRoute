@@ -1050,6 +1050,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		forwardResult := &OpenAIForwardResult{
 			UpstreamResponse:            observeUpstreamResponse(resp),
+			CodexTurnStateRequestMode:   codexTurnStateRequestModeForPlan(account, statePlan),
 			RequestID:                   resp.Header.Get("x-request-id"),
 			ResponseID:                  responseID,
 			Usage:                       *usage,
