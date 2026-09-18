@@ -17,7 +17,7 @@ func observeUpstreamResponse(resp *http.Response) UpstreamResponseObservation {
 	}
 	return UpstreamResponseObservation{
 		StatusCode: resp.StatusCode,
-		// 与注入状态机共用同一响应头提取口径，避免 HTTP 状态和 state 长度再次混淆。
+		// 仅记录响应头长度，不对套餐、能力或降级状态作推断。
 		CodexTurnStateBytes: len(extractOpenAICodexTurnState(resp.Header)),
 	}
 }

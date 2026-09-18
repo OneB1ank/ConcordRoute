@@ -266,15 +266,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	// 7. Send request
-	statePlan, proxyURL, err := s.prepareOpenAICodex292Request(ctx, account, upstreamModel, upstreamReq)
-	if err != nil {
-		return nil, err
-	}
+	proxyURL := resolveAccountProxyURL(account)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
-	s.observeOpenAICodex292Response(statePlan, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	// 8. Handle error response with failover
@@ -323,7 +319,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing
 	if handleErr == nil && result != nil {
-		applyCodexTurnStateRequestMode(result, account, statePlan)
 		if responsesReq.ServiceTier != "" {
 			st := responsesReq.ServiceTier
 			result.ServiceTier = &st

@@ -575,9 +575,6 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		ensureQoderMachineCredentials(account)
 	}
 	s.attachAccountProxyForValidation(ctx, account)
-	if err := validateCodex292StateConfig(ctx, s.proxyRepo, account); err != nil {
-		return nil, err
-	}
 	if err := validateQoderCosyCredentials(ctx, account, s.httpUpstream, s.tlsFPProfileService); err != nil {
 		return nil, err
 	}
@@ -802,9 +799,6 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 	s.attachAccountProxyForValidation(ctx, account)
-	if err := validateCodex292StateConfig(ctx, s.proxyRepo, account); err != nil {
-		return nil, err
-	}
 	if err := validateQoderCosyCredentialsWithOptions(ctx, account, s.httpUpstream, s.tlsFPProfileService, deferQoderPATValidation); err != nil {
 		return nil, err
 	}
@@ -854,15 +848,6 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	identityExtraChanged := openAIOutboundIdentityExtraChanged(updates)
 	var account *Account
 	var err error
-	if codex292StateConfigUpdatesProvided(updates) {
-		account, err = s.accountRepo.GetByID(ctx, id)
-		if err != nil {
-			return err
-		}
-		if err := validateCodex292StateConfig(ctx, s.proxyRepo, accountWithCodex292ExtraUpdates(account, updates)); err != nil {
-			return err
-		}
-	}
 	if _, provided := updates[CodexQuotaOverdraftEnabledExtraKey]; provided {
 		if resolveAccountExtraBool(updates, CodexQuotaOverdraftEnabledExtraKey) {
 			if account == nil {
@@ -929,8 +914,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	clearOverdraftThresholdRuntimeBlocks := resolveAccountExtraBool(input.Extra, CodexQuotaOverdraftEnabledExtraKey)
 	var cachedTargets []*Account
-	validateCodex292BulkConfig := codex292StateConfigUpdatesProvided(input.Extra)
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || clearOverdraftThresholdRuntimeBlocks || validateCodex292BulkConfig {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || clearOverdraftThresholdRuntimeBlocks {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -959,17 +943,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 		}
 	}
-	if validateCodex292BulkConfig {
-		for _, account := range cachedTargets {
-			if account == nil {
-				continue
-			}
-			if err := validateCodex292StateConfig(ctx, s.proxyRepo, accountWithCodex292ExtraUpdates(account, input.Extra)); err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	// 预加载账号平台信息（混合渠道检查需要）。
 	platformByID := map[int64]string{}
 	if needMixedChannelCheck {

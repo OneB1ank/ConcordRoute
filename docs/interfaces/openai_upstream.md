@@ -162,13 +162,13 @@ OpenAI OAuth 的 HTTP、passthrough、旧版 Compact 与 WebSocket 出站会在�
 
 `x-codex-beta-features` 是 Codex 的会话级协商头：OAuth 普通 Responses HTTP 与 WebSocket 握手在客户端未声明时补入 `remote_compaction_v2`，客户端给出的非空值保持原样；原生 V2 请求无论账号类型都保证该 feature 存在。上游响应中的 `x-codex-turn-state` 会在 HTTP/SSE、SSE 转 JSON 与 passthrough 路径显式回传。网关按 API Key 与客户端原始 session 记录最近签发账号；故障转移后，已知由其它账号签发的客户端回带值会被剥离，未知或同账号的值保持透传。
 
-### 实验性 Turn-State 注入
+### Turn-State 被动观测
 
-非影子 OpenAI OAuth 账号可显式开启 `extra.codex_292_state_injection_enabled`。`codex_292_*` 是为了兼容既有账号数据保留的配置键名，不代表 HTTP 状态。该能力默认关闭，只覆盖普通 Responses、OAuth passthrough、Chat 转换、Messages 转换和 WS HTTP bridge 等 HTTP 推理路径；原生上游 WebSocket、令牌刷新、账号测试、额度/模型探测及其它账号流量继续使用账号主代理。状态机只检查最终响应头 `x-codex-turn-state` 去除外侧空白后的字符串长度：Pro 的 `292` 表示可复用满血态、`312` 表示降级态；Team 的对应长度为 `332` 与 `356`。四种响应对应的 HTTP 状态通常都是 `200`，HTTP 状态码不参与签发或撤销判定。这不是稳定的上游公开协议，因此实现不增加主动探测、后台轮询或响应体逐块解析。
-
-开启后，账号主 `proxy_id` 不参与上述 HTTP 推理请求。没有有效 state 时使用 `extra.codex_292_state_acquire_proxy_id`；收到 Pro `292` 或 Team `332` 的有效满血 state 后，按账号 ID 与规范化模型在当前实例内存保存 state，并在后续同模型请求中覆盖客户端回带值，同时切换到 `extra.codex_292_state_egress_proxy_id`。任一代理 ID 留空都表示对应阶段由服务器直连，而不是回退到账号主代理。辅助代理不存在、停用、过期或解析失败时请求直接失败，不静默改走主代理或服务器直连。
-
-state 使用 55 分钟保守内存租约；实例重启、租约到期、账号配置改变，或收到 Pro `312` / Team `356` 的降级 state 后，下一笔同模型业务请求重新进入获取阶段。空值与其它未知长度既不签发也不撤销，避免未来协议变化被误判。state 原文不写入账号 Extra、数据库、Usage 或普通日志；既有被动观测只保存最终上游 HTTP 状态码和头长度。管理员 Usage 另记录请求侧模式 `injected`、`acquire` 或 `disabled`，用于确认本次是否真正命中注入；历史或未接入路径保持空值。多实例不共享租约，因此每个实例独立获取；状态机只负责保存或撤销本账号本模型的注入值，普通错误分类、故障转移和客户端响应语义仍由现有网关策略决定。
+网关不再提供 Turn-State 注入、缓存续采、采集代理或业务出口代理配置。客户端携带的
+`x-codex-turn-state` 按既有同账号来源守卫和透传规则处理；上游响应中的该头仍会回传给客户端。
+管理员 Usage 只被动记录最终上游响应的 HTTP 状态码，以及响应头去除外侧空白后的 state 字符串长度。
+展示统一为 `state · N B`，长度不推断 Pro/Team、满血或降级；未返回时显示 `state · 未返回`。
+该观测不发起探测、轮询、缓存或代理切换，也不改变 UA、TLS、账号主代理、故障转移和普通 Turn-State 语义。
 
 WebSocket 连接池把 routing hint 视为拨号和普通复用的软亲和：优先复用相同提示建立的连接，池满时仍可在硬兼容连接上排队，显式 continuation 也不会仅因提示变化而断链。握手 beta feature 与本 fork 的 TLS fingerprint profile 仍是硬兼容键，任一变化都禁止复用，并会使尚未完成的旧目标预热拨号失效。路由诊断只记录网关推导的最终模型、规范化 tier、传输类型、账号 ID、是否生成提示和 WS 亲和决策，不记录提示头值、token 或凭据。
 

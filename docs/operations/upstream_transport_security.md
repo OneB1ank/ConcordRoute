@@ -27,7 +27,7 @@ fallback 链循环、全部过期或目标缺失时保留可诊断失败，不�
 <a id="clash_account_binding"></a>
 Clash/mihomo 策略的运行状态与账号出口绑定是两个独立条件：策略 `running` 只证明本地 managed proxy 可用，只有 `clash_proxy_account_bindings` 中的 enabled binding 才会把账号 `proxy_id` 指向该出口。管理端可以对运行中策略批量绑定当前 `proxy_id IS NULL` 的 OpenAI OAuth 主账号；既有自定义代理不被覆盖，影子账号继续从主账号同步。批量操作允许单项失败并返回逐账号错误，已完成项保持有效；解除绑定恢复此前代理，策略停止时已绑定账号保持 fail-closed，不回退到服务器直连。
 
-OpenAI OAuth 的实验性 Turn-State 注入拥有两条独立辅助出口：未持有 Pro `292` / Team `332` 的满血 state，或刚收到 Pro `312` / Team `356` 的降级 state 时使用“获取满血 State 代理”；持有满血 state 后使用“之后出口代理”。HTTP 响应通常仍为 `200`，代理阶段只由响应头字符串长度驱动。开关开启期间，受支持的 HTTP 推理路径不读取账号主 `proxy_id`，但刷新、探测、原生上游 WebSocket 和其它账号流量仍沿用主代理。两个辅助代理各自允许留空并明确表示该阶段由服务器直连；配置了 ID 时则必须存在、启用且未过期，运行时错误保持 fail-closed，不借用账号主代理或其 fallback 链。代理更新会清理对应的短 TTL URL 缓存，账号配置更新会清理该账号的内存 state。协议和租约边界见 [OpenAI 上游](../interfaces/openai_upstream.md#实验性-turn-state-注入)。
+OpenAI OAuth 的 Turn-State 只按既有客户端透传和账号来源守卫处理。网关不再提供注入开关、state 缓存、采集代理或独立业务出口；普通请求继续使用账号主代理，UA/TLS 与连接池隔离规则保持不变。上游响应头长度仅进入管理员 Usage 的被动观测，不参与代理选择或故障转移。
 
 ## 连接池隔离
 

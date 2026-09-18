@@ -1512,59 +1512,6 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
-      <!-- Turn-State 注入（配置键为兼容旧版本仍保留 292 命名） -->
-      <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-        data-testid="edit-codex-292-state-section"
-      >
-        <div class="flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.codex292StateInjection') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.codex292StateInjectionDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid="edit-codex-292-state-toggle"
-            @click="codex292StateInjectionEnabled = !codex292StateInjectionEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codex292StateInjectionEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                codex292StateInjectionEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-        <div v-if="codex292StateInjectionEnabled" class="mt-4 grid gap-4 lg:grid-cols-2">
-          <div>
-            <label class="input-label">{{ t('admin.accounts.openai.codex292AcquireProxy') }}</label>
-            <ProxySelector
-              v-model="codex292AcquireProxyId"
-              :proxies="proxies"
-              data-testid="edit-codex-292-acquire-proxy"
-            />
-            <p class="input-hint">{{ t('admin.accounts.openai.codex292AcquireProxyHint') }}</p>
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.accounts.openai.codex292EgressProxy') }}</label>
-            <ProxySelector
-              v-model="codex292EgressProxyId"
-              :proxies="proxies"
-              data-testid="edit-codex-292-egress-proxy"
-            />
-            <p class="input-hint">{{ t('admin.accounts.openai.codex292EgressProxyHint') }}</p>
-          </div>
-          <p class="input-hint lg:col-span-2">{{ t('admin.accounts.openai.codex292MainProxyIgnoredHint') }}</p>
-        </div>
-      </div>
-
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
@@ -3135,9 +3082,6 @@ const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
 const codexQuotaOverdraftEnabled = ref(false)
-const codex292StateInjectionEnabled = ref(false)
-const codex292AcquireProxyId = ref<number | null>(null)
-const codex292EgressProxyId = ref<number | null>(null)
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
@@ -3669,9 +3613,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openAIOAuthClientPolicy.value = 'any'
   codexFingerprintMode.value = 'off'
   codexQuotaOverdraftEnabled.value = false
-  codex292StateInjectionEnabled.value = false
-  codex292AcquireProxyId.value = null
-  codex292EgressProxyId.value = null
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -3720,13 +3661,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         ? fpMode as CodexFingerprintMode
         : 'off')
       codexQuotaOverdraftEnabled.value = extra?.codex_quota_overdraft_enabled === true
-      codex292StateInjectionEnabled.value = extra?.codex_292_state_injection_enabled === true
-      codex292AcquireProxyId.value = typeof extra?.codex_292_state_acquire_proxy_id === 'number' && extra.codex_292_state_acquire_proxy_id > 0
-        ? extra.codex_292_state_acquire_proxy_id
-        : null
-      codex292EgressProxyId.value = typeof extra?.codex_292_state_egress_proxy_id === 'number' && extra.codex_292_state_egress_proxy_id > 0
-        ? extra.codex_292_state_egress_proxy_id
-        : null
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
@@ -5098,6 +5032,10 @@ const handleSubmit = async () => {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
+      // 清理已移除的实验性 Turn-State 配置键，避免旧账号继续携带无效设置。
+      delete newExtra.codex_292_state_injection_enabled
+      delete newExtra.codex_292_state_acquire_proxy_id
+      delete newExtra.codex_292_state_egress_proxy_id
       if (props.account.type === 'oauth' || props.account.type === 'setup-token') {
         newExtra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
         newExtra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -5208,23 +5146,6 @@ const handleSubmit = async () => {
           newExtra.codex_quota_overdraft_enabled = true
         } else {
           delete newExtra.codex_quota_overdraft_enabled
-        }
-        if (codex292StateInjectionEnabled.value) {
-          newExtra.codex_292_state_injection_enabled = true
-          if (codex292AcquireProxyId.value) {
-            newExtra.codex_292_state_acquire_proxy_id = codex292AcquireProxyId.value
-          } else {
-            delete newExtra.codex_292_state_acquire_proxy_id
-          }
-          if (codex292EgressProxyId.value) {
-            newExtra.codex_292_state_egress_proxy_id = codex292EgressProxyId.value
-          } else {
-            delete newExtra.codex_292_state_egress_proxy_id
-          }
-        } else {
-          delete newExtra.codex_292_state_injection_enabled
-          delete newExtra.codex_292_state_acquire_proxy_id
-          delete newExtra.codex_292_state_egress_proxy_id
         }
       }
 

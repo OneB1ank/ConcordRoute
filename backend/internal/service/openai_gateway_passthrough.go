@@ -228,7 +228,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	agentTaskRecoveryTried := false
 	var resp *http.Response
-	var statePlan openAICodex292RequestPlan
 	var proxyURL string
 	for {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -237,10 +236,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		statePlan, proxyURL, buildErr = s.prepareOpenAICodex292Request(ctx, account, upstreamPassthroughModel, upstreamReq)
-		if buildErr != nil {
-			return nil, buildErr
-		}
+		proxyURL = resolveAccountProxyURL(account)
 
 		upstreamStart := time.Now()
 		markUpstreamStage := BeginTTFTUpstreamAttempt(c, account.ID)
@@ -249,7 +245,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
 		if resp != nil {
 			markUpstreamStage("upstream_headers_received")
-			s.observeOpenAICodex292Response(statePlan, resp)
 		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
@@ -336,7 +331,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	forwardResult := &OpenAIForwardResult{
 		UpstreamResponse:            observeUpstreamResponse(resp),
-		CodexTurnStateRequestMode:   codexTurnStateRequestModeForPlan(account, statePlan),
 		RequestID:                   resp.Header.Get("x-request-id"),
 		ResponseID:                  responseID,
 		Usage:                       *usage,
