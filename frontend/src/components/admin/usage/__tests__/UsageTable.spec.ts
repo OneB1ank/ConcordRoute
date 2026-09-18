@@ -42,7 +42,15 @@ const messages: Record<string, string> = {
   'usage.upstreamStatusMissingHint': 'Not captured; no assumed 200.',
   'usage.codexTurnStateHint': 'Only x-codex-turn-state bytes; no opaque value.',
   'usage.codexTurnStateAbsent': 'state · absent',
-  'usage.codexTurnStatePresent': 'state · {bytes} B',
+  'usage.codexTurnStateFull': 'state · {bytes} B · {plan} full',
+  'usage.codexTurnStateDegraded': 'state · {bytes} B · {plan} degraded',
+  'usage.codexTurnStateUnknown': 'state · {bytes} B · unknown',
+  'usage.codexTurnStateRequestModeHint': 'Request-side action.',
+  'usage.codexTurnStateRequestInjected': 'request · injected',
+  'usage.codexTurnStateRequestAcquire': 'request · acquire',
+  'usage.codexTurnStateRequestDisabled': 'request · disabled',
+  'usage.codexTurnStateRequestNotRecorded': 'request · not recorded',
+  'usage.codexTurnStateRequestUnknown': 'request · unknown',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
   'usage.serviceTierFlex': 'Flex',
@@ -807,7 +815,7 @@ describe('admin UsageTable deleted-user badge', () => {
   })
 })
 
-// HTTP 状态与 Turn-State 长度分开显示；state 只展示长度，不做套餐或降级分类。
+// HTTP 状态与 Turn-State 长度分开显示，Pro 与 Team 各自按响应头长度分类。
 describe('admin UsageTable upstream observation', () => {
   it.each([200, 201, 429, 502])('shows actual HTTP %i independently of state length', (code) => {
     const wrapper = mount(UsageTable, {
@@ -816,18 +824,32 @@ describe('admin UsageTable upstream observation', () => {
     })
     const cell = wrapper.get('[data-testid="upstream-observation"]')
     expect(cell.text()).toContain(`HTTP ${code}`)
-    expect(cell.text()).toContain('state · 332 B')
+    expect(cell.text()).toContain('state · 332 B · Team full')
     expect(cell.attributes('title')).toBe(messages['usage.upstreamStatusHint'])
     wrapper.unmount()
   })
 
   it.each([
-    { bytes: 292, label: 'state · 292 B' },
-    { bytes: 312, label: 'state · 312 B' },
-    { bytes: 332, label: 'state · 332 B' },
-    { bytes: 356, label: 'state · 356 B' },
-    { bytes: 333, label: 'state · 333 B' },
-  ])('shows Turn-State length without classification $bytes', ({ bytes, label }) => {
+    ['injected', 'request · injected'],
+    ['acquire', 'request · acquire'],
+    ['disabled', 'request · disabled'],
+    ['not_recorded', 'request · not recorded'],
+  ] as const)('shows request-side Turn-State mode %s', (mode, label) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, codex_turn_state_request_mode: mode }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.get('[data-testid="upstream-observation"]').text()).toContain(label)
+    wrapper.unmount()
+  })
+
+  it.each([
+    { bytes: 292, label: 'state · 292 B · Pro full' },
+    { bytes: 312, label: 'state · 312 B · Pro degraded' },
+    { bytes: 332, label: 'state · 332 B · Team full' },
+    { bytes: 356, label: 'state · 356 B · Team degraded' },
+    { bytes: 333, label: 'state · 333 B · unknown' },
+  ])('classifies Turn-State length $bytes', ({ bytes, label }) => {
     const wrapper = mount(UsageTable, {
       props: { data: [{ ...baseImageRow, upstream_status_code: 200, codex_turn_state_bytes: bytes }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },

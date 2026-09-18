@@ -393,7 +393,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// 7. Send request
-	proxyURL := resolveAccountProxyURL(account)
+	statePlan, proxyURL, err := s.prepareOpenAICodex292Request(ctx, account, upstreamModel, upstreamReq)
+	if err != nil {
+		return nil, err
+	}
 	// Grok 可能拒绝在不同 OAuth 账号或缓存身份下回放的加密推理。与
 	// forwardGrokResponses 保持一致：先剥离密文并重试一次，再将 400 作为硬失败
 	// 或故障转移触发条件处理。
@@ -420,6 +423,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
+		s.observeOpenAICodex292Response(statePlan, resp)
 		if account.Platform != PlatformGrok || attempt > 0 || resp.StatusCode != http.StatusBadRequest {
 			break
 		}
@@ -525,6 +529,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing
 	if handleErr == nil && result != nil {
+		applyCodexTurnStateRequestMode(result, account, statePlan)
 		result.DataShareSessionID = dataShareSessionIDFromCompatPromptCacheKey(promptCacheKey)
 		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
 			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)

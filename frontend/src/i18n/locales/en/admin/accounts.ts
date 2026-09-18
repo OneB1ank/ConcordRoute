@@ -701,6 +701,13 @@ export default {
         codexFingerprintFull: 'Full convergence',
         codexQuotaOverdraft: 'Codex quota overdraft (experimental)',
         codexQuotaOverdraftDesc: 'At 95%, enters preparation and keeps normal business requests eligible; at 98%, shows overdraft active. Only local quota reserve thresholds are bypassed. A real upstream 429 terminates the cycle through standard rate limiting. Request bodies, cache keys, and session identifiers remain unchanged.',
+        codex292StateInjection: 'Turn-State injection (experimental)',
+        codex292StateInjectionDesc: 'For OpenAI OAuth HTTP inference only. Classification uses the response header string length: Pro uses 292 for full and 312 for degraded; Team uses 332 for full and 356 for degraded. HTTP normally remains 200. Disabled by default.',
+        codex292AcquireProxy: 'Full-state acquisition proxy',
+        codex292AcquireProxyHint: 'Used while no valid full state for the account plan is held, or after its degraded state is observed. Leave empty to connect directly from the server.',
+        codex292EgressProxy: 'Legacy business egress proxy (deprecated)',
+        codex292EgressProxyHint: 'Kept only for compatibility with older settings; business HTTP inference now always uses the account main proxy, so this field no longer affects routing.',
+        codex292MainProxyIgnoredHint: 'When enabled, only the acquisition phase without a valid full state uses the acquisition proxy; business HTTP inference with a state continues to use the account main proxy.',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

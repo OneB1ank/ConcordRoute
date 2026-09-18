@@ -267,7 +267,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		upstreamReq.Header.Set(responsesLiteHeader, "true")
 	}
 
-	proxyURL := resolveAccountProxyURL(account)
+	statePlan, proxyURL, err := s.prepareOpenAICodex292Request(ctx, account, mappedModel, upstreamReq)
+	if err != nil {
+		return nil, err
+	}
 	if c != nil {
 		c.Set("openai_passthrough", true)
 		c.Set("openai_ws_http_bridge", true)
@@ -283,6 +286,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		_ = writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(http.StatusBadGateway, "Upstream request failed"))
 		return nil, fmt.Errorf("upstream http bridge request failed: %s", safeErr)
 	}
+	s.observeOpenAICodex292Response(statePlan, resp)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
@@ -346,6 +350,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		imageCount := imageCounter.Count()
 		result := &OpenAIForwardResult{
 			UpstreamResponse:            observeUpstreamResponse(resp),
+			CodexTurnStateRequestMode:   codexTurnStateRequestModeForPlan(account, statePlan),
 			RequestID:                   responseID,
 			ResponseID:                  responseID,
 			Usage:                       usage,

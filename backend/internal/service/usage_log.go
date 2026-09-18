@@ -179,7 +179,8 @@ type UsageLog struct {
 	// 管理员被动观测字段；nil 表示历史或未接入，不推断默认 HTTP 200。
 	UpstreamStatusCode  *int
 	CodexTurnStateBytes *int
-	// 历史兼容字段：新请求不再记录请求侧注入模式，数据库旧列保留以支持滚动回退。
+	// CodexTurnStateRequestMode 记录请求侧动作，不保存 opaque state 原文；
+	// 取值为 injected、acquire、disabled 或 not_recorded。
 	CodexTurnStateRequestMode *string
 	UserAgent                 *string
 	IPAddress                 *string

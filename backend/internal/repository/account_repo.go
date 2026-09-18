@@ -141,6 +141,19 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedul
 	return &accountRepository{client: client, sql: sqlq, schedulerCache: schedulerCache}
 }
 
+// GetCodex292ProxyByID 为网关实验性 Turn-State 双出口配置提供窄查询能力。
+// 返回完整凭据仅用于构造出站 URL，不进入账号 DTO 或日志。
+func (r *accountRepository) GetCodex292ProxyByID(ctx context.Context, id int64) (*service.Proxy, error) {
+	proxyEntity, err := r.client.Proxy.Get(ctx, id)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return nil, service.ErrProxyNotFound
+		}
+		return nil, err
+	}
+	return proxyEntityToService(proxyEntity), nil
+}
+
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
 	if err := createAccountRecord(ctx, r.client, account); err != nil {
 		return err

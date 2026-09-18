@@ -26,6 +26,8 @@ func TestUsageLogObservationSQLRoundTrip(t *testing.T) {
 			}
 			if code == 200 {
 				stateBytes = 356
+				mode := service.CodexTurnStateRequestModeInjected
+				log.CodexTurnStateRequestMode = &mode
 			}
 			prepared := prepareUsageLogInsert(log)
 			columns := strings.Split(usageLogSelectColumns, ", ")

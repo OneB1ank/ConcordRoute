@@ -1895,6 +1895,7 @@ export interface AdminUsageLog extends UsageLog {
   // 实际 HTTP 响应与状态头长度，仅观测、不代表模型能力。
   upstream_status_code?: number | null
   codex_turn_state_bytes?: number | null
+  codex_turn_state_request_mode?: 'injected' | 'acquire' | 'disabled' | 'not_recorded' | null
   upstream_model?: string | null
   model_mapping_chain?: string | null
 

@@ -89,8 +89,13 @@ OpenAI 原生 Responses HTTP/WS 的新使用记录优先使用首响应（首块
 不增加探测、轮询或逐 SSE 事件工作。记录最终 HTTP 上游响应的真实 `upstream_status_code`
 及 `codex_turn_state_bytes`（响应 `x-codex-turn-state` 去除外侧空白后的字符串字节数；
 该令牌为 ASCII，因此也等于字符数）；0 字节表示本次响应未返回非空状态，NULL 表示未采集。
-两者独立展示，state 统一显示为 `state · N B`，不区分套餐、满血、降级或未知类别；未返回显示
-`state · 未返回`。该观测只读最终响应头一次，不参与调度、计费、身份、缓存、首字或状态转发。
+两者独立展示：正常态与降级态通常都返回 HTTP 200；Pro 的 Turn-State 长度 `292` 标记
+满血、`312` 标记降级，Team 的对应长度为 `332` 与 `356`，其它非零长度只展示为未知。
+
+管理员表格在同一列追加请求侧 `codex_turn_state_request_mode`：`injected` 表示本次请求
+确实使用了缓存的满血 State，`acquire` 表示本次走获取 State 阶段，`disabled` 表示该
+OpenAI 请求未启用注入，`not_recorded` 保留给历史或未接入路径。该字段只保存模式枚举，
+不保存 State 原文、代理 URL 或凭据。
 
 接入 OpenAI 服务的 Responses 普通/透传/compact、Responses 到 Chat/Messages 的转换、
 原始 Chat Completions 及 WS 下游到 HTTP 上游的桥接结果。真正的 WS 上游没有逐请求 HTTP
@@ -98,8 +103,14 @@ OpenAI 原生 Responses HTTP/WS 的新使用记录优先使用首响应（首块
 结果；最终错误仍由现有 Ops 记录负责，使用记录并非完整的错误或会话状态历史。
 
 摘要在最终结果构造时取一次头长度，只保存两个整数，沿现有 Usage worker/批量 INSERT
-落库；没有额外 SQL、全局锁、凭据原文、哈希或会话缓存。历史迁移 `282_add_codex_turn_state_request_mode.sql`
-及对应 nullable 列保留用于旧版本滚动回退，但当前应用不再生成、展示或消费请求侧注入模式。
+落库；没有额外 SQL、全局锁、凭据原文、哈希或会话缓存。原有 worker 的同步降级策略仍然
+适用，不能把它称为绝对无阻塞。新字段仅经管理员 DTO 返回，不参与调度、计费、身份、
+缓存、首字或状态转发。导出尚未增加这两个观测字段，聚合语义保持不变。
+
+迁移 `281_usage_upstream_observation.sql` 与 `282_add_codex_turn_state_request_mode.sql`
+只新增可空列，无索引、默认值或历史回填；
+锁等待上限 5 秒。与 `session_id` 等既有 SQL 扩展字段相同，由原始 SQL 仓储读写，
+不使用 Ent 生成器管理。回退旧程序可保留新增列，不删除迁移记录或历史观测数据。
 
 ## 后台运行时
 
