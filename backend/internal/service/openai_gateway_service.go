@@ -492,7 +492,7 @@ type OpenAIGatewayService struct {
 	// 下游会话最近收到的回合状态签发账号，用于故障转移时剥离跨账号回带状态。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
-	// 292 state 只在显式开关开启后按账号+模型保存在本实例内存；代理 URL 为短 TTL 缓存。
+	// 满血 Turn-State 只在显式开关开启后按账号+模型保存在本实例内存；代理 URL 为短 TTL 缓存。
 	openaiCodex292States     sync.Map
 	openaiCodex292ProxyURLs  sync.Map
 	openaiOutboundIdentities sync.Map // account ID -> openAIOutboundIdentitySnapshot

@@ -1,9 +1,6 @@
 package service
 
-import (
-	"net/http"
-	"strings"
-)
+import "net/http"
 
 // UpstreamResponseObservation 是最终一次 HTTP 上游响应的非敏感摘要。
 // 零值表示未采集；它不代表会话等级、模型能力或状态凭据有效性。
@@ -20,8 +17,8 @@ func observeUpstreamResponse(resp *http.Response) UpstreamResponseObservation {
 	}
 	return UpstreamResponseObservation{
 		StatusCode: resp.StatusCode,
-		// 使用规范大小写常量，避免 Header.Get 为自定义头每次分配规范化字符串。
-		CodexTurnStateBytes: len(strings.TrimSpace(resp.Header.Get("X-Codex-Turn-State"))),
+		// 与注入状态机共用同一响应头提取口径，避免 HTTP 状态和 state 长度再次混淆。
+		CodexTurnStateBytes: len(extractOpenAICodexTurnState(resp.Header)),
 	}
 }
 

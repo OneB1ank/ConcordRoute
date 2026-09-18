@@ -18,7 +18,7 @@ import (
 
 // 使用合成值核对状态码与长度互不混淆，且摘要不持有凭据。
 func TestUpstreamResponseObservation(t *testing.T) {
-	for _, code := range []int{200, 290, 292, 312, 429, 502} {
+	for _, code := range []int{200, 201, 429, 502} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			header := http.Header{"X-Codex-Turn-State": {" \tabc\t "}}
 			before := header.Clone()
@@ -35,7 +35,15 @@ func TestUpstreamResponseObservation(t *testing.T) {
 	for _, code := range []int{0, 99, 600} {
 		require.Zero(t, observeUpstreamResponse(&http.Response{StatusCode: code}))
 	}
-	for _, state := range []string{"", " \t", strings.Repeat("x", 292), "测试"} {
+	for _, state := range []string{
+		"",
+		" \t",
+		strings.Repeat("x", openAICodexProFullStateLength),
+		strings.Repeat("x", openAICodexProDegradedStateLength),
+		strings.Repeat("x", openAICodexTeamFullStateLength),
+		strings.Repeat("x", openAICodexTeamDegradedStateLength),
+		"测试",
+	} {
 		got := observeUpstreamResponse(&http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {state}}})
 		require.Equal(t, 200, got.StatusCode)
 		require.Equal(t, len(strings.TrimSpace(state)), got.CodexTurnStateBytes)
@@ -59,7 +67,7 @@ func TestUpstreamResponseObservationForward(t *testing.T) {
 				if stream && strings.HasSuffix(path, "/compact") {
 					continue
 				}
-				for _, code := range []int{200, 290, 292, 312} {
+				for _, code := range []int{200, 201, 206, 299} {
 					t.Run(fmt.Sprintf("raw=%v/path=%s/stream=%v/status=%d", passthrough, path, stream, code), func(t *testing.T) {
 						body := []byte(fmt.Sprintf(`{"model":"gpt-5.1","stream":%v,"instructions":"test","input":[{"role":"user","content":"test"}],"prompt_cache_key":"cache-unchanged"}`, stream))
 						c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -102,7 +110,12 @@ func TestUpstreamResponseObservationForward(t *testing.T) {
 // 最终结果拥有自己的摘要，不从 Gin、全局或旧握手中继承失败尝试信息。
 func TestUpstreamResponseObservationIsolationAndUsage(t *testing.T) {
 	for _, observation := range []UpstreamResponseObservation{
-		{}, {StatusCode: 200}, {StatusCode: 292, CodexTurnStateBytes: 312}, {StatusCode: 312, CodexTurnStateBytes: 290},
+		{},
+		{StatusCode: 200},
+		{StatusCode: 200, CodexTurnStateBytes: openAICodexProFullStateLength},
+		{StatusCode: 200, CodexTurnStateBytes: openAICodexProDegradedStateLength},
+		{StatusCode: 200, CodexTurnStateBytes: openAICodexTeamFullStateLength},
+		{StatusCode: 200, CodexTurnStateBytes: openAICodexTeamDegradedStateLength},
 	} {
 		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 		svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, &openAIUserGroupRateRepoStub{})
@@ -151,12 +164,12 @@ func TestUpstreamResponseObservationZeroAllocation(t *testing.T) {
 
 // 异步落库持有独立摘要，不引用可变的原转发结果，更不延长正文生命周期。
 func TestUpstreamResponseObservationUsageSnapshot(t *testing.T) {
-	observation := UpstreamResponseObservation{StatusCode: 292, CodexTurnStateBytes: 312}
+	observation := UpstreamResponseObservation{StatusCode: 200, CodexTurnStateBytes: openAICodexProFullStateLength}
 	var log UsageLog
 	observation.applyUsageObservation(&log)
 	observation.StatusCode, observation.CodexTurnStateBytes = 200, 0
-	require.Equal(t, 292, *log.UpstreamStatusCode)
-	require.Equal(t, 312, *log.CodexTurnStateBytes)
+	require.Equal(t, 200, *log.UpstreamStatusCode)
+	require.Equal(t, openAICodexProFullStateLength, *log.CodexTurnStateBytes)
 }
 
 // 通过真实的请求重试循环验证最终响应摘要，而非只比较独立辅助函数返回值。
@@ -183,7 +196,15 @@ func TestUpstreamResponseObservationRetry(t *testing.T) {
 }
 
 func BenchmarkUpstreamResponseObservation(b *testing.B) {
-	for _, size := range []int{0, 292, 4096, 65536} {
+	for _, size := range []int{
+		0,
+		openAICodexProFullStateLength,
+		openAICodexProDegradedStateLength,
+		openAICodexTeamFullStateLength,
+		openAICodexTeamDegradedStateLength,
+		4096,
+		65536,
+	} {
 		b.Run(fmt.Sprintf("state_bytes_%d", size), func(b *testing.B) {
 			resp := &http.Response{StatusCode: 200, Header: http.Header{"X-Codex-Turn-State": {strings.Repeat("x", size)}}}
 			b.ReportAllocs()
@@ -201,7 +222,7 @@ var usageObservationBenchmarkSink UsageLog
 func BenchmarkUpstreamUsageObservation(b *testing.B) {
 	for _, code := range []int{0, 200} {
 		b.Run(fmt.Sprint(code), func(b *testing.B) {
-			observation := UpstreamResponseObservation{StatusCode: code, CodexTurnStateBytes: 292}
+			observation := UpstreamResponseObservation{StatusCode: code, CodexTurnStateBytes: openAICodexProFullStateLength}
 			b.ReportAllocs()
 			for b.Loop() {
 				observation.applyUsageObservation(&usageObservationBenchmarkSink)

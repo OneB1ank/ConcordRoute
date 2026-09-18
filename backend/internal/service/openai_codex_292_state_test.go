@@ -204,6 +204,8 @@ func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testin
 	}}
 	svc := &OpenAIGatewayService{accountRepo: repo}
 	account := codex292TestAccount()
+	fullState := strings.Repeat("f", openAICodexTeamFullStateLength)
+	degradedState := strings.Repeat("d", openAICodexTeamDegradedStateLength)
 
 	acquireReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	acquireReq.Header.Set(openAICodexTurnStateHeader, "unknown-client-state")
@@ -216,8 +218,8 @@ func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testin
 	require.NotEqual(t, account.Proxy.URL(), proxyURL)
 
 	svc.observeOpenAICodex292Response(acquirePlan, &http.Response{
-		StatusCode: openAICodex292IssuedStatus,
-		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{"issued-state"}},
+		StatusCode: http.StatusOK,
+		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{fullState}},
 	})
 
 	egressReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -226,7 +228,7 @@ func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testin
 	require.NoError(t, err)
 	require.True(t, egressPlan.usedState)
 	require.Equal(t, repo.proxies[12].URL(), proxyURL)
-	require.Equal(t, "issued-state", egressReq.Header.Get(openAICodexTurnStateHeader))
+	require.Equal(t, fullState, egressReq.Header.Get(openAICodexTurnStateHeader))
 
 	otherModelReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	otherModelPlan, proxyURL, err := svc.prepareOpenAICodex292Request(context.Background(), account, "gpt-5.5", otherModelReq)
@@ -235,7 +237,10 @@ func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testin
 	require.Equal(t, repo.proxies[11].URL(), proxyURL)
 	require.Empty(t, otherModelReq.Header.Get(openAICodexTurnStateHeader))
 
-	svc.observeOpenAICodex292Response(egressPlan, &http.Response{StatusCode: openAICodex292RevokedStatus})
+	svc.observeOpenAICodex292Response(egressPlan, &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{degradedState}},
+	})
 	reacquireReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	reacquirePlan, proxyURL, err := svc.prepareOpenAICodex292Request(context.Background(), account, "gpt-5.4", reacquireReq)
 	require.NoError(t, err)
@@ -244,10 +249,10 @@ func TestOpenAICodex292StateLifecycleUsesSplitProxiesAndModelIsolation(t *testin
 	require.Empty(t, reacquireReq.Header.Get(openAICodexTurnStateHeader))
 
 	require.NotContains(t, account.Extra, openAICodexTurnStateHeader)
-	require.NotContains(t, account.Credentials, "issued-state")
+	require.NotContains(t, account.Credentials, fullState)
 }
 
-func TestOpenAICodex292StateExpiresAndRejectsOversizedValues(t *testing.T) {
+func TestOpenAICodex292StateExpiresAndIgnoresUnknownLengths(t *testing.T) {
 	repo := &codex292ProxyAccountRepo{proxies: map[int64]*Proxy{
 		11: codex292TestProxy(11, "acquire.test"),
 		12: codex292TestProxy(12, "egress.test"),
@@ -269,11 +274,64 @@ func TestOpenAICodex292StateExpiresAndRejectsOversizedValues(t *testing.T) {
 	require.Equal(t, repo.proxies[11].URL(), proxyURL)
 
 	svc.observeOpenAICodex292Response(plan, &http.Response{
-		StatusCode: openAICodex292IssuedStatus,
-		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{string(make([]byte, openAICodex292StateMaxBytes+1))}},
+		StatusCode: http.StatusOK,
+		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{strings.Repeat("u", openAICodexTeamFullStateLength+1)}},
 	})
 	_, exists := svc.openaiCodex292States.Load(key)
 	require.False(t, exists)
+
+	fullState := strings.Repeat("f", openAICodexTeamFullStateLength)
+	svc.observeOpenAICodex292Response(plan, &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{fullState}},
+	})
+	svc.observeOpenAICodex292Response(plan, &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{strings.Repeat("u", openAICodexTeamFullStateLength+1)}},
+	})
+	// 旧数字即使出现在 HTTP 状态码位置，也不得被当作撤销信号。
+	svc.observeOpenAICodex292Response(plan, &http.Response{StatusCode: openAICodexProDegradedStateLength})
+	raw, exists := svc.openaiCodex292States.Load(key)
+	require.True(t, exists)
+	entry, ok := raw.(openAICodex292StateEntry)
+	require.True(t, ok)
+	require.Equal(t, fullState, entry.value)
+}
+
+func TestOpenAICodex292StateClassifiesProAndTeamLengths(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		fullLength     int
+		degradedLength int
+	}{
+		{name: "pro", fullLength: openAICodexProFullStateLength, degradedLength: openAICodexProDegradedStateLength},
+		{name: "team", fullLength: openAICodexTeamFullStateLength, degradedLength: openAICodexTeamDegradedStateLength},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{}
+			plan := openAICodex292RequestPlan{
+				enabled: true,
+				key:     openAICodex292StateKey{accountID: 7, model: "gpt-5.4"},
+			}
+			fullState := strings.Repeat("f", tc.fullLength)
+			svc.observeOpenAICodex292Response(plan, &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{openAICodexTurnStateCanonicalHeader: []string{fullState}},
+			})
+			raw, exists := svc.openaiCodex292States.Load(plan.key)
+			require.True(t, exists)
+			entry, ok := raw.(openAICodex292StateEntry)
+			require.True(t, ok)
+			require.Equal(t, fullState, entry.value)
+
+			svc.observeOpenAICodex292Response(plan, &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{openAICodexTurnStateCanonicalHeader: []string{strings.Repeat("d", tc.degradedLength)}},
+			})
+			_, exists = svc.openaiCodex292States.Load(plan.key)
+			require.False(t, exists)
+		})
+	}
 }
 
 func TestOpenAICodex292ProxyFailureDoesNotFallBackToMainProxy(t *testing.T) {
@@ -333,10 +391,11 @@ func TestSendCCUpstreamRequestUsesCodex292ProxyLifecycle(t *testing.T) {
 		11: codex292TestProxy(11, "acquire.test"),
 		12: codex292TestProxy(12, "egress.test"),
 	}}
+	fullState := strings.Repeat("c", openAICodexProFullStateLength)
 	issuedHeader := make(http.Header)
-	issuedHeader.Set(openAICodexTurnStateHeader, "cc-issued-state")
+	issuedHeader.Set(openAICodexTurnStateHeader, fullState)
 	upstream := &httpUpstreamRecorder{responses: []*http.Response{
-		{StatusCode: openAICodex292IssuedStatus, Header: issuedHeader, Body: io.NopCloser(strings.NewReader(`{}`))},
+		{StatusCode: http.StatusOK, Header: issuedHeader, Body: io.NopCloser(strings.NewReader(`{}`))},
 		{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))},
 	}}
 	svc := &OpenAIGatewayService{accountRepo: repo, httpUpstream: upstream}
@@ -348,7 +407,7 @@ func TestSendCCUpstreamRequestUsesCodex292ProxyLifecycle(t *testing.T) {
 		[]byte(`{"model":"gpt-5.4","messages":[]}`), "gpt-5.4", false, "token", "", "",
 	)
 	require.NoError(t, err)
-	require.Equal(t, openAICodex292IssuedStatus, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, repo.proxies[11].URL(), upstream.lastProxyURL)
 	require.Empty(t, upstream.lastReq.Header.Get(openAICodexTurnStateHeader))
 	require.NoError(t, resp.Body.Close())
@@ -360,6 +419,6 @@ func TestSendCCUpstreamRequestUsesCodex292ProxyLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, repo.proxies[12].URL(), upstream.lastProxyURL)
-	require.Equal(t, "cc-issued-state", upstream.lastReq.Header.Get(openAICodexTurnStateHeader))
+	require.Equal(t, fullState, upstream.lastReq.Header.Get(openAICodexTurnStateHeader))
 	require.NoError(t, resp.Body.Close())
 }

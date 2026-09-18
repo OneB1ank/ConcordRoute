@@ -87,9 +87,10 @@ OpenAI 原生 Responses HTTP/WS 的新使用记录优先使用首响应（首块
 
 管理员使用记录在模型后默认显示“上游状态”，支持列显隐。观测默认执行，无运行时开关，
 不增加探测、轮询或逐 SSE 事件工作。记录最终 HTTP 上游响应的真实 `upstream_status_code`
-及 `codex_turn_state_bytes`（响应 `x-codex-turn-state` 去除外侧空白后的字节数）；
-0 字节表示本次响应未返回非空状态，NULL 表示未采集。两者独立展示，200/290/292
-不映射为模型能力、会话健康或降级结论，也不从长度、TTFT 或正文推断 HTTP 状态。
+及 `codex_turn_state_bytes`（响应 `x-codex-turn-state` 去除外侧空白后的字符串字节数；
+该令牌为 ASCII，因此也等于字符数）；0 字节表示本次响应未返回非空状态，NULL 表示未采集。
+两者独立展示：正常态与降级态通常都返回 HTTP 200；Pro 的 Turn-State 长度 `292` 标记
+满血、`312` 标记降级，Team 的对应长度为 `332` 与 `356`，其它非零长度只展示为未知。
 
 接入 OpenAI 服务的 Responses 普通/透传/compact、Responses 到 Chat/Messages 的转换、
 原始 Chat Completions 及 WS 下游到 HTTP 上游的桥接结果。真正的 WS 上游没有逐请求 HTTP

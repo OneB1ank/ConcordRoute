@@ -11,16 +11,20 @@ import (
 )
 
 const (
-	// Codex292StateInjectionEnabledExtraKey 控制账号级实验性 292 state 注入。
+	// Codex292StateInjectionEnabledExtraKey 控制账号级实验性 Turn-State 注入。
+	// 键名保留 292 是为了兼容已保存的账号配置，协议判据使用当前状态值长度。
 	Codex292StateInjectionEnabledExtraKey = "codex_292_state_injection_enabled"
-	// Codex292StateAcquireProxyIDExtraKey 指定没有可用 state 时获取 292 的出口代理。
+	// Codex292StateAcquireProxyIDExtraKey 指定没有可用满血 state 时的采集出口代理。
 	Codex292StateAcquireProxyIDExtraKey = "codex_292_state_acquire_proxy_id"
 	// Codex292StateEgressProxyIDExtraKey 指定持有 state 后业务请求使用的出口代理。
 	Codex292StateEgressProxyIDExtraKey = "codex_292_state_egress_proxy_id"
 
-	openAICodex292IssuedStatus  = 292
-	openAICodex292RevokedStatus = 312
-	openAICodex292StateMaxBytes = 64 << 10
+	// Turn-State 是响应头中的 opaque ASCII 字符串；HTTP 响应通常仍为 200。
+	// Pro 与 Team 使用不同长度，四个值都不是 HTTP 状态码。
+	openAICodexProFullStateLength      = 292
+	openAICodexProDegradedStateLength  = 312
+	openAICodexTeamFullStateLength     = 332
+	openAICodexTeamDegradedStateLength = 356
 	// 外部观察没有稳定的服务端 TTL 契约，因此使用保守租约并由下一笔业务请求惰性续取。
 	openAICodex292StateLease    = 55 * time.Minute
 	openAICodex292ProxyCacheTTL = 30 * time.Second
@@ -60,14 +64,14 @@ func validateCodex292StateConfig(ctx context.Context, proxyRepo ProxyRepository,
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth || account.IsShadow() {
 		return infraerrors.BadRequest(
 			"CODEX_292_STATE_ACCOUNT_UNSUPPORTED",
-			"Codex 292 state injection requires a non-shadow OpenAI OAuth account",
+			"Codex turn-state injection requires a non-shadow OpenAI OAuth account",
 		)
 	}
 	ids := []int64{account.GetCodex292StateAcquireProxyID(), account.GetCodex292StateEgressProxyID()}
 	seen := make(map[int64]struct{}, len(ids))
 	for _, proxyID := range ids {
 		if proxyID < 0 {
-			return infraerrors.BadRequest("CODEX_292_PROXY_INVALID", "Codex 292 proxy ID must be positive or empty")
+			return infraerrors.BadRequest("CODEX_292_PROXY_INVALID", "Codex turn-state proxy ID must be positive or empty")
 		}
 		if proxyID == 0 {
 			continue
@@ -81,10 +85,10 @@ func validateCodex292StateConfig(ctx context.Context, proxyRepo ProxyRepository,
 		}
 		proxy, err := proxyRepo.GetByID(ctx, proxyID)
 		if err != nil {
-			return infraerrors.Newf(http.StatusBadRequest, "CODEX_292_PROXY_INVALID", "Codex 292 proxy %d does not exist", proxyID)
+			return infraerrors.Newf(http.StatusBadRequest, "CODEX_292_PROXY_INVALID", "Codex turn-state proxy %d does not exist", proxyID)
 		}
 		if proxy == nil || !proxy.IsActive() || proxy.IsExpired(time.Now()) {
-			return infraerrors.Newf(http.StatusBadRequest, "CODEX_292_PROXY_INACTIVE", "Codex 292 proxy %d is inactive or expired", proxyID)
+			return infraerrors.Newf(http.StatusBadRequest, "CODEX_292_PROXY_INACTIVE", "Codex turn-state proxy %d is inactive or expired", proxyID)
 		}
 	}
 	return nil
@@ -213,18 +217,18 @@ func (s *OpenAIGatewayService) resolveOpenAICodex292ProxyURL(ctx context.Context
 	}
 	lookup, ok := s.accountRepo.(Codex292ProxyLookup)
 	if !ok {
-		return "", fmt.Errorf("codex 292 proxy lookup is unavailable")
+		return "", fmt.Errorf("codex turn-state proxy lookup is unavailable")
 	}
 	proxy, err := lookup.GetCodex292ProxyByID(ctx, proxyID)
 	if err != nil {
-		return "", fmt.Errorf("resolve codex 292 proxy %d: %w", proxyID, err)
+		return "", fmt.Errorf("resolve codex turn-state proxy %d: %w", proxyID, err)
 	}
 	if proxy == nil || !proxy.IsActive() || proxy.IsExpired(time.Now()) {
-		return "", fmt.Errorf("codex 292 proxy %d is inactive or expired", proxyID)
+		return "", fmt.Errorf("codex turn-state proxy %d is inactive or expired", proxyID)
 	}
 	proxyURL := strings.TrimSpace(proxy.URL())
 	if proxyURL == "" {
-		return "", fmt.Errorf("codex 292 proxy %d has an empty URL", proxyID)
+		return "", fmt.Errorf("codex turn-state proxy %d has an empty URL", proxyID)
 	}
 	cacheExpiresAt := time.Now().Add(openAICodex292ProxyCacheTTL)
 	if proxy.ExpiresAt != nil && proxy.ExpiresAt.Before(cacheExpiresAt) {
@@ -237,21 +241,26 @@ func (s *OpenAIGatewayService) resolveOpenAICodex292ProxyURL(ctx context.Context
 	return proxyURL, nil
 }
 
-// observeOpenAICodex292Response 只消费最终 HTTP 响应头。292 写入短期内存租约，
-// 312 立即撤销；state 原文不进入账号、数据库、日志或用量记录。
+func isOpenAICodexFullStateLength(length int) bool {
+	return length == openAICodexProFullStateLength || length == openAICodexTeamFullStateLength
+}
+
+func isOpenAICodexDegradedStateLength(length int) bool {
+	return length == openAICodexProDegradedStateLength || length == openAICodexTeamDegradedStateLength
+}
+
+// observeOpenAICodex292Response 只消费最终 HTTP 响应头。Pro 292、Team 332
+// 写入短期租约，Pro 312、Team 356 立即撤销；HTTP 状态码不参与判定。
 func (s *OpenAIGatewayService) observeOpenAICodex292Response(plan openAICodex292RequestPlan, resp *http.Response) {
 	if s == nil || !plan.enabled || resp == nil {
 		return
 	}
-	switch resp.StatusCode {
-	case openAICodex292RevokedStatus:
+	state := extractOpenAICodexTurnState(resp.Header)
+	if isOpenAICodexDegradedStateLength(len(state)) {
 		s.openaiCodex292States.Delete(plan.key)
-	case openAICodex292IssuedStatus:
-		state := extractOpenAICodexTurnState(resp.Header)
-		if state == "" || len(state) > openAICodex292StateMaxBytes {
-			s.openaiCodex292States.Delete(plan.key)
-			return
-		}
+		return
+	}
+	if isOpenAICodexFullStateLength(len(state)) {
 		s.openaiCodex292States.Store(plan.key, openAICodex292StateEntry{
 			value:          state,
 			expiresAt:      time.Now().Add(openAICodex292StateLease),

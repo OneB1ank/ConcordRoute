@@ -770,7 +770,7 @@ describe('EditAccountModal', () => {
     )
   })
 
-  it('loads and updates the 292 state split proxy settings for OpenAI OAuth', async () => {
+  it('loads and updates the Turn-State split proxy settings for OpenAI OAuth', async () => {
     const account = buildOpenAIOAuthAccount()
     account.extra = {
       preserved: 'value',
@@ -797,7 +797,7 @@ describe('EditAccountModal', () => {
     })
   })
 
-  it('clears both 292 proxy references when the switch is disabled', async () => {
+  it('clears both Turn-State proxy references when the switch is disabled', async () => {
     const account = buildOpenAIOAuthAccount()
     account.extra = {
       preserved: 'value',
@@ -818,7 +818,7 @@ describe('EditAccountModal', () => {
     expect(extra).not.toHaveProperty('codex_292_state_egress_proxy_id')
   })
 
-  it('hides 292 state settings for API-key and shadow accounts', () => {
+  it('hides Turn-State settings for API-key and shadow accounts', () => {
     expect(mountModal(buildAccount()).find('[data-testid="edit-codex-292-state-section"]').exists()).toBe(false)
     expect(mountModal(buildOpenAISparkShadowAccount()).find('[data-testid="edit-codex-292-state-section"]').exists()).toBe(false)
   })

@@ -21,13 +21,13 @@ func TestUsageLogObservationPersistence(t *testing.T) {
 	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, Key: "sk-test-" + uuid.NewString(), Name: "test"})
 	account := mustCreateAccount(t, client, &service.Account{Name: "obs-" + uuid.NewString()})
 	for _, bestEffort := range []bool{false, true} {
-		for _, code := range []int{0, 200, 290, 292, 312} {
+		for _, code := range []int{0, 200, 201, 202, 299} {
 			log := &service.UsageLog{UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID,
 				RequestID: uuid.NewString(), Model: "test", InputTokens: 8, OutputTokens: 2,
 				TotalCost: 0.01, ActualCost: 0.01, CreatedAt: time.Now().UTC()}
 			size := 0
-			if code == 292 {
-				size = 312
+			if code == 200 {
+				size = 356
 			}
 			if code != 0 {
 				log.UpstreamStatusCode, log.CodexTurnStateBytes = &code, &size

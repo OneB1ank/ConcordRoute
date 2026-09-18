@@ -42,6 +42,9 @@ const messages: Record<string, string> = {
   'usage.upstreamStatusMissingHint': 'Not captured; no assumed 200.',
   'usage.codexTurnStateHint': 'Only x-codex-turn-state bytes; no opaque value.',
   'usage.codexTurnStateAbsent': 'state · absent',
+  'usage.codexTurnStateFull': 'state · {bytes} B · {plan} full',
+  'usage.codexTurnStateDegraded': 'state · {bytes} B · {plan} degraded',
+  'usage.codexTurnStateUnknown': 'state · {bytes} B · unknown',
   'usage.serviceTier': 'Service tier',
   'usage.serviceTierPriority': 'Fast',
   'usage.serviceTierFlex': 'Flex',
@@ -86,7 +89,13 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => messages[key] ?? key,
+      t: (key: string, params?: Record<string, string | number>) => {
+        let value = messages[key] ?? key
+        for (const [name, replacement] of Object.entries(params ?? {})) {
+          value = value.replaceAll(`{${name}}`, String(replacement))
+        }
+        return value
+      },
     }),
   }
 })
@@ -800,18 +809,32 @@ describe('admin UsageTable deleted-user badge', () => {
   })
 })
 
-// 状态列只展示服务器给出的摘要，不从流类型或长度生成状态码。
+// HTTP 状态与 Turn-State 长度分开显示，Pro 与 Team 各自按响应头长度分类。
 describe('admin UsageTable upstream observation', () => {
-  it.each([200, 290, 292, 312, 429, 502])('shows actual HTTP %i independently of state length', (code) => {
+  it.each([200, 201, 429, 502])('shows actual HTTP %i independently of state length', (code) => {
     const wrapper = mount(UsageTable, {
-      props: { data: [{ ...baseImageRow, upstream_status_code: code, codex_turn_state_bytes: 292 }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
+      props: { data: [{ ...baseImageRow, upstream_status_code: code, codex_turn_state_bytes: 332 }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
     const cell = wrapper.get('[data-testid="upstream-observation"]')
     expect(cell.text()).toContain(`HTTP ${code}`)
-    expect(cell.text()).toContain('state · 292 B')
+    expect(cell.text()).toContain('state · 332 B · Team full')
     expect(cell.attributes('title')).toBe(messages['usage.upstreamStatusHint'])
-    expect(cell.text()).not.toMatch(/degraded|healthy|降智|满血/)
+    wrapper.unmount()
+  })
+
+  it.each([
+    { bytes: 292, label: 'state · 292 B · Pro full' },
+    { bytes: 312, label: 'state · 312 B · Pro degraded' },
+    { bytes: 332, label: 'state · 332 B · Team full' },
+    { bytes: 356, label: 'state · 356 B · Team degraded' },
+    { bytes: 333, label: 'state · 333 B · unknown' },
+  ])('classifies Turn-State length $bytes', ({ bytes, label }) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, upstream_status_code: 200, codex_turn_state_bytes: bytes }], loading: false, columns: [{ key: 'upstream_status', label: 'Upstream status' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.get('[data-testid="upstream-observation"]').text()).toContain(label)
     wrapper.unmount()
   })
 

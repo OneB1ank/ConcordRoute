@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 覆盖 NULL/零值/非标准码，使用 database/sql 真正执行 Scan 类型转换。
+// 覆盖 NULL、HTTP 200 携带 state 长度及其它状态码，使用 database/sql 真正执行 Scan 类型转换。
 func TestUsageLogObservationSQLRoundTrip(t *testing.T) {
-	for _, code := range []int{0, 200, 290, 292, 312} {
+	for _, code := range []int{0, 200, 201, 202, 299} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			log := &service.UsageLog{UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "req-observation",
 				Model: "test", CreatedAt: time.Now().UTC(), InputTokens: 8, OutputTokens: 2}
@@ -24,8 +24,8 @@ func TestUsageLogObservationSQLRoundTrip(t *testing.T) {
 				log.UpstreamStatusCode = &code
 				log.CodexTurnStateBytes = &stateBytes
 			}
-			if code == 292 {
-				stateBytes = 312
+			if code == 200 {
+				stateBytes = 356
 			}
 			prepared := prepareUsageLogInsert(log)
 			columns := strings.Split(usageLogSelectColumns, ", ")

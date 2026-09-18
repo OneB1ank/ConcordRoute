@@ -1512,7 +1512,7 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
-      <!-- 292 state 注入（仅 OpenAI OAuth，默认关闭） -->
+      <!-- Turn-State 注入（配置键为兼容旧版本仍保留 292 命名） -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"

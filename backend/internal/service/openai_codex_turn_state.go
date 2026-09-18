@@ -11,7 +11,10 @@ import (
 
 // openAICodexTurnStateHeader 是 Codex 的回合状态头。上游在响应头中签发该
 // 不透明值，客户端会在同一回合的后续请求中原样带回。
-const openAICodexTurnStateHeader = "x-codex-turn-state"
+const (
+	openAICodexTurnStateHeader          = "x-codex-turn-state"
+	openAICodexTurnStateCanonicalHeader = "X-Codex-Turn-State"
+)
 
 // openAICodexTurnStateOrigin 记录最近向一个下游会话签发状态的账号。状态值与
 // 上游账号身份绑定；故障转移后继续把旧账号的状态带给新账号会形成矛盾信号。
@@ -82,7 +85,8 @@ func extractOpenAICodexTurnState(upstream http.Header) string {
 	if upstream == nil {
 		return ""
 	}
-	return strings.TrimSpace(upstream.Get(openAICodexTurnStateHeader))
+	// 使用规范大小写常量，避免 Header.Get 每次为自定义头分配规范化字符串。
+	return strings.TrimSpace(upstream.Get(openAICodexTurnStateCanonicalHeader))
 }
 
 // noteOpenAICodexTurnStateProvenance 记录下游会话与最近签发账号的对应关系。

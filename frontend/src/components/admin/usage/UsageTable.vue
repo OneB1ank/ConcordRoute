@@ -88,7 +88,7 @@
           <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.model }}</span>
         </template>
 
-        <!-- 被动观测使用原生提示，无轮询、逐行请求或健康等级推断。 -->
+        <!-- 被动观测使用响应头长度判定 Turn-State，不发起轮询或逐行请求。 -->
         <template #cell-upstream_status="{ row }">
           <div
             data-testid="upstream-observation"
@@ -105,9 +105,10 @@
             <span v-else class="text-gray-400 dark:text-gray-500" :title="t('usage.upstreamStatusMissingHint')">—</span>
             <div
               v-if="row.codex_turn_state_bytes != null"
-              class="text-gray-500 dark:text-gray-400"
+              class="font-medium"
+              :class="codexTurnStateClass(row.codex_turn_state_bytes)"
               :title="t('usage.codexTurnStateHint')"
-            >{{ row.codex_turn_state_bytes > 0 ? `state · ${row.codex_turn_state_bytes} B` : t('usage.codexTurnStateAbsent') }}</div>
+            >{{ formatCodexTurnState(row.codex_turn_state_bytes) }}</div>
           </div>
         </template>
 
@@ -662,6 +663,39 @@ const showUpstreamEndpoint = props.showUpstreamEndpoint
 const userClickable = props.userClickable
 const compactUserColumn = computed(() => props.compactUserColumn)
 const ipGeoBatchLoading = ref(false)
+
+// Turn-State 是 ASCII 令牌；Pro 与 Team 使用不同长度，均与 HTTP 状态码独立。
+const CODEX_PRO_FULL_STATE_LENGTH = 292
+const CODEX_PRO_DEGRADED_STATE_LENGTH = 312
+const CODEX_TEAM_FULL_STATE_LENGTH = 332
+const CODEX_TEAM_DEGRADED_STATE_LENGTH = 356
+
+const formatCodexTurnState = (bytes: number): string => {
+  switch (bytes) {
+    case 0:
+      return t('usage.codexTurnStateAbsent')
+    case CODEX_PRO_FULL_STATE_LENGTH:
+      return t('usage.codexTurnStateFull', { bytes, plan: 'Pro' })
+    case CODEX_PRO_DEGRADED_STATE_LENGTH:
+      return t('usage.codexTurnStateDegraded', { bytes, plan: 'Pro' })
+    case CODEX_TEAM_FULL_STATE_LENGTH:
+      return t('usage.codexTurnStateFull', { bytes, plan: 'Team' })
+    case CODEX_TEAM_DEGRADED_STATE_LENGTH:
+      return t('usage.codexTurnStateDegraded', { bytes, plan: 'Team' })
+    default:
+      return t('usage.codexTurnStateUnknown', { bytes })
+  }
+}
+
+const codexTurnStateClass = (bytes: number): string => {
+  if (bytes === CODEX_PRO_FULL_STATE_LENGTH || bytes === CODEX_TEAM_FULL_STATE_LENGTH) {
+    return 'text-emerald-600 dark:text-emerald-400'
+  }
+  if (bytes === CODEX_PRO_DEGRADED_STATE_LENGTH || bytes === CODEX_TEAM_DEGRADED_STATE_LENGTH) {
+    return 'text-amber-700 dark:text-amber-300'
+  }
+  return 'text-gray-500 dark:text-gray-400'
+}
 
 // 未设置用户名时仅展示邮箱本地部分的首尾字符，减少成员列占用空间。
 const maskEmailLocalPart = (email: string): string => {

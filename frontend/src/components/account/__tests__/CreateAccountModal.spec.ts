@@ -424,7 +424,7 @@ describe('CreateAccountModal OpenAI account options', () => {
     expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('session')
   })
 
-  it('persists the 292 state switch and split proxies for OpenAI OAuth imports', async () => {
+  it('persists the Turn-State switch and split proxies for OpenAI OAuth imports', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
 
@@ -446,7 +446,7 @@ describe('CreateAccountModal OpenAI account options', () => {
     })
   })
 
-  it('hides the 292 state settings for OpenAI API-key accounts', async () => {
+  it('hides the Turn-State settings for OpenAI API-key accounts', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
