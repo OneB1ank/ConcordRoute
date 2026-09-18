@@ -122,8 +122,12 @@ func (s *OpenAIGatewayService) prepareLiveAttestationForRequest(
 ) (string, string, error) {
 	if accountSupportsCodexAppServerAttestation(account) {
 		// app-server 已完成能力协商时，证明存储按账号/连接/session/thread
-		// 隔离；这里仅复用已校验的 opaque envelope。
-		if value, ok := s.resolveCodexClientAttestation(ctx, account); ok {
+		// 隔离；绑定后只使用本次协商结果，异常时禁止改用其它来源。
+		if _, bound := codexAttestationContextFrom(ctx); bound {
+			value, ok := s.resolveCodexClientAttestation(ctx, account)
+			if !ok {
+				return "", "", &LiveAttestationUnavailableError{Reason: "negotiated client attestation is invalid or belongs to another account"}
+			}
 			if s.liveAttestationCipher == nil {
 				return "", "", &LiveAttestationUnavailableError{Reason: "JWT secret is required to protect the Sideband attestation"}
 			}

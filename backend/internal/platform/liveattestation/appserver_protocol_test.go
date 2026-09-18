@@ -2,6 +2,7 @@ package liveattestation
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func TestBuildAndParseAttestationGenerateRoundTrip(t *testing.T) {
 	require.Equal(t, "attestation/generate", decoded["method"])
 	require.Equal(t, float64(17), decoded["id"])
 
-	id, token, err := ParseAttestationGenerateResponse([]byte(`{"id":17,"result":{"headerValue":"v1.client-token"}}`))
+	id, token, err := ParseAttestationGenerateResponse([]byte(`{"id":17,"result":{"token":"v1.client-token"}}`))
 	require.NoError(t, err)
 	require.Equal(t, `17`, string(id))
 	require.Equal(t, "v1.client-token", token)
@@ -42,7 +43,7 @@ func TestAppServerProtocolAcceptsOfficialFramesWithoutJSONRPCVersion(t *testing.
 	require.NoError(t, err)
 	require.True(t, capability)
 
-	_, token, err := ParseAttestationGenerateResponse([]byte(`{"id":17,"result":{"headerValue":"v1.opaque"}}`))
+	_, token, err := ParseAttestationGenerateResponse([]byte(`{"id":17,"result":{"token":"v1.opaque"}}`))
 	require.NoError(t, err)
 	require.Equal(t, "v1.opaque", token)
 }
@@ -65,11 +66,33 @@ func TestParseAttestationGenerateResponseRejectsFailures(t *testing.T) {
 	}
 }
 
-func TestParseAttestationGenerateResponseRequiresOfficialHeaderValueField(t *testing.T) {
+// 原生 token 优先；只有字段缺失才接受旧别名，不掩盖坏值或字段冲突。
+func TestParseAttestationGenerateResponseNativeTokenAndLegacyAlias(t *testing.T) {
+	for _, result := range []string{
+		`{"token":"opaque value"}`,
+		`{"headerValue":"opaque value"}`,
+		`{"token":"opaque value","headerValue":"opaque value"}`,
+	} {
+		id, token, err := ParseAttestationGenerateResponse([]byte(`{"id":17,"result":` + result + `}`))
+		require.NoError(t, err)
+		require.Equal(t, "17", string(id))
+		require.Equal(t, "opaque value", token)
+	}
+}
+
+func TestParseAttestationGenerateResponseRejectsInvalidOrConflictingFields(t *testing.T) {
 	for _, raw := range []string{
-		`{"id":17,"result":{"token":"v1.legacy"}}`,
+		`{"id":17,"result":{"token":""}}`,
+		`{"id":17,"result":{"token":17}}`,
+		`{"id":17,"result":{"token":null}}`,
+		`{"id":17,"result":{"token":"","headerValue":"v1.legacy"}}`,
+		`{"id":17,"result":{"token":null,"headerValue":"v1.legacy"}}`,
+		`{"id":17,"result":{"token":17,"headerValue":"v1.legacy"}}`,
+		`{"id":17,"result":{"token":"v1.native","headerValue":"v1.legacy"}}`,
+		`{"id":17,"result":{"token":"v1.native","headerValue":null}}`,
 		`{"id":17,"result":{"headerValue":17}}`,
 		`{"id":17,"result":{"headerValue":null}}`,
+		`{"id":17,"result":{"token":"` + strings.Repeat("x", maxClientAttestationTokenBytes+1) + `"}}`,
 	} {
 		_, _, err := ParseAttestationGenerateResponse([]byte(raw))
 		require.Error(t, err, raw)

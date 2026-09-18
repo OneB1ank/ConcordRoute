@@ -32,10 +32,11 @@ type InitializeCapabilities struct {
 
 // AttestationGenerateResponse 是客户端对 attestation/generate 的响应。
 //
-// Codex app-server 协议将此字段命名为 headerValue。它是预编码的不透明值，
-// app-server 随后会把它放入 x-oai-attestation 信封的 t 字段，不是通用令牌字段。
+// 原生字段为 token；headerValue 仅兼容本网关旧版接入端。
+// 保留原始字段存在性，防止显式空值、null 或类型错误回退到另一字段。
 type AttestationGenerateResponse struct {
-	HeaderValue string `json:"headerValue"`
+	Token       json.RawMessage `json:"token"`
+	HeaderValue json.RawMessage `json:"headerValue"`
 }
 
 // ParseInitializeRequest 判断一条 JSON-RPC initialize 是否声明 requestAttestation。
@@ -81,7 +82,7 @@ func BuildAttestationGenerateRequest(requestID uint64) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// ParseAttestationGenerateResponse 提取客户端 headerValue。调用方应先校验
+// ParseAttestationGenerateResponse 提取客户端不透明 token。调用方应先校验
 // pending request ID，再把该 opaque 值交给 NormalizeClientEnvelope 封装。
 func ParseAttestationGenerateResponse(raw []byte) (json.RawMessage, string, error) {
 	var message JSONRPCMessage
@@ -104,13 +105,25 @@ func ParseAttestationGenerateResponse(raw []byte) (json.RawMessage, string, erro
 	if err := json.Unmarshal(message.Result, &result); err != nil {
 		return append(json.RawMessage(nil), message.ID...), "", fmt.Errorf("decode attestation result: %w", err)
 	}
-	if result.HeaderValue == "" {
-		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response headerValue is empty")
+	rawToken := result.Token
+	if len(rawToken) == 0 {
+		rawToken = result.HeaderValue
 	}
-	if len(result.HeaderValue) > maxClientAttestationTokenBytes {
-		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response headerValue exceeds size limit")
+	var token string
+	if len(rawToken) == 0 || json.Unmarshal(rawToken, &token) != nil || token == "" {
+		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response token must be a non-empty string")
 	}
-	return append(json.RawMessage(nil), message.ID...), result.HeaderValue, nil
+	// 双字段只接受完全一致的值，避免调用方和网关选用不同证明。
+	if len(result.Token) > 0 && len(result.HeaderValue) > 0 {
+		var legacy string
+		if json.Unmarshal(result.HeaderValue, &legacy) != nil || legacy != token {
+			return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response token fields conflict")
+		}
+	}
+	if len(token) > maxClientAttestationTokenBytes {
+		return append(json.RawMessage(nil), message.ID...), "", errors.New("attestation response token exceeds size limit")
+	}
+	return append(json.RawMessage(nil), message.ID...), token, nil
 }
 
 func decodeJSONObject(raw []byte, target any) error {

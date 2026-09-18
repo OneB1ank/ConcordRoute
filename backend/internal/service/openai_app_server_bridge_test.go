@@ -97,6 +97,8 @@ func TestCodexAppServerBridgeRoundTripBindsAttestationContext(t *testing.T) {
 	require.Equal(t, int64(99), requestContext.Key.AccountID)
 	require.Equal(t, "session-a", requestContext.Key.SessionID)
 	require.NotEmpty(t, requestContext.Key.ConnectionID)
+	// 仅检查 context 存在会漏掉解析失败的 s=4；必须确认原生 token 已成功封装。
+	require.JSONEq(t, `{"v":1,"s":0,"t":"v1.test-token"}`, requestContext.Envelope)
 
 	// A single bridge is pinned to the first OAuth account that consumed its
 	// proof channel.  A later scheduler choice on the same API key proceeds

@@ -148,10 +148,11 @@ func (r *codexAppServerBridgeRegistry) find(apiKeyID int64, sessionID, threadID 
 		}
 		activeCount++
 		only = bridge
-		if sessionID != "" && bridge.sessionID != "" && bridge.sessionID != sessionID {
+		// 桥已声明的作用域必须完整匹配；请求缺省字段不应充当通配符。
+		if bridge.sessionID != "" && bridge.sessionID != sessionID {
 			continue
 		}
-		if threadID != "" && bridge.threadID != "" && bridge.threadID != threadID {
+		if bridge.threadID != "" && bridge.threadID != threadID {
 			continue
 		}
 		if (sessionID != "" && bridge.sessionID == sessionID) || (threadID != "" && bridge.threadID == threadID) {
