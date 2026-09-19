@@ -279,6 +279,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		TeamEnabled:                                      settings.TeamEnabled,
 		DataSharingEnabled:                               settings.DataSharingEnabled,
 		RiskControlEnabled:                               settings.RiskControlEnabled,
+		PluginManagementEnabled:                          settings.PluginManagementEnabled,
 		CyberSessionBlockEnabled:                         settings.CyberSessionBlockEnabled,
 		CyberSessionBlockTTLSeconds:                      settings.CyberSessionBlockTTLSeconds,
 		AffiliateEnabled:                                 settings.AffiliateEnabled,

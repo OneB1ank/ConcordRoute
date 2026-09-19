@@ -111,6 +111,13 @@ dataSharing: {
           enabled: '启用团队功能',
           enabledHint: '关闭后隐藏相关页面入口，并阻止通过地址直接访问。'
         },
+        pluginManagement: {
+          title: '插件管理',
+          description: '控制管理员侧边栏是否显示插件管理入口。此开关不控制插件运行状态。',
+          enabled: '显示插件管理菜单',
+          enabledHint: '关闭后仅隐藏侧边栏菜单；已加载或正在运行的插件不会因此停止。',
+          openLink: '打开插件管理'
+        },
         dataSharing: {
           title: '数据共享',
           description: '控制用户和管理员的数据共享页是否开放。',

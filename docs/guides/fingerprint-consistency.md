@@ -21,7 +21,7 @@ ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理�
 | --- | --- |
 | 多个账号共用同一套客户端身份 | installation、主 session、thread、window 和缓存键都加入账号作用域 |
 | 切换上游账号后继承旧账号会话 | 为新账号稳定派生另一套上游身份，同时保持客户端对话连续 |
-| 不同对话挤进同一个 thread | 每个客户端对话单独派生稳定 thread，turn 仍按请求更新 |
+| 不同对话挤进同一个 thread | 每个客户端对话单独派生稳定 thread，turn 由独立选项决定透传或稳定映射 |
 | `prompt_cache_key` 随请求漂移 | 显式 key 原样保留；同一 session/thread/window 暂时省略时复用最近绑定；新显式 key 到达后切换缓存命名空间，且不反向改写 session/thread |
 | 请求头能读取 `session-id`，日志却为空 | 指纹链路与 Usage Log 使用统一的 session ID 提取口径 |
 | UA、originator 和版本兜底不一致 | OAuth、Token、Responses 等路径统一使用管理员配置的客户端特征 |
@@ -43,12 +43,12 @@ ConcordRoute 主要修改自 TokenRouter，目标是在多账号调度和代理�
 账号
 └─ 稳定 installation/device
    └─ 稳定主 session
-      ├─ 对话 A → 稳定 thread/window/cache key → 客户端 turn 原值
-      ├─ 对话 B → 稳定 thread/window/cache key → 客户端 turn 原值
-      └─ 对话 C → 稳定 thread/window/cache key → 客户端 turn 原值
+      ├─ 对话 A → 稳定 thread/window/cache key → 默认透传 turn（可选实验映射）
+      ├─ 对话 B → 稳定 thread/window/cache key → 默认透传 turn（可选实验映射）
+      └─ 对话 C → 稳定 thread/window/cache key → 默认透传 turn（可选实验映射）
 ```
 
-installation、session、thread、window 和缺省缓存键在账号作用域内派生。同一个客户端对话切换到另一个上游账号时，新账号获得自己的这些上游身份，不直接复用旧账号的缓存域。`turn_id`、`parent_turn_id`、`root_turn_id` 与客户端提供的开始时间不参与 Cockpit 收敛，按当前 HTTP 请求或 WS 帧透传；字段缺失时保持缺失。由于身份收敛仍会切换上游缓存域，只有确实需要兼容 Cockpit 行为时才应启用。
+installation、session、thread、window 和缺省缓存键在账号作用域内派生。同一个客户端对话切换到另一个上游账号时，新账号获得自己的这些上游身份，不直接复用旧账号的缓存域。Cockpit 默认透传 `turn_id`、`parent_turn_id`、`root_turn_id`，仅在账号独立设置 `codex_turn_mode=converge` 时，对客户端明确提供的 `turn_id`、`parent_turn_id`、`root_turn_id` 按账号与映射后 session 建立稳定回合图：同一原始值复用同一 UUIDv7 映射，新值建立新映射，root 等于当前 turn 时保持等值关系，缺失字段保持缺失。实验模式每个首次出现的原始回合都由本地生成器创建 UUIDv7，并在独立回合绑定存储中持久化；客户端开始时间仍按当前请求或 WS 帧处理，不从旧帧回灌。由于身份收敛仍会切换上游缓存域，只有确实需要兼容 Cockpit 行为时才应启用。
 
 ## TLS、UA 与 HTTP 协议
 
@@ -93,7 +93,7 @@ HTTP / SSE / passthrough / WebSocket
 ```
 
 - 缓存侧优先保证同一对话的 key 连续：短暂缺省时复用绑定，新 key 才开启新的上游缓存命名空间。
-- 身份侧把 installation/device 固定在账号，把 thread/window 固定在对话，把 turn 留给每次请求；故障转移时重新进入目标账号作用域。
+- 身份侧把 installation/device 固定在账号，把 thread/window 固定在对话，默认保留客户端 turn 生命周期；故障转移时重新进入目标账号作用域。
 - 出站侧让 UA、originator、TLS、ALPN、HTTP 版本和代理出口来自同一决策快照，减少不同传输路径间的分裂。
 - 观测侧同时记录最终模型、session、TTFT、缓存命中、错误分类和传输类型，便于区分冷缓存、压缩和真实上游限流。
 

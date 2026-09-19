@@ -47,6 +47,10 @@ type PluginManager struct {
 	cfg       *config.Config
 	hostInfo  PluginHostInfo
 	installer *PluginPackageInstaller
+	// kvStore 为 v1 插件提供跨请求、跨重启的命名空间状态。
+	kvStore PluginKVStore
+	// accountDirectory 仅注入到声明 OpenAI OAuth 出站能力的插件。
+	accountDirectory PluginAccountDirectory
 
 	operationMu        sync.Mutex
 	mu                 sync.Mutex
@@ -61,8 +65,12 @@ type PluginManager struct {
 	retired            map[*pluginRuntime]struct{}
 }
 
-func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo) *PluginManager {
+func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo, kvStores ...PluginKVStore) *PluginManager {
 	installer := NewPluginPackageInstaller(cfg, hostInfo)
+	var kvStore PluginKVStore
+	if len(kvStores) > 0 {
+		kvStore = kvStores[0]
+	}
 	if publishers, ok := repo.(PluginPublisherLookup); ok {
 		installer.publishers = publishers
 	}
@@ -72,9 +80,33 @@ func NewPluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *con
 		cfg:                cfg,
 		hostInfo:           hostInfo,
 		installer:          installer,
+		kvStore:            kvStore,
 		runtimes:           make(map[int64]*pluginRuntime),
 		localInstallations: make(map[int64]*PluginInstallation),
 	}
+}
+
+// SetAccountDirectory 注入敏感账号目录；只在应用装配阶段调用。
+func (m *PluginManager) SetAccountDirectory(directory PluginAccountDirectory) {
+	m.mu.Lock()
+	m.accountDirectory = directory
+	m.mu.Unlock()
+}
+
+// Status 返回插件被动健康状态，不应用配置、不访问上游。
+func (m *PluginManager) Status(ctx context.Context, id int64) (*pluginv1.HealthResponse, error) {
+	if _, err := m.repo.GetByID(ctx, id); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	runtime := m.runtimes[id]
+	m.mu.Unlock()
+	if runtime == nil {
+		return &pluginv1.HealthResponse{Healthy: false, Message: "插件未运行"}, nil
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return runtime.status(statusCtx)
 }
 
 func (m *PluginManager) MaxUploadBytes() int64 {
@@ -1138,7 +1170,7 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 		return nil, err
 	}
 	timeout := time.Duration(m.cfg.Plugins.StartTimeoutSeconds) * time.Second
-	process, err := startPluginRuntimeWithSandbox(ctx, installation, timeout, socketDir, m.cfg.Plugins.V2Sandbox)
+	process, err := startPluginRuntimeWithSandbox(ctx, installation, timeout, socketDir, m.cfg.Plugins.V2Sandbox, m.buildHostServices(installation))
 	if err != nil {
 		return nil, err
 	}
@@ -1161,6 +1193,30 @@ func (m *PluginManager) newRuntime(ctx context.Context, installation *PluginInst
 		}
 	}
 	return process, nil
+}
+
+// buildHostServices 为单个安装实例绑定宿主服务。KV 对所有已验证插件可用；账号目录
+// 只对明确声明 OpenAI OAuth 出站能力的插件开放，避免扩大凭据暴露面。
+func (m *PluginManager) buildHostServices(installation *PluginInstallation) pluginv1.HostServiceServer {
+	if m == nil || m.kvStore == nil || installation == nil || strings.TrimSpace(installation.PluginKey) == "" {
+		return nil
+	}
+	var directory PluginAccountDirectory
+	if pluginDeclaresOpenAIOAuthCapability(installation.Manifest) {
+		m.mu.Lock()
+		directory = m.accountDirectory
+		m.mu.Unlock()
+	}
+	return newPluginHostServiceServer(installation.PluginKey, m.kvStore, directory)
+}
+
+func pluginDeclaresOpenAIOAuthCapability(manifest PluginManifest) bool {
+	for _, capability := range manifest.Capabilities {
+		if capability.ID == PluginCapabilityOpenAIOAuthOutbound && capability.Platform == PlatformOpenAI && capability.AccountType == AccountTypeOAuth {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *PluginManager) removeRuntimeLocked(id int64) *pluginRuntime {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -23,6 +24,9 @@ import (
 	hclog "github.com/hashicorp/go-hclog"
 	hcplugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-plugin/runner"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type pluginRuntime struct {
@@ -39,11 +43,11 @@ type pluginRuntime struct {
 	doneOnce     sync.Once
 }
 
-func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string) (*pluginRuntime, error) {
-	return startPluginRuntimeWithSandbox(ctx, installation, startTimeout, socketDir, config.PluginSandboxConfig{})
+func startPluginRuntime(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
+	return startPluginRuntimeWithSandbox(ctx, installation, startTimeout, socketDir, config.PluginSandboxConfig{}, hostServices...)
 }
 
-func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig) (*pluginRuntime, error) {
+func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInstallation, startTimeout time.Duration, socketDir string, sandbox config.PluginSandboxConfig, hostServices ...pluginv1.HostServiceServer) (*pluginRuntime, error) {
 	if installation == nil {
 		return nil, errors.New("插件安装记录为空")
 	}
@@ -126,7 +130,48 @@ func startPluginRuntimeWithSandbox(ctx context.Context, installation *PluginInst
 		runtime.kill()
 		return nil, err
 	}
+	var hostService pluginv1.HostServiceServer
+	if len(hostServices) > 0 {
+		hostService = hostServices[0]
+	}
+	if transportClient, ok := dispensed.(*pluginv1.TransportClient); ok {
+		offerPluginHostServices(ctx, installation, transportClient.TransportPluginClient, transportClient.Broker, hostService, startTimeout)
+	}
 	return runtime, nil
+}
+
+// offerPluginHostServices publishes an optional v1 HostService endpoint through
+// the go-plugin broker. InitHostServices is deliberately best-effort so older
+// signed plugins keep their existing startup behavior when they return
+// Unimplemented or decline the optional service.
+func offerPluginHostServices(ctx context.Context, installation *PluginInstallation, api pluginv1.TransportPluginClient, broker *hcplugin.GRPCBroker, hostServices pluginv1.HostServiceServer, startTimeout time.Duration) {
+	if broker == nil || api == nil || hostServices == nil {
+		return
+	}
+	brokerID := broker.NextId()
+	go broker.AcceptAndServe(brokerID, func(opts []grpc.ServerOption) *grpc.Server {
+		server := grpc.NewServer(opts...)
+		pluginv1.RegisterHostServiceServer(server, hostServices)
+		return server
+	})
+	initCtx, cancel := context.WithTimeout(ctx, startTimeout)
+	defer cancel()
+	resp, err := api.InitHostServices(initCtx, &pluginv1.InitHostServicesRequest{HostServiceId: brokerID, HostServiceApiVersion: pluginv1.HostServiceAPIVersion})
+	pluginKey := ""
+	if installation != nil {
+		pluginKey = installation.PluginKey
+	}
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			slog.Debug("plugin_host_services_unimplemented", "plugin", pluginKey)
+		} else {
+			slog.Warn("plugin_host_services_init_failed", "plugin", pluginKey, "error", err)
+		}
+		return
+	}
+	if resp != nil && !resp.Ready {
+		slog.Debug("plugin_host_services_declined", "plugin", pluginKey, "message", resp.Message)
+	}
 }
 
 func (r *pluginRuntime) validateAndApplyConfig(ctx context.Context, configJSON []byte) error {

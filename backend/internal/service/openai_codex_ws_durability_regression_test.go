@@ -117,8 +117,9 @@ func auditDropIdentityHotState(accountID int64) {
 	codexIdentityPersistedHashes.Delete(fmt.Sprint(accountID))
 }
 
-// 使用生产 WS 的 prepare 方法验证客户端回合原值跨冷启动保持不变，且不写旧回合映射库。
-func TestAuditWSTurnPassthroughAcrossColdStart(t *testing.T) {
+// 使用生产 WS 的 prepare 方法验证客户端回合映射跨冷启动保持不变；
+// 所有回合类型都使用本地 ContextV7 生成器并写入回合绑定库。
+func TestAuditWSTurnConvergenceAcrossColdStart(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		nativeTurn bool
@@ -130,7 +131,7 @@ func TestAuditWSTurnPassthroughAcrossColdStart(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			account := newTestOAuthAccount(1998000+codexSnapshotTestAccountID.Add(1),
-				map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+				map[string]any{codexFingerprintModeExtraKey: "cockpit", codexTurnModeExtraKey: "converge"})
 			t.Cleanup(func() { auditDropIdentityHotState(account.ID) })
 			repo := &auditDetachedIdentityRepo{stored: auditCloneIdentityAccount(account)}
 			firstTurn, secondTurn := "audit-legacy-turn-one", "audit-legacy-turn-two"
@@ -156,16 +157,16 @@ func TestAuditWSTurnPassthroughAcrossColdStart(t *testing.T) {
 			second, err := state.prepare(context.Background(), repo, secondBody)
 			require.NoError(t, err)
 			require.NotNil(t, second)
-			require.Equal(t, secondTurn, second.turnID)
+			require.Equal(t, resolveConvergedCockpitTurnID(account, first.sessionID, secondTurn), second.turnID)
 			require.NotEqual(t, first.turnID, second.turnID)
-			require.Empty(t, readCodexTurnLineageBindings(repo.stored))
+			require.NotEmpty(t, readCodexTurnLineageBindings(repo.stored))
 			auditDropIdentityHotState(account.ID)
 			cold := auditCloneIdentityAccount(repo.stored)
 			restored := resolveCodexFingerprintIDsFromRawRequest(cold, nil, secondBody)
 			require.NotNil(t, restored)
 			t.Logf("WS_PASSTHROUGH native=%v window_changed=%v new_writes=%d cold_equal=%v",
 				test.nativeTurn, test.newWindow, repo.writes-writesBefore, restored.turnID == second.turnID)
-			assert.Equal(t, secondTurn, restored.turnID, "冷启动应继续透传同一客户端回合 ID")
+			assert.Equal(t, second.turnID, restored.turnID, "冷启动应继续使用同一回合映射")
 		})
 	}
 }

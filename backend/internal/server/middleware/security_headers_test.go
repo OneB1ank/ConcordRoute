@@ -194,6 +194,7 @@ func TestSecurityHeaders(t *testing.T) {
 		// Default policy should contain these elements
 		assert.Contains(t, csp, "default-src 'self'")
 		assert.Contains(t, csp, TencentCaptchaDomain)
+		assert.Equal(t, 1, countDirectiveValue(csp, "frame-src", "'self'"))
 	})
 
 	t.Run("uses_default_policy_when_whitespace_only", func(t *testing.T) {
@@ -408,6 +409,14 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "style-src", AirwallexDemoStaticDomain))
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "style-src", AirwallexDemoCheckoutDomain))
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-src", AirwallexDemoCheckoutDomain))
+	})
+
+	t.Run("allows_same_origin_plugin_configuration_frames", func(t *testing.T) {
+		policy := "default-src 'self'; script-src 'self' __CSP_NONCE__; frame-src https://example.invalid"
+		enhanced := enhanceCSPPolicy(policy)
+
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-src", "'self'"))
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-src", "https://example.invalid"))
 	})
 }
 

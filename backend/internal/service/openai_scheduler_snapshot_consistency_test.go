@@ -113,7 +113,7 @@ func TestCodexSchedulerSessionAndAccountIsolation(t *testing.T) {
 						require.NotNil(t, selection.Account)
 						ids := schedulerContinuityForward(t, selection.Account, repo, body)
 						selection.ReleaseFunc()
-						// Cockpit 的回合由客户端原值透传；隔离约束只适用于映射的会话、线程和窗口。
+						// Cockpit 的回合按账号和映射后 session 稳定收敛；隔离约束同样覆盖回合图。
 						require.Equal(t, gjson.GetBytes(body, "client_metadata.turn_id").String(), ids[2], "客户端回合不得因切换会话或账号而改写")
 						key := fmt.Sprintf("%d/%s", owner, session)
 						if previous, ok := baselines[key]; ok {
@@ -234,7 +234,7 @@ func TestCodexSchedulerToForwardContinuity(t *testing.T) {
 				first := codexSnapshotTestForward(t, account, repo, body)
 				durable.UpdatedAt = time.Now()
 				require.NotEmpty(t, readCodexIdentityBindings(durable))
-				// UUIDv7 turn 走确定性映射，不要求该场景生成非 UUIDv7 回合存储。
+				// Cockpit turn 统一走合法 UUIDv7 生成；快照一致性不依赖具体回合文本。
 				t.Cleanup(func() { schedulerContinuityColdAccount(account.ID, false) })
 				if mode != "warm_stale" {
 					schedulerContinuityColdAccount(account.ID, mode == "expired_stale")

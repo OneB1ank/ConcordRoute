@@ -435,6 +435,8 @@ type OpenAIGatewayService struct {
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
+	// pluginManager 在启动装配阶段注入；仅已启用且匹配账号的路由接管 OAuth 出站。
+	pluginManager         *PluginManager
 	tlsFPProfileService   *TLSFingerprintProfileService
 	tlsFPRouterService    *TLSFingerprintRouterService
 	deferredService       *DeferredService
@@ -664,6 +666,34 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+// SetPluginManager 在启动时连接可选出站插件；必须在开始接收请求前完成。
+func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
+	if s != nil {
+		s.pluginManager = manager
+	}
+}
+
+// doOpenAIUpstream 统一 OAuth Responses 的 HTTP 出站边界。
+// 未命中启用的插件路由时继续使用原有 TLS 客户端。
+func (s *OpenAIGatewayService) doOpenAIUpstream(
+	ctx context.Context,
+	req *http.Request,
+	body []byte,
+	proxyURL string,
+	account *Account,
+	tlsProfile *tlsfingerprint.Profile,
+) (*http.Response, error) {
+	if s != nil && s.pluginManager != nil && account != nil &&
+		account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
+		pluginCtx := withPluginProtectionOriginal(ctx, account, body)
+		req = req.WithContext(pluginCtx)
+		if response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(pluginCtx, req, proxyURL, account); handled {
+			return response, err
+		}
+	}
+	return s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
 }
 
 // CodexAppServerAttestationCollector 返回管理员采集器实例。实例由网关

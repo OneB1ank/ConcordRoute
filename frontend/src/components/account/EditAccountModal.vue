@@ -1948,6 +1948,13 @@
         </div>
       </div>
 
+      <CodexTurnModeSelector
+        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        v-model="codexTurnMode"
+        test-id="edit-codex-turn-mode-select"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      />
+
       <!-- Codex 额度透支（仅 OpenAI OAuth，账号级显式开启） -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
@@ -2760,6 +2767,8 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import CodexTurnModeSelector from '@/components/account/CodexTurnModeSelector.vue'
+import { readCodexTurnMode, type CodexTurnMode } from '@/utils/codexTurnMode'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -3081,6 +3090,7 @@ const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+const codexTurnMode = ref<CodexTurnMode>('passthrough')
 const codexQuotaOverdraftEnabled = ref(false)
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
@@ -3612,6 +3622,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
   codexFingerprintMode.value = 'off'
+  codexTurnMode.value = 'passthrough'
   codexQuotaOverdraftEnabled.value = false
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
@@ -3657,6 +3668,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     }
     if (newAccount.type === 'oauth') {
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
+      codexTurnMode.value = readCodexTurnMode(extra)
       codexFingerprintMode.value = (['off', 'device', 'session', 'cockpit', 'full'].includes(fpMode || '')
         ? fpMode as CodexFingerprintMode
         : 'off')
@@ -5137,6 +5149,7 @@ const handleSubmit = async () => {
 
       // 指纹收敛模式默认关闭；启用时必须显式写入。
       if (props.account.type === 'oauth') {
+        newExtra.codex_turn_mode = codexTurnMode.value
         if (codexFingerprintMode.value !== 'off') {
           newExtra.codex_fingerprint_mode = codexFingerprintMode.value
         } else {

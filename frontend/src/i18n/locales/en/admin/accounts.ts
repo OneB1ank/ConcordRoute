@@ -693,6 +693,10 @@ export default {
         codexCLIOnlyAllowClaudeCodeDesc:
           'Only takes effect when the switch above is on. Additionally allows requests from the Claude Code Codex plugin (exact match on originator=Claude Code) without weakening blocking of other non-official clients.',
         codexFingerprintMode: 'Codex fingerprint convergence',
+        codexTurnMode: 'Turn handling',
+        codexTurnPassthrough: 'Turn passthrough (default)',
+        codexTurnConverge: 'Turn convergence (experimental)',
+        codexTurnModeDesc: 'Controls turn_id, parent_turn_id and root_turn_id in Cockpit only. Passes through client values by default; experimental mode uses stable mappings and leaves missing fields absent. Applies to new requests; reconnect existing WebSocket connections.',
         codexFingerprintModeDesc: 'Optional identity convergence for shared OAuth accounts. It is off by default; enable a mode only when the upstream identity rewrite is intentional.',
         codexFingerprintOff: 'Off',
         codexFingerprintDevice: 'Device only',

@@ -165,6 +165,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyPasswordResetEnabled,
 		SettingKeyInvitationCodeEnabled,
 		SettingKeyAffiliateEnabled,
+		SettingKeyPluginManagementEnabled,
 		SettingKeyTotpEnabled,
 		SettingKeyLoginAgreementEnabled,
 		SettingKeyLoginAgreementMode,
@@ -336,6 +337,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		TeamEnabled:                          settings[SettingKeyTeamEnabled] != "false" && (s.cfg == nil || s.cfg.Team.Enabled),
 		TeamSelfServiceEnabled:               s.cfg == nil || s.cfg.Team.SelfServiceEnabled,
 		DataSharingEnabled:                   settings[SettingKeyDataSharingEnabled] != "false",
+		PluginManagementEnabled:              settings[SettingKeyPluginManagementEnabled] == "true",
 		ChannelMonitorEnabled:                !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled]),
 		ChannelMonitorMode:                   normalizeChannelMonitorMode(settings[SettingKeyChannelMonitorMode]),
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
@@ -559,6 +561,7 @@ type PublicSettingsInjectionPayload struct {
 	TeamEnabled                          bool                     `json:"team_enabled"`
 	TeamSelfServiceEnabled               bool                     `json:"team_self_service_enabled"`
 	DataSharingEnabled                   bool                     `json:"data_sharing_enabled"`
+	PluginManagementEnabled              bool                     `json:"plugin_management_enabled"`
 	ChannelMonitorEnabled                bool                     `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string                   `json:"channel_monitor_mode"`
 	ChannelMonitorDefaultIntervalSeconds int                      `json:"channel_monitor_default_interval_seconds"`
@@ -653,6 +656,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		TeamEnabled:                          settings.TeamEnabled,
 		TeamSelfServiceEnabled:               settings.TeamSelfServiceEnabled,
 		DataSharingEnabled:                   settings.DataSharingEnabled,
+		PluginManagementEnabled:              settings.PluginManagementEnabled,
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorMode:                   settings.ChannelMonitorMode,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,

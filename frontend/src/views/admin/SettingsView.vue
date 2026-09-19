@@ -7224,6 +7224,37 @@
           <div class="card">
             <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
               <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.features.pluginManagement.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.features.pluginManagement.description") }}
+              </p>
+            </div>
+            <div class="p-6">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.features.pluginManagement.enabled") }}
+                  </label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.features.pluginManagement.enabledHint") }}
+                  </p>
+                </div>
+                <Toggle v-model="form.plugin_management_enabled" />
+              </div>
+              <a
+                v-if="form.plugin_management_enabled"
+                href="/admin/plugins"
+                class="mt-4 inline-flex items-center text-xs text-primary-600 hover:underline dark:text-primary-400"
+              >
+                {{ t("admin.settings.features.pluginManagement.openLink") }} →
+              </a>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
                 {{ t("admin.settings.features.dataSharing.title") }}
               </h2>
               <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -9493,6 +9524,7 @@ const form = reactive<SettingsForm>({
   team_enabled: true,
   data_sharing_enabled: true,
   risk_control_enabled: false,
+  plugin_management_enabled: false,
   channel_monitor_enabled: true,
   channel_monitor_mode: "v2",
   channel_monitor_default_interval_seconds: 60,
@@ -11300,6 +11332,7 @@ async function saveSettings() {
       team_enabled: form.team_enabled,
       data_sharing_enabled: form.data_sharing_enabled,
       risk_control_enabled: form.risk_control_enabled,
+      plugin_management_enabled: form.plugin_management_enabled,
       channel_monitor_enabled: form.channel_monitor_enabled,
       channel_monitor_mode:
         form.channel_monitor_mode === "v1" ? "v1" : "v2",

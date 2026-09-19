@@ -113,6 +113,13 @@ dataSharing: {
           enabled: 'Enable Team Features',
           enabledHint: 'When off, related page entries are hidden and direct URL access is blocked.'
         },
+        pluginManagement: {
+          title: 'Plugin Management',
+          description: 'Control whether the plugin management entry appears in the admin sidebar. This switch does not control plugin runtime state.',
+          enabled: 'Show Plugin Management',
+          enabledHint: 'Turning this off only hides the sidebar entry; loaded or running plugins are not stopped.',
+          openLink: 'Open Plugin Management'
+        },
         dataSharing: {
           title: 'Data Sharing',
           description: 'Control whether data sharing pages are available to users and administrators.',

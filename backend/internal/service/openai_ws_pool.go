@@ -89,6 +89,7 @@ type openAIWSHandshakeCompatibilityKey struct {
 	originator          string
 	version             string
 	fingerprintMode     codexFingerprintMode
+	turnMode            codexTurnMode
 	codexInstallationID string
 	sessionIDHyphen     string
 	sessionIDUnderscore string
@@ -2135,6 +2136,10 @@ func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Head
 		return key
 	}
 	key.fingerprintMode = mode
+	if mode == codexFingerprintCockpit {
+		// 设置切换后的新握手不得借用另一回合策略建立的连接。
+		key.turnMode = account.GetCodexTurnMode()
+	}
 	key.codexInstallationID = normalizeOpenAIWSStableIdentityHeader(headers, "x-codex-installation-id")
 	if key.codexInstallationID == "" {
 		key.codexInstallationID = resolveConvergedInstallationID(account)

@@ -350,6 +350,8 @@ type UpdateSettingsRequest struct {
 	// 团队和数据共享页面功能开关
 	TeamEnabled        *bool `json:"team_enabled"`
 	DataSharingEnabled *bool `json:"data_sharing_enabled"`
+	// 插件管理菜单开关；关闭只隐藏入口，不停止运行时。
+	PluginManagementEnabled *bool `json:"plugin_management_enabled"`
 
 	// cyber 会话屏蔽开关与 TTL
 	CyberSessionBlockEnabled    *bool `json:"cyber_session_block_enabled"`
@@ -1759,6 +1761,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.DataSharingEnabled
 		}(),
+		PluginManagementEnabled: func() bool {
+			if req.PluginManagementEnabled != nil {
+				return *req.PluginManagementEnabled
+			}
+			return previousSettings.PluginManagementEnabled
+		}(),
 		RiskControlEnabled: func() bool {
 			if req.RiskControlEnabled != nil {
 				return *req.RiskControlEnabled
@@ -2319,6 +2327,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TeamEnabled:                                      updatedSettings.TeamEnabled,
 		DataSharingEnabled:                               updatedSettings.DataSharingEnabled,
 		RiskControlEnabled:                               updatedSettings.RiskControlEnabled,
+		PluginManagementEnabled:                          updatedSettings.PluginManagementEnabled,
 		CyberSessionBlockEnabled:                         updatedSettings.CyberSessionBlockEnabled,
 		CyberSessionBlockTTLSeconds:                      updatedSettings.CyberSessionBlockTTLSeconds,
 		AffiliateEnabled:                                 updatedSettings.AffiliateEnabled,

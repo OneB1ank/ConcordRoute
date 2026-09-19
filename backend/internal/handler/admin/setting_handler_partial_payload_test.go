@@ -91,6 +91,19 @@ func TestUpdateSettingsOpenAIGatewayFieldsAreWritable(t *testing.T) {
 	require.Equal(t, "true", repo.values[service.SettingKeyOpenAIAllowClaudeCodeCodexPlugin])
 }
 
+func TestUpdateSettingsPluginManagementSwitchIsWritable(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyPluginManagementEnabled: "false",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"plugin_management_enabled": true,
+	}, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyPluginManagementEnabled])
+}
+
 func TestUpdateSettingsRejectsTwoCaptchaProviders(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{
 		service.SettingKeyTurnstileEnabled:   "true",

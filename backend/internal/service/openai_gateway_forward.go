@@ -880,7 +880,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		upstreamStart := time.Now()
 		markUpstreamStage("upstream_do_started")
-		resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch))
+		resp, err := s.doOpenAIUpstream(
+			upstreamCtx,
+			upstreamReq,
+			body,
+			proxyURL,
+			account,
+			s.resolveOpenAITLSProfile(account, tlsRouterMatch),
+		)
 		if resp != nil {
 			markUpstreamStage("upstream_headers_received")
 		}

@@ -409,6 +409,27 @@ describe('CreateAccountModal OpenAI account options', () => {
     )
     await flushPromises()
     expect(modeSelect.element.value).toBe('off')
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="create-codex-turn-mode-select"]').element.value)
+      .toBe('passthrough')
+  })
+
+  it('Turn 透传可以覆盖导入模板中的实验模式', async () => {
+    getOpenAIOAuthImportDefaultsMock.mockResolvedValueOnce({
+      credentials: { model_whitelist: [] },
+      extra: { codex_fingerprint_mode: 'cockpit', codex_turn_mode: 'converge' }
+    })
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await flushPromises()
+    const select = wrapper.get<HTMLSelectElement>('[data-testid="create-codex-turn-mode-select"]')
+    expect(select.element.value).toBe('converge')
+    await select.setValue('passthrough')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Turn import')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await wrapper.get('[data-testid="import-codex-session"]').trigger('click')
+    await flushPromises()
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_turn_mode).toBe('passthrough')
+    expect(importCodexSessionMock.mock.calls[0]?.[0]?.extra?.codex_fingerprint_mode).toBe('cockpit')
   })
 
   it('persists an explicit Codex fingerprint convergence mode for OAuth imports', async () => {

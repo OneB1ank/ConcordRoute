@@ -332,6 +332,7 @@ func TestBuildSchedulerMetadataAccount_KeepsCodexFingerprintIdentity(t *testing.
 		Type:     service.AccountTypeOAuth,
 		Extra: map[string]any{
 			"codex_fingerprint_mode": "cockpit",
+			"codex_turn_mode":        "converge",
 			"codex_fingerprint_seed": "11111111-1111-4111-8111-111111111111",
 			"openai_device_id":       "22222222-2222-4222-8222-222222222222",
 			"unused_large_field":     "drop-me",
@@ -341,6 +342,7 @@ func TestBuildSchedulerMetadataAccount_KeepsCodexFingerprintIdentity(t *testing.
 	got := buildSchedulerMetadataAccount(account)
 
 	require.Equal(t, "cockpit", got.Extra["codex_fingerprint_mode"])
+	require.Equal(t, "converge", got.Extra["codex_turn_mode"])
 	require.Equal(t, "11111111-1111-4111-8111-111111111111", got.Extra["codex_fingerprint_seed"])
 	require.Equal(t, "22222222-2222-4222-8222-222222222222", got.Extra["openai_device_id"])
 	require.Nil(t, got.Extra["unused_large_field"])

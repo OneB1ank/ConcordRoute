@@ -1010,6 +1010,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_oauth_passthrough",
 		// Codex 指纹身份属于调度请求的必要字段，缓存快照必须与数据库直读一致。
 		"codex_fingerprint_mode",
+		"codex_turn_mode",
 		"codex_fingerprint_seed",
 		"openai_device_id",
 		"codex_5h_used_percent",

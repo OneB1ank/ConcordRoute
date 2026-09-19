@@ -11,6 +11,18 @@ service TransportPlugin {
   rpc ApplyConfig(ApplyConfigRequest) returns (ApplyConfigResponse);
   rpc TestConfig(TestConfigRequest) returns (TestConfigResponse);
   rpc Forward(stream ForwardRequest) returns (stream ForwardResponse);
+  // 可选宿主服务协商；旧插件未实现时宿主继续按原流程运行。
+  rpc InitHostServices(InitHostServicesRequest) returns (InitHostServicesResponse);
+}
+
+// 宿主反向服务由插件通过 go-plugin broker 回拨，按运行时插件实例隔离。
+service HostService {
+  rpc KVGet(KVGetRequest) returns (KVGetResponse);
+  rpc KVSet(KVSetRequest) returns (KVSetResponse);
+  rpc KVDelete(KVDeleteRequest) returns (KVDeleteResponse);
+  rpc KVList(KVListRequest) returns (KVListResponse);
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+  rpc ResolveOutboundIdentity(ResolveOutboundIdentityRequest) returns (ResolveOutboundIdentityResponse);
 }
 
 message GetInfoRequest {}
@@ -28,6 +40,8 @@ message HealthRequest {}
 message HealthResponse {
   bool healthy = 1;
   string message = 2;
+  // 插件自定义、只读的 JSON 状态；宿主不解释其业务语义。
+  string status_json = 3;
 }
 
 message ValidateConfigRequest {
@@ -57,6 +71,7 @@ message TestConfigResponse {
   bool success = 1;
   string message = 2;
   int64 latency_ms = 3;
+  string status_json = 4;
 }
 
 message HeaderValues {
@@ -117,4 +132,73 @@ message ForwardResponse {
     ForwardResponseEnd end = 3;
     ForwardResponseError error = 4;
   }
+}
+
+message InitHostServicesRequest {
+  uint32 host_service_id = 1;
+  uint32 host_service_api_version = 2;
+}
+
+message InitHostServicesResponse {
+  bool ready = 1;
+  string message = 2;
+}
+
+message KVGetRequest {
+  string namespace = 1;
+  string key = 2;
+}
+
+message KVGetResponse {
+  bool found = 1;
+  bytes value = 2;
+}
+
+message KVSetRequest {
+  string namespace = 1;
+  string key = 2;
+  bytes value = 3;
+  int64 ttl_seconds = 4;
+}
+
+message KVSetResponse {}
+
+message KVDeleteRequest {
+  string namespace = 1;
+  string key = 2;
+}
+
+message KVDeleteResponse {}
+
+message KVListRequest {
+  string namespace = 1;
+  string key_prefix = 2;
+  int32 limit = 3;
+}
+
+message KVListResponse {
+  repeated string keys = 1;
+}
+
+message ListAccountsRequest {
+  string platform = 1;
+  string account_type = 2;
+}
+
+message ListAccountsResponse {
+  repeated int64 account_ids = 1;
+}
+
+message ResolveOutboundIdentityRequest {
+  int64 account_id = 1;
+}
+
+message ResolveOutboundIdentityResponse {
+  bool found = 1;
+  int64 account_id = 2;
+  string platform = 3;
+  string account_type = 4;
+  string proxy_url = 5;
+  string token = 6;
+  map<string, HeaderValues> headers = 7;
 }

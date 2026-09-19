@@ -410,11 +410,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				return nil, fmt.Errorf("build grok retry request: %w", err)
 			}
 		}
-		resp, err = s.httpUpstream.DoWithTLS(
+		resp, err = s.doOpenAIUpstream(
+			upstreamCtx,
 			upstreamReq,
+			responsesBody,
 			proxyURL,
-			account.ID,
-			account.Concurrency,
+			account,
 			s.resolveOpenAITLSProfile(account, tlsRouterMatch...),
 		)
 		if err != nil {

@@ -67,10 +67,11 @@ func (r *pluginRuntime) initializeAPI(ctx context.Context, dispensed any) error 
 		}
 		return nil
 	}
-	api, ok := dispensed.(pluginv1.TransportPluginClient)
-	if !ok {
+	transportClient, ok := dispensed.(*pluginv1.TransportClient)
+	if !ok || transportClient.TransportPluginClient == nil {
 		return errors.New("插件未实现传输 gRPC 客户端")
 	}
+	api := transportClient.TransportPluginClient
 	info, err := api.GetInfo(ctx, &pluginv1.GetInfoRequest{})
 	if err != nil {
 		return fmt.Errorf("读取插件信息: %w", err)
@@ -88,7 +89,31 @@ func (r *pluginRuntime) health(ctx context.Context) (*pluginv1.HealthResponse, e
 		return r.api.Health(ctx, &pluginv1.HealthRequest{})
 	}
 	result, err := r.extension.Health(ctx)
-	return &pluginv1.HealthResponse{Healthy: result.Healthy, Message: "扩展健康检查未通过"}, safeExtensionRPCError("扩展健康检查失败", err)
+	return &pluginv1.HealthResponse{Healthy: result.Healthy, Message: result.Message}, safeExtensionRPCError("扩展健康检查失败", err)
+}
+
+// status is the passive runtime status used by the admin read-only endpoint.
+// v1 plugins may expose status_json directly; v2 extensions retain their
+// validated health/message contract and are adapted without probing upstream.
+func (r *pluginRuntime) status(ctx context.Context) (*pluginv1.HealthResponse, error) {
+	if r == nil || r.client == nil || r.client.Exited() || (r.api == nil && r.extension == nil) {
+		return nil, errors.New("插件进程已退出")
+	}
+	if r.api != nil {
+		result, err := r.api.Health(ctx, &pluginv1.HealthRequest{})
+		if err != nil {
+			return nil, fmt.Errorf("插件状态查询失败: %w", err)
+		}
+		if result == nil {
+			return nil, errors.New("插件未返回状态")
+		}
+		return result, nil
+	}
+	result, err := r.extension.Health(ctx)
+	if err != nil {
+		return nil, safeExtensionRPCError("扩展状态查询失败", err)
+	}
+	return &pluginv1.HealthResponse{Healthy: result.Healthy, Message: result.Message}, nil
 }
 func (r *pluginRuntime) validateConfig(ctx context.Context, config []byte) (*pluginv1.ValidateConfigResponse, error) {
 	if r.extension == nil {

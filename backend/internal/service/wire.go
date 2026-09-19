@@ -33,6 +33,15 @@ type BuildInfo struct {
 	BuildType string
 }
 
+// ProvidePluginManager 在启动装配阶段连接插件宿主和网关，保持生成文件可复现。
+// 网关构造器不依赖插件管理器，避免账号目录与出站服务形成循环依赖。
+func ProvidePluginManager(repo PluginRepository, encryptor SecretEncryptor, cfg *config.Config, hostInfo PluginHostInfo, kvStore PluginKVStore, gateway *OpenAIGatewayService) *PluginManager {
+	manager := NewPluginManager(repo, encryptor, cfg, hostInfo, kvStore)
+	manager.SetAccountDirectory(gateway)
+	gateway.SetPluginManager(manager)
+	return manager
+}
+
 // ProvidePricingService creates and initializes PricingService
 func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient) (*PricingService, error) {
 	svc := NewPricingService(cfg, remoteClient)
@@ -950,7 +959,7 @@ var ProviderSet = wire.NewSet(
 	NewChannelMonitorRequestTemplateService,
 	NewModelPricingResolver,
 	ProvideContentModerationService,
-	NewPluginManager,
+	ProvidePluginManager,
 	ProvidePaymentConfigService,
 	ProvidePaymentService,
 	ProvidePaymentOrderExpiryService,

@@ -107,6 +107,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		TeamEnabled:                          settings.TeamEnabled,
 		TeamSelfServiceEnabled:               settings.TeamSelfServiceEnabled,
 		DataSharingEnabled:                   settings.DataSharingEnabled,
+		PluginManagementEnabled:              settings.PluginManagementEnabled,
 		Version:                              h.version,
 		ServerTimezone:                       timezone.Name(),
 		ServerUTCOffset:                      timezone.UTCOffset(),

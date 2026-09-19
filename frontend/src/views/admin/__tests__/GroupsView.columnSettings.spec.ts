@@ -271,10 +271,10 @@ describe('admin GroupsView column settings', () => {
     localStorage.clear()
   })
 
-  it('loads the Live capability once on mount', async () => {
+  it('defers the Live capability probe until the administrator enables Live', async () => {
     const wrapper = await mountView()
 
-    expect(getLiveCapability).toHaveBeenCalledTimes(1)
+    expect(getLiveCapability).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

@@ -376,7 +376,7 @@
             ref="pluginFrame"
             :src="uiSession.url"
             sandbox="allow-scripts"
-            referrerpolicy="no-referrer"
+            :referrerpolicy="pluginUIFrameReferrerPolicy"
             class="h-full w-full border-0 bg-white dark:bg-dark-900"
             :title="
               t('admin.plugins.configTitle', { name: configPlugin?.name || '' })
@@ -437,6 +437,10 @@ import {
 } from "@/api/admin";
 import { useAppStore } from "@/stores";
 import { buildApiUrl } from "@/api/url";
+import {
+  pluginBridgeExpectsResponse,
+  pluginUIFrameReferrerPolicy,
+} from "@/utils/pluginUIBridge";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import Icon from "@/components/icons/Icon.vue";
@@ -966,10 +970,7 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
     return;
 
   const requestID = typeof message.request_id === "string" ? message.request_id.trim() : "";
-  const expectsResponse =
-    message.type === "config.load" ||
-    message.type === "config.save" ||
-    message.type === "config.test";
+  const expectsResponse = pluginBridgeExpectsResponse(message.type);
   if (expectsResponse) {
     if (!requestID || pendingBridgeRequests.has(requestID)) return;
     registerBridgeRequest(requestID);
@@ -1015,6 +1016,11 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
             result.message || t("admin.plugins.testSuccess"),
           );
         else appStore.showError(result.message || t("common.error"));
+        break;
+      }
+      case "plugin.status": {
+        const result = await adminAPI.plugins.status(pluginID);
+        postBridgeResult(message, { ok: true, result }, generation);
         break;
       }
       case "ui.resize": {

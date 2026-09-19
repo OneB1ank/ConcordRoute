@@ -165,13 +165,16 @@ const (
 	SettingKeyTeamEnabled                         = "team_enabled"                     // 是否显示团队功能相关页面
 	SettingKeyDataSharingEnabled                  = "data_sharing_enabled"             // 是否显示数据共享相关页面
 	SettingKeyRiskControlEnabled                  = "risk_control_enabled"             // 是否启用风控中心入口与内容审计链路
-	SettingKeyCyberSessionBlockEnabled            = "cyber_session_block_enabled"      // cyber_policy 命中后的会话本地屏蔽开关
-	SettingKeyCyberSessionBlockTTLSeconds         = "cyber_session_block_ttl_seconds"  // cyber_policy 会话本地屏蔽时长（秒）
-	SettingKeyContentModerationConfig             = "content_moderation_config"        // 内容审计配置（JSON）
-	SettingKeyLoginAgreementEnabled               = "login_agreement_enabled"          // 登录前是否要求同意条款
-	SettingKeyLoginAgreementMode                  = "login_agreement_mode"             // 条款确认展示模式：modal / checkbox
-	SettingKeyLoginAgreementUpdatedAt             = "login_agreement_updated_at"       // 条款更新日期（展示用）
-	SettingKeyLoginAgreementDocuments             = "login_agreement_documents"        // 条款文档列表（JSON，Markdown 内容）
+	// SettingKeyPluginManagementEnabled 只控制管理员侧边栏入口和页面访问提示，
+	// 不会停止已经加载的插件运行时。
+	SettingKeyPluginManagementEnabled     = "plugin_management_enabled"
+	SettingKeyCyberSessionBlockEnabled    = "cyber_session_block_enabled"     // cyber_policy 命中后的会话本地屏蔽开关
+	SettingKeyCyberSessionBlockTTLSeconds = "cyber_session_block_ttl_seconds" // cyber_policy 会话本地屏蔽时长（秒）
+	SettingKeyContentModerationConfig     = "content_moderation_config"       // 内容审计配置（JSON）
+	SettingKeyLoginAgreementEnabled       = "login_agreement_enabled"         // 登录前是否要求同意条款
+	SettingKeyLoginAgreementMode          = "login_agreement_mode"            // 条款确认展示模式：modal / checkbox
+	SettingKeyLoginAgreementUpdatedAt     = "login_agreement_updated_at"      // 条款更新日期（展示用）
+	SettingKeyLoginAgreementDocuments     = "login_agreement_documents"       // 条款文档列表（JSON，Markdown 内容）
 
 	// 邮件服务设置
 	SettingKeySMTPHost     = "smtp_host"      // SMTP服务器地址

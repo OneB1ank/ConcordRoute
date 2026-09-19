@@ -14,6 +14,8 @@ const (
 	TransportAPIVersion = 1
 	// UIBridgeVersion 是插件管理页与沙箱 UI 的消息协议版本。
 	UIBridgeVersion = 1
+	// HostServiceAPIVersion 是可选宿主反向服务的独立契约版本。
+	HostServiceAPIVersion = 1
 	// TransportPluginName 是 go-plugin 中注册的唯一能力名称。
 	TransportPluginName = "oauth_transport"
 )
@@ -25,19 +27,33 @@ var HandshakeConfig = hcplugin.HandshakeConfig{
 	MagicCookieValue: "sub2api-plugin-v1",
 }
 
+// HostBrokerReceiver 由需要反向调用宿主服务的插件实现。
+type HostBrokerReceiver interface {
+	SetHostBroker(*hcplugin.GRPCBroker)
+}
+
+// TransportClient 携带传输客户端及对应 broker，供宿主建立反向 HostService。
+type TransportClient struct {
+	TransportPluginClient
+	Broker *hcplugin.GRPCBroker
+}
+
 // GRPCPlugin 把生成的 gRPC 服务注册到 go-plugin 子进程。
 type GRPCPlugin struct {
 	hcplugin.NetRPCUnsupportedPlugin
 	Impl TransportPluginServer
 }
 
-func (p *GRPCPlugin) GRPCServer(_ *hcplugin.GRPCBroker, server *grpc.Server) error {
+func (p *GRPCPlugin) GRPCServer(broker *hcplugin.GRPCBroker, server *grpc.Server) error {
 	RegisterTransportPluginServer(server, p.Impl)
+	if receiver, ok := p.Impl.(HostBrokerReceiver); ok {
+		receiver.SetHostBroker(broker)
+	}
 	return nil
 }
 
-func (p *GRPCPlugin) GRPCClient(_ context.Context, _ *hcplugin.GRPCBroker, conn *grpc.ClientConn) (any, error) {
-	return NewTransportPluginClient(conn), nil
+func (p *GRPCPlugin) GRPCClient(_ context.Context, broker *hcplugin.GRPCBroker, conn *grpc.ClientConn) (any, error) {
+	return &TransportClient{TransportPluginClient: NewTransportPluginClient(conn), Broker: broker}, nil
 }
 
 // ClientPluginMap 返回宿主侧使用的插件声明。

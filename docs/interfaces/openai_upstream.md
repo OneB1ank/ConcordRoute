@@ -31,15 +31,23 @@ Codex app-server 的 `initialize.params.capabilities.requestAttestation=true` �
 管理员可显式开启 app-server 证明采集器：`POST /admin/codex-attestation-collector/start` 后创建 `POST /admin/codex-attestation-collector/sessions`，将返回的 `collector_token` 作为 `collector_token` 查询参数或 `X-Codex-Attestation-Collector-Token` 握手头附加到 app-server WebSocket。管理页面会同时显示完整 WebSocket 地址，并提供显式删除当前采集会话的操作。采集器只记录 `initialize` 能力、`attestation/generate` 状态、请求 ID、客户端版本、连接/session/thread 关联以及 proof 长度和 SHA-256；`GET /admin/codex-attestation-collector/sessions/:token/captures` 不返回 opaque proof 原文。会话默认 30 分钟、每会话最多 100 条，停止采集会立即清除内存摘要；采集 token 不是上游认证凭据，也不能写入账号、TLS 模板或全局配置。采集器只覆盖证明层；账号现有 Codex 收敛策略和 TLS 模板/路由继续由各自配置决定，不在采集器内切换。
 管理页面入口位于“账号 → 更多操作 → 工具 → Codex app-server Attestation Collector”，采集器采用独立弹窗；TLS 指纹模板、TLS 路由器和 Codex 收敛仍保持独立配置。采集器只在管理员显式启动并创建会话后工作，不增加账号级自动证明开关。
 
-OpenAI OAuth 账号的 `extra.codex_fingerprint_mode` 控制 Codex Responses 的设备指纹收敛。OAuth 导入模板的内置默认值为 `cockpit`，因此新导入账号会显式保存“会话+缓存键”模式；已有账号未配置、保存空值或包含无效值时，运行态统一按 `off` 处理，避免静默改变存量行为。`off` 保留既有转发行为，`device` 只统一 installation ID，`session` 进一步统一 session ID 并按客户端原始 session 稳定派生 thread ID，`cockpit` 在账号内按客户端 session/thread 分别映射对话身份，同时从请求头或请求体的 session、thread、window 和 `prompt_cache_key` 补充识别对话。客户端同时明确提供相等的 `session_id`、`thread_id` 且没有 `parent_thread_id`，并且 session/thread 两侧绑定都不存在时，新的根绑定只生成一次 UUIDv7，并把两个映射键指向该值；子线程继续使用独立 thread 映射并让 parent 指向共享根。只有一侧存在的旧绑定会保留已有值，并在另一命名空间独立建立缺失绑定；双侧已存在的历史绑定也保持原值，不迁移、不旋转既有窗口和缓存作用域。显式 `prompt_cache_key` 原样保留；字段明确存在但值为空时不视为缺省，不进入 carry/fallback；同一 session/thread/window 暂时省略时复用最近绑定；现代客户端压缩推进到相邻窗口且未带新键时，先查本窗口绑定，再单向继承同账号、同 session/thread 的直接前一窗口绑定。每个窗口独立保存，跳代、跨账号、跨线程及过期绑定不猜测继承，旧窗口重试不覆盖新窗口；新的显式 key 到达后切换缓存命名空间，且不反向改变 session/thread。`full` 再把所有客户端收敛到同一 thread。session/full 保留每请求生成 turn ID 和生命周期开始时间的历史行为；Cockpit 的 `turn_id`、`parent_turn_id`、`root_turn_id` 与 `turn_started_at_unix_ms` 使用客户端值，不建立账号级回合映射，也不把缺失字段从旧请求或 WS 前一帧回灌。HTTP 头、`client_metadata` 和内嵌 turn metadata 对同一请求使用同一组客户端回合值；HTTP 内部重试复用已准备的请求快照。普通转换与 OAuth passthrough 都遵守该配置，透传大 body 仅局部读取和改写身份字段，不做整包解码；旧版 `/responses/compact` 保持既有请求体协议，仅收敛 Header 中的设备、会话、线程和窗口字段，回合元数据仍保持客户端值。账号首次持久化时生成随机 `extra.codex_fingerprint_seed`；身份绑定读取或写入失败时请求不继续向上游发送，避免重启/多实例产生分叉映射，升级迁移为已有账号补齐该值，installation、session、thread 等出站身份由该持久化随机种子派生，显式缓存键仍原样保留，不再使用仅在单个数据库内唯一的自增账号 ID；管理员配置的真实 OpenAI device ID 仍具有最高优先级。普通编辑、批量编辑和运行态 Extra 更新不得覆盖种子，复制账号生成新种子，Spark 影子账号在普通 HTTP、OAuth passthrough 和原生 V2 探测中都动态使用父账号的模式、device ID 和稳定种子，不允许分裂同一 OAuth 凭据的上游设备身份。
+OpenAI OAuth 账号的 `extra.codex_fingerprint_mode` 控制 Codex Responses 的设备指纹收敛。OAuth 导入模板的内置默认值为 `cockpit`，因此新导入账号会显式保存“会话+缓存键”模式；已有账号未配置、保存空值或包含无效值时，运行态统一按 `off` 处理，避免静默改变存量行为。`off` 保留既有转发行为，`device` 只统一 installation ID，`session` 进一步统一 session ID 并按客户端原始 session 稳定派生 thread ID，`cockpit` 在账号内按客户端 session/thread 分别映射对话身份，同时从请求头或请求体的 session、thread、window 和 `prompt_cache_key` 补充识别对话。客户端同时明确提供相等的 `session_id`、`thread_id` 且没有 `parent_thread_id`，并且 session/thread 两侧绑定都不存在时，新的根绑定只生成一次 UUIDv7，并把两个映射键指向该值；子线程继续使用独立 thread 映射并让 parent 指向共享根。只有一侧存在的旧绑定会保留已有值，并在另一命名空间独立建立缺失绑定；双侧已存在的历史绑定也保持原值，不迁移、不旋转既有窗口和缓存作用域。显式 `prompt_cache_key` 原样保留；字段明确存在但值为空时不视为缺省，不进入 carry/fallback；同一 session/thread/window 暂时省略时复用最近绑定；现代客户端压缩推进到相邻窗口且未带新键时，先查本窗口绑定，再单向继承同账号、同 session/thread 的直接前一窗口绑定。每个窗口独立保存，跳代、跨账号、跨线程及过期绑定不猜测继承，旧窗口重试不覆盖新窗口；新的显式 key 到达后切换缓存命名空间，且不反向改变 session/thread。`full` 再把所有客户端收敛到同一 thread。session/full 保留每请求生成 turn ID 和生命周期开始时间的历史行为；Cockpit 默认透传客户端的回合图；只有独立设置 `extra.codex_turn_mode=converge` 时，才对客户端明确提供的 `turn_id`、`parent_turn_id`、`root_turn_id` 在账号和映射后 session 作用域内建立稳定 UUIDv7 回合映射：同一原始值重复出现时复用同一映射，新值建立新映射，root 与当前 turn 的原始值相等时出站仍相等，parent/root 始终引用同一映射图。每个首次出现的原始回合都由本地 ContextV7 生成器创建 UUIDv7，并保存完整映射；不再把客户端时间戳与哈希低位拼接。字段缺失时保持缺失，不从旧请求或 WS 前一帧回灌。HTTP 头、`client_metadata` 和内嵌 turn metadata 对同一请求使用同一组映射后的回合值；HTTP 内部重试复用已准备的请求快照。普通转换与 OAuth passthrough 都遵守该配置，透传大 body 仅局部读取和改写身份字段，不做整包解码；旧版 `/responses/compact` 保持既有请求体协议，仅收敛 Header 中的设备、会话、线程和窗口字段，回合元数据遵循独立 Turn 设置。账号首次持久化时生成随机 `extra.codex_fingerprint_seed`；身份绑定读取或写入失败时请求不继续向上游发送，避免重启/多实例产生分叉映射，升级迁移为已有账号补齐该值，installation、session、thread 等出站身份由该持久化随机种子派生，显式缓存键仍原样保留，不再使用仅在单个数据库内唯一的自增账号 ID；管理员配置的真实 OpenAI device ID 仍具有最高优先级。普通编辑、批量编辑和运行态 Extra 更新不得覆盖种子，复制账号生成新种子，Spark 影子账号在普通 HTTP、OAuth passthrough 和原生 V2 探测中都动态使用父账号的模式、device ID 和稳定种子，不允许分裂同一 OAuth 凭据的上游设备身份。
 
-现代 Codex（扩展回合身份门槛为 `0.151.0`）只处理客户端明确提供的 `root_turn_id`：缺失时始终保持缺失，不根据 `turn_id` 或 `parent_turn_id` 补全。Cockpit 的 `turn_id`、`parent_turn_id`、`root_turn_id` 保持客户端关联图和字面值；客户端 root 与当前 turn 相等时出站仍相等，子回合的 parent/root 仍引用客户端对应祖先。三个字段各自按客户端存在性处理，缺省当前 turn 也保留缺省。session/full 保留原有 root 兼容规则。WS 每帧独立判断 turn/root/parent 是否存在，即使该帧没有新的 `turn_id`，也不回灌上一帧的回合值。root/parent 只进入 `client_metadata`、内嵌 turn metadata 与兼容 Header；Responses 顶层 `root_turn_id`、`parent_turn_id`、`context_window_id`、`window_number`、`first_window_id`、`previous_window_id` 会先提取有效值再移除，避免误作生成参数。device 模式只迁移这些字段的载体，不改变其回合/窗口值；off 模式不增加改写。旧版客户端按版本门控移除扩展字段，剥离的 `window_number` 不参与窗口派生。
+### 独立 Turn 设置
+
+账号创建、编辑、批量编辑及 OAuth 导入默认值在“Codex 指纹收敛”下一行提供两个选项：`passthrough`（默认 Turn 透传）与 `converge`（Turn 收敛，实验）。字段存于账号 `extra.codex_turn_mode`，缺失、空值、未知值或错误类型均按透传处理，不因账号选择 Cockpit 而自动开启。该设置只控制 Cockpit 的 turn/parent/root；其它指纹模式保留原规则。
+
+HTTP 在准备请求快照时读取选择，Header、普通 JSON 与原始 JSON 改写使用同一快照；WS 在建立连接时冻结选择，已有连接需重连才切换。连接池兼容键包含有效 Turn 模式，避免新握手复用旧策略连接。调度 metadata 投影保留此字段，普通账号更新沿用现有快照失效机制；没有额外每请求配置查询。批量更新未勾选此项时保留原配置，明确选择透传会覆盖已有实验值。回切透传不清空历史回合绑定，不改变 session/thread/window 或显式缓存键。
+
+生成器保留 `uuid 1.20.0` 实际编码兼容。标准 UUIDv7 格式、该库实际编码与“42 位计数器无损往返”是不同命题；当前掩码会覆盖部分计数位，不保证跨所有计数边界单调。末尾 32 位来自随机源；这不构成上游接纳或延迟表现承诺。
+
+现代 Codex（扩展回合身份门槛为 `0.151.0`）只处理客户端明确提供的 `root_turn_id`：缺失时始终保持缺失，不根据 `turn_id` 或 `parent_turn_id` 补全。Cockpit 实验模式的 `turn_id`、`parent_turn_id`、`root_turn_id` 按客户端关联图建立稳定映射；客户端 root 与当前 turn 相等时出站仍相等，子回合的 parent/root 仍引用映射后的对应祖先。三个字段各自按客户端存在性处理，缺省当前 turn 也保持缺省。session/full 保留原有 root 兼容规则。WS 每帧独立判断 turn/root/parent 是否存在，即使该帧没有新的 `turn_id`，也不回灌上一帧的回合值。root/parent 只进入 `client_metadata`、内嵌 turn metadata 与兼容 Header；Responses 顶层 `root_turn_id`、`parent_turn_id`、`context_window_id`、`window_number`、`first_window_id`、`previous_window_id` 会先提取有效值再移除，避免误作生成参数。device 模式只迁移这些字段的载体，不改变其回合/窗口值；off 模式不增加改写。旧版客户端按版本门控移除扩展字段，剥离的 `window_number` 不参与窗口派生。
 
 官方客户端内部压缩状态维护 `first_window_id`、`previous_window_id` 与 `window_number`：首窗口锚点不变，压缩后记录前一窗口并递增代数。它们不是 Responses 顶层生成参数。核对过的 0.153.4 源码中，`first_window_id` / `previous_window_id` 还用于客户端上下文片段与持久化状态，并非普通 turn metadata 的标准字段；本 fork 的同名元数据属于兼容扩展，不能据此宣称完整模拟官方压缩历史。网关保留账号隔离的内部窗口链；Cockpit 仅在客户端实际携带 `context_window_id`、`first_window_id`、`previous_window_id` 时写出对应映射。首窗口主动删除已携带的残留 `previous_window_id`；客户端上下文文本保持原样。`window_number` 的数值由客户端显式字段或窗口后缀提供，逐请求发送不会自动递增；Cockpit 未收到该字段时仅内部使用代数，不向元数据补造字段。`client_metadata` 的 `window_number` 使用字符串，内嵌/兼容头的 turn metadata 使用 JSON 数字。普通与透传路径统一接受精确范围内的整数、小数/指数整数及兼容数字字符串，超出 JSON 精确整数范围或非整数不参与派生。异常或 `null` 的内嵌 turn metadata 保留原文，不向 nil map 写入。
 
 ### 窗口实例与升级边界
 
-Cockpit 在客户端提供 `context_window_id` 时，按账号、映射后的 thread 与原始窗口实例建立独立 UUIDv7 绑定，窗口代数不参与实例键。`0/W0 → 1/W1 → 0/W0 → 1/W2` 的 W1 与 W2 分别映射；回访 W0 恢复原绑定。显式 `first_window_id` / `previous_window_id` 使用同一实例域，而不是按第零/前一代猜测引用。缺省字段仍不补造；session/thread 映射保持不变，回合字段继续透传。WS 只改变 context UUID 时也刷新并持久化；缺省代数仅内部沿用连接位置，不补入当前帧。
+Cockpit 在客户端提供 `context_window_id` 时，按账号、映射后的 thread 与原始窗口实例建立独立 UUIDv7 绑定，窗口代数不参与实例键。`0/W0 → 1/W1 → 0/W0 → 1/W2` 的 W1 与 W2 分别映射；回访 W0 恢复原绑定。显式 `first_window_id` / `previous_window_id` 使用同一实例域，而不是按第零/前一代猜测引用。缺省字段仍不补造；session/thread 映射保持不变，回合字段由独立 Turn 设置控制。WS 只改变 context UUID 时也刷新并持久化；缺省代数仅内部沿用连接位置，不补入当前帧。
 
 旧 `codex-context-window` 绑定只记录代数，没有原始实例对应信息。新实例使用 `codex-context-instance:v2` 独立命名空间，不自动认领旧 UUID；升级后已有客户端实例首次建立新绑定，因此该窗口 UUID 会发生一次切换。没有实例字段的兼容请求继续使用旧代数绑定，旧记录按原 TTL/容量淘汰，不批量清空账号。回退旧二进制会恢复旧窗口策略，并不等于保持新实例语义。
 
@@ -95,6 +103,8 @@ Live 选择证明中继时，优先读取原始 `session-id`、`thread-id` Heade
 <a id="codex_identity_persistence"></a>
 ### 身份绑定持久化的等待与读取
 
+本地 UUIDv7 生成器采用 48 位 Unix 毫秒、42 位无损计数器和独立的 32 位随机尾部；version/variant 单独占位。新毫秒随机播种 41 位初值，同毫秒或时钟回退时递增，42 位溢出后逻辑毫秒加一并重新播种。这是 RFC 9562 下的本地排序契约，不是 Rust `uuid 1.20.0` 实际编码的逐字节复刻，也不承诺跨进程或跨重启的全局排序。编码修正只作用于新的 session/thread/window/turn 绑定，仍有效的持久完整 UUID 原样复用；默认 Turn 透传不经过生成器。映射 UUID 的时间表示网关首次建立绑定的时间，不替代客户端的回合开始时间，也不据此给长回合设置自动换 ID 的期限。
+
 启用身份映射时，准备等锁、同步生成和持久化共用账号级互斥域及最长 5 秒的 context 预算，
 客户端已有更短期限或取消时优先响应。锁所有权仅放在本次同步操作的账号副本上，不进入调度缓存或存储；
 退出前在锁内同步 Extra。取消不会释放另一个请求持有的锁，也不会让未确认持久化的请求快照继续向上游发送。
@@ -114,7 +124,7 @@ Live 选择证明中继时，优先读取原始 `session-id`、`thread-id` Heade
 同一逻辑 turn 开始时间的热命中也只检查自身 TTL；新回合负责过期清理与既有容量控制。
 
 普通 Responses、passthrough、Messages、旧版 Compact 和 WS 已有持久化调用均将本次身份快照交给同一提交步骤。
-WS 后续帧使用同一准备预算；窗口变化或实际新增/更新持久身份绑定时执行提交，失败帧不提交连接状态。Cockpit 的 turn/parent/root 不落库，单纯切换客户端回合不会增加逐帧数据库读取或写入；窗口与线程绑定失败时仍保留待写标记，重试成功或核对持久状态一致后才清除。
+WS 后续帧使用同一准备预算；窗口变化或实际新增/更新持久身份绑定时执行提交，失败帧不提交连接状态。Cockpit 实验模式的所有 turn/parent/root 绑定写入独立回合存储；首次出现的原始回合由本地 UUIDv7 生成器创建，重复回合命中现有映射时不新增写入。窗口与线程绑定失败时仍保留待写标记，重试成功或核对持久状态一致后才清除。
 合并选择的窗口或父线程绑定与准备阶段不同时，成功写入后统一更新本次出站快照；确认与最新持久化状态一致时也执行相同快照提交。
 存储失败、绑定被裁剪或结果有歧义时不提交半更新的快照。若冲突改变 session/thread 派生根，则停止本次出站，
 由调用方使用刷新后的账号重试或重新建立 WS，避免仅替换根 ID 却沿用旧窗口图。
@@ -152,11 +162,11 @@ ConcordRoute 同时兼容原生 Remote Compaction V2 和旧版 Compact 端点。
 
 管理端连接测试的 `compact` 模式是原生 V2 健康检查，使用普通账号模型映射并要求响应实际出现 compaction item；`legacy_compact` 是旧端点兼容性测试，才使用 `compact_model_mapping`。两种测试的可用状态、最后状态、错误和时间戳完全隔离，旧端点 404 不得改变 V2 能力判定。
 
-WebSocket 的握手身份与每个 `response.create` 帧身份分开维护。现代客户端的后续帧保持连接的账号、installation、session 与 thread 绑定，新的显式 `prompt_cache_key` 立即生效；同窗口临时省略时复用当前键，相邻压缩窗口缺省时按与 HTTP 相同的规则继承前一窗口绑定；握手 Header 中的 `session-id`、`thread-id` 也纳入连接初始隔离状态；帧内显式 session/thread 与此连接原始标记不同时要求重连，避免跨会话沿用旧绑定。不同客户端 `turn_id` 以原值推进帧级回合，压缩推进窗口及历史锚点；内部重试复用已准备的帧身份，不原地修改首帧握手快照。`ctx_pool` 和 passthrough 使用同一推进逻辑，帧内 turn metadata 优先于旧握手头；现代后续帧缺省时不回灌首窗口头。Cockpit 的 turn、parent/root、开始时间、窗口代数与可选窗口字段存在性逐帧刷新，前帧携带、当前帧省略时保持省略。旧客户端保留原有连接身份兼容路径。
+WebSocket 的握手身份与每个 `response.create` 帧身份分开维护。现代客户端的后续帧保持连接的账号、installation、session 与 thread 绑定，新的显式 `prompt_cache_key` 立即生效；同窗口临时省略时复用当前键，相邻压缩窗口缺省时按与 HTTP 相同的规则继承前一窗口绑定；握手 Header 中的 `session-id`、`thread-id` 也纳入连接初始隔离状态；帧内显式 session/thread 与此连接原始标记不同时要求重连，避免跨会话沿用旧绑定。不同客户端 `turn_id` 默认透传；实验模式按原始值查找稳定映射并推进帧级回合，压缩推进窗口及历史锚点；内部重试复用已准备的帧身份，不原地修改首帧握手快照。`ctx_pool` 和 passthrough 使用同一推进逻辑，帧内 turn metadata 优先于旧握手头；现代后续帧缺省时不回灌首窗口头。Cockpit 的 turn、parent/root、开始时间、窗口代数与可选窗口字段存在性逐帧刷新，前帧携带、当前帧省略时保持省略。旧客户端保留原有连接身份兼容路径。
 
 官方 Codex WebSocket v2 会先发送 `generate=false` 的预热 `response.create`，再以预热响应 ID 作为业务请求的 `previous_response_id`。严格续接比较会忽略逐请求变化的 `client_metadata`、仅用于传输的 `stream_options`，并把 `generate=false` 与后续省略该字段视为等价；`generate=true` 以及 model、instructions、tools、reasoning、store 等上下文字段仍必须保持一致，避免把无关请求错误串接。
 
-WS 准备按身份绑定的实际变更触发持久化，不只检查窗口代数。新增或恢复 session/thread/window 绑定后，提交成功才清除脏标记；提交失败保留待提交状态，重试成功前不推进连接快照。Cockpit 的普通字符串或 UUIDv7 回合都不进入持久化；切换到已有窗口仍保留原有持久化快照复核。
+WS 准备按身份绑定的实际变更触发持久化，不只检查窗口代数。新增或恢复 session/thread/window/回合绑定后，提交成功才清除脏标记；提交失败保留待提交状态，重试成功前不推进连接快照。Cockpit 实验模式的所有回合都复用独立回合绑定存储；默认透传不创建回合绑定。新原始回合只在首次出现时生成 UUIDv7，切换到已有窗口仍保留原有持久化快照复核。
 
 OpenAI OAuth 的 HTTP、passthrough、旧版 Compact 与 WebSocket 出站会在模型映射和本地 fast 策略处理完成后，由网关生成 `x-codex-routing-hint`。提示至少包含最终上游模型；只有有效的 `priority` 或 `flex` 才附带 tier，`fast` 先规范化为 `priority`，`default`、未知值和空值均保持 model-only。旧版 Compact 规范化必须保留 `service_tier`，否则提示会丢失已经生效的路由层级。该头由网关独占控制：所有账号类型都会先删除调用方及账号覆盖提供的任意大小写变体，只有 OpenAI OAuth 路径会重新生成；API Key 路径不得透传伪造提示。OAuth HTTP 也不再自动注入或透传旧版 `responses=experimental` beta 标记，但同一头中的其它独立 beta 项仍保留。
 
@@ -167,7 +177,8 @@ OpenAI OAuth 的 HTTP、passthrough、旧版 Compact 与 WebSocket 出站会在�
 网关不再提供 Turn-State 注入、缓存续采、采集代理或业务出口代理配置。客户端携带的
 `x-codex-turn-state` 按既有同账号来源守卫和透传规则处理；上游响应中的该头仍会回传给客户端。
 管理员 Usage 只被动记录最终上游响应的 HTTP 状态码，以及响应头去除外侧空白后的 state 字符串长度。
-展示统一为 `state · N B`，长度不推断 Pro/Team、满血或降级；未返回时显示 `state · 未返回`。
+展示统一为 `响应 state · N B`，长度不推断 Pro/Team、满血或降级；未返回时显示 `响应 state · 未返回`。
+该列不包含出站请求头或插件执行证据，因此响应缺失不等于请求未携带 state，也不证明插件已改写请求。
 该观测不发起探测、轮询、缓存或代理切换，也不改变 UA、TLS、账号主代理、故障转移和普通 Turn-State 语义。
 
 WebSocket 连接池把 routing hint 视为拨号和普通复用的软亲和：优先复用相同提示建立的连接，池满时仍可在硬兼容连接上排队，显式 continuation 也不会仅因提示变化而断链。握手 beta feature 与本 fork 的 TLS fingerprint profile 仍是硬兼容键，任一变化都禁止复用，并会使尚未完成的旧目标预热拨号失效。路由诊断只记录网关推导的最终模型、规范化 tier、传输类型、账号 ID、是否生成提示和 WS 亲和决策，不记录提示头值、token 或凭据。

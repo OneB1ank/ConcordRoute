@@ -687,6 +687,7 @@ export interface SystemSettings {
   team_enabled: boolean;
   data_sharing_enabled: boolean;
   risk_control_enabled: boolean;
+  plugin_management_enabled: boolean;
   cyber_session_block_enabled: boolean;
   cyber_session_block_ttl_seconds: number;
   payment_min_amount: number;
@@ -992,6 +993,7 @@ export interface UpdateSettingsRequest {
   team_enabled?: boolean;
   data_sharing_enabled?: boolean;
   risk_control_enabled?: boolean;
+  plugin_management_enabled?: boolean;
   cyber_session_block_enabled?: boolean;
   cyber_session_block_ttl_seconds?: number;
   payment_min_amount?: number;

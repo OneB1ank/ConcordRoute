@@ -963,6 +963,24 @@
         </div>
       </div>
 
+      <!-- 独立勾选 Turn 字段；未勾选时不覆盖所选账号原有配置。 -->
+      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-end">
+          <input
+            id="bulk-edit-codex-turn-mode-enabled"
+            v-model="enableCodexTurnMode"
+            type="checkbox"
+            :aria-label="t('admin.accounts.openai.codexTurnMode')"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <CodexTurnModeSelector
+          v-model="codexTurnMode"
+          :disabled="!enableCodexTurnMode"
+          test-id="bulk-codex-turn-mode-select"
+        />
+      </div>
+
       <!-- OpenAI OAuth: 5h/7d 配额自动暂停 -->
       <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3">
@@ -1582,6 +1600,8 @@ import type { Proxy as ProxyConfig, AdminGroup, AccountPlatform, AccountType, Ac
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import CodexTurnModeSelector from '@/components/account/CodexTurnModeSelector.vue'
+import type { CodexTurnMode } from '@/utils/codexTurnMode'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import CodexImageToolModeSelector from '@/components/account/CodexImageToolModeSelector.vue'
@@ -1827,6 +1847,8 @@ const autoPause7dDisabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const enableCodexFingerprintMode = ref(false)
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+const enableCodexTurnMode = ref(false)
+const codexTurnMode = ref<CodexTurnMode>('passthrough')
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
   { value: 'device' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintDevice') },
@@ -2344,6 +2366,9 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     // 批量 extra 使用 JSONB merge；所选模式必须显式写入，才能覆盖已有档位。
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   }
+  if (enableCodexTurnMode.value && allOpenAIOAuth.value) {
+    ensureExtra().codex_turn_mode = codexTurnMode.value
+  }
 
   if (enableOpenAICompactMode.value) {
     const extra = ensureExtra()
@@ -2466,6 +2491,7 @@ const handleSubmit = async () => {
     enableAutoPause7dDisabled.value ||
     enableTLSFingerprint.value ||
     enableCodexFingerprintMode.value ||
+    enableCodexTurnMode.value ||
     enableOpenAICompactMode.value ||
     enableOpenAINativeCompactionV2Mode.value ||
     enableOpenAICompactModelMapping.value ||
@@ -2603,6 +2629,8 @@ const resetBulkEditFormState = () => {
   enableAutoPause5hDisabled.value = false
   enableAutoPause7dDisabled.value = false
   enableCodexFingerprintMode.value = false
+  enableCodexTurnMode.value = false
+  codexTurnMode.value = 'passthrough'
   enableOpenAICompactMode.value = false
   enableOpenAINativeCompactionV2Mode.value = false
   enableOpenAICompactModelMapping.value = false

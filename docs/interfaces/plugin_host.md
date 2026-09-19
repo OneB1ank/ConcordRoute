@@ -1,10 +1,12 @@
 # 插件宿主接口
 
-ConcordRoute 的插件宿主只提供管理员显式管理的扩展能力，不自动安装、启用或把插件接入普通网关请求链。
+ConcordRoute 的插件宿主提供管理员显式管理的扩展能力。插件需安装、验签、启用并配置能力路由后，才会接入匹配的请求。
 
 ## 管理接口
 
 所有接口位于 `/api/v1/admin/plugins`，继承管理员认证；上传、配置、测试、启停、升级、回滚、卸载和秘密授权还需要 step-up 验证。
+
+管理员可在“系统设置 → 功能开关 → 插件管理”显示或隐藏侧边栏入口。该开关只控制菜单和前端路由可见性，不会停止已经加载的插件进程；插件启停仍由插件卡片上的独立动作控制。
 
 - `GET /`、`GET /:id`：列出或读取安装、兼容性、运行健康和能力绑定。
 - `POST /inspect`、`POST /upload`：检查或安装 `.s2plugin` 包。
@@ -12,7 +14,17 @@ ConcordRoute 的插件宿主只提供管理员显式管理的扩展能力，不�
 - `GET/PUT /:id/config`、`PUT /:id/routing`：配置和能力路由。
 - `GET /:id/versions`、`POST /:id/upgrade`、`POST /:id/rollback`：版本历史。
 - `GET /:id/host`、`GET/PUT/DELETE /:id/secret-grants`：Host API 观测与短期秘密授权。
+- `GET /:id/status`：只读查询运行中插件的健康状态和插件自定义 `status_json`，不应用配置、不访问上游。
 - `POST /:id/ui-session` 与 `/api/v1/plugin-ui/:token/*path`：隔离插件 UI 资源。
+
+隔离 UI 通过只包含父页面 Origin 的 Referrer 完成跨域 `postMessage` 定址，同时继续校验 iframe
+窗口、沙箱 `null` origin、Bridge Token、请求 ID 和文档代数。Bridge v1 支持配置读写/测试、
+只读 `plugin.status`、尺寸调整和通知；插件资源 URL 仍由短时能力 Token 保护。
+
+v1 传输插件可选择协商 Host Services。宿主通过 go-plugin broker 为每个已验签运行时实例提供隔离的 KV
+命名空间（含 TTL、前缀列举和大小上限）；声明 `openai.oauth.outbound_transport.v1` 能力且匹配
+OpenAI OAuth 的插件还可读取受限账号目录与出站身份。旧插件返回 `Unimplemented` 时继续按旧协议启动，
+不会改变现有签名、发布者信任或 v2 Host API 流程。
 
 配置读取与保存均返回标准 `{code, message, data}` 接口信封，`data` 保留插件配置对象本身；
 配置内的 `code`、`message` 或 `data` 不作为宿主状态解释。路由超时覆盖值范围为
@@ -33,4 +45,6 @@ ConcordRoute 的插件宿主只提供管理员显式管理的扩展能力，不�
 
 ## 当前边界
 
-本次移植没有把插件预处理、UA/TLS、Cockpit/session/thread/window/turn 收敛、Turn-State、292 或自动探活/额度查询接入普通网关路径。插件宿主上线不会改变现有请求行为。
+应用通过 `ProvidePluginManager` 装配 KV、受限账号目录和 OpenAI 网关，Wire 生成结果可由手写 provider 重建。OpenAI OAuth HTTP 出站由统一边界检查插件路由，覆盖 Responses、兼容转换和 WS HTTP Bridge；未命中启用路由时继续使用原有 HTTP/TLS 出站。
+
+卡片上的停用操作关闭能力绑定、移除当前路由，再等待在途请求最多 10 秒并结束进程。隐藏插件管理菜单只改变界面可见性，不等价于停用。插件 UI 的只读状态接口不触发上游模型请求，运行健康也不证明某次业务请求已被插件处理或被上游接受。

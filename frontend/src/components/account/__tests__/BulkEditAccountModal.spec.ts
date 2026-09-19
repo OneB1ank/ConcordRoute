@@ -651,6 +651,20 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it.each(['passthrough', 'converge'])('仅批量修改 Turn 模式：%s', async (mode) => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth']
+    })
+    await wrapper.get('#bulk-edit-codex-turn-mode-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-codex-turn-mode-select"]').setValue(mode)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_turn_mode: mode }
+    })
+  })
+
   it('OpenAI OAuth 批量编辑可启用 TLS 指纹伪装', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

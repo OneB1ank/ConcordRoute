@@ -27,10 +27,10 @@ func (repo *auditLifecycleRepo) UpdateExtra(ctx context.Context, id int64, updat
 	return repo.auditDetachedIdentityRepo.UpdateExtra(ctx, id, updates)
 }
 
-// 同窗口只切换客户端 turn 时不生成持久绑定，也不触发数据库读写。
-func TestAuditWSTurnPassthroughDoesNotPersistBindings(t *testing.T) {
+// 同窗口切换客户端 turn 时建立稳定回合绑定；重复帧不重复写入。
+func TestAuditWSTurnConvergencePersistsBindings(t *testing.T) {
 	account := newTestOAuthAccount(2998000+codexSnapshotTestAccountID.Add(1),
-		map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+		map[string]any{codexFingerprintModeExtraKey: "cockpit", codexTurnModeExtraKey: "converge"})
 	t.Cleanup(func() { auditDropIdentityHotState(account.ID) })
 	repo := &auditLifecycleRepo{auditDetachedIdentityRepo: &auditDetachedIdentityRepo{stored: auditCloneIdentityAccount(account)}}
 	body := auditAssocBody(t, auditAssocRoot, auditAssocRoot, "first-string", auditAssocChild, 0, nil)
@@ -42,17 +42,17 @@ func TestAuditWSTurnPassthroughDoesNotPersistBindings(t *testing.T) {
 	state := newCodexWebSocketFingerprintState(account, first, nil, body)
 	body = auditAssocBody(t, auditAssocRoot, auditAssocRoot, "second-string", auditAssocChild, 0, nil)
 	reads, writes := repo.reads, repo.writes
-	repo.failWrite = true
 	second, err := state.prepare(context.Background(), repo, body)
 	require.NoError(t, err)
 	require.False(t, account.codexIdentityBindingsDirty)
-	require.Equal(t, "second-string", second.turnID)
-	require.Equal(t, reads, repo.reads)
-	require.Equal(t, writes, repo.writes)
+	require.Equal(t, resolveConvergedCockpitTurnID(account, first.sessionID, "second-string"), second.turnID)
+	require.Greater(t, repo.reads, reads)
+	require.Greater(t, repo.writes, writes)
+	writesAfterSecond := repo.writes
 	_, err = state.prepare(context.Background(), repo, body)
 	require.NoError(t, err)
-	require.Equal(t, reads, repo.reads, "热帧不应增加数据库读取")
-	require.Equal(t, writes, repo.writes, "热帧不应反复写同一绑定")
+	require.Equal(t, writesAfterSecond, repo.writes, "热帧不应反复写同一绑定")
+	require.NotEmpty(t, readCodexTurnLineageBindings(repo.stored))
 }
 
 // Cockpit 每帧透传本帧开始时间；后续不同值和缺省都不读取旧生命周期缓存。

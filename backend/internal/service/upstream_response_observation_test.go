@@ -58,6 +58,44 @@ type observationUnreadBody struct{}
 func (observationUnreadBody) Read([]byte) (int, error) { panic("观测不应读取正文") }
 func (observationUnreadBody) Close() error             { panic("观测不应关闭正文") }
 
+// 上游响应不带 state 时，观测记为零；这不等于正常客户端的出站 state 被丢弃。
+// 此测试只覆盖宿主正常转发，不启用插件、采票或服务端重放。
+func TestUpstreamResponseAbsentStatePreservesClientHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough=%v", passthrough), func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.1","stream":true,"instructions":"test","input":[{"role":"user","content":"test"}]}`)
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			account := &Account{ID: 321, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+				Credentials: map[string]any{"access_token": "synthetic", "chatgpt_account_id": "synthetic"},
+				Extra:       map[string]any{"openai_passthrough": passthrough}, Status: StatusActive, Schedulable: true}
+			for attempt := 0; attempt < 2; attempt++ {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				c.Request.Header.Set("session_id", "synthetic-session")
+				c.Request.Header.Set("x-codex-turn-state", "synthetic-client-state")
+				c.Set("api_key", &APIKey{ID: 123})
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"text/event-stream"}},
+					Body: io.NopCloser(strings.NewReader(
+						"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+							"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_absent\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")),
+				}}
+				svc.httpUpstream = upstream
+				result, err := svc.Forward(context.Background(), c, account, body)
+				require.NoError(t, err)
+				require.Len(t, upstream.requests, 1)
+				require.Equal(t, "synthetic-client-state", upstream.lastReq.Header.Get("x-codex-turn-state"))
+				require.Equal(t, UpstreamResponseObservation{StatusCode: 200}, result.UpstreamResponse)
+				require.Empty(t, recorder.Header().Get("x-codex-turn-state"))
+			}
+		})
+	}
+}
+
 // 验证实际 Forward 接线，覆盖普通/透传、流式/非流式及 compact。
 func TestUpstreamResponseObservationForward(t *testing.T) {
 	gin.SetMode(gin.TestMode)

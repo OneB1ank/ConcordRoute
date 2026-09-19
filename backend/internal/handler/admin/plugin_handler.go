@@ -404,6 +404,21 @@ func (h *PluginHandler) Test(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// Status returns the passive runtime status for a plugin. It never applies
+// configuration or performs an upstream request, so status panels can poll it.
+func (h *PluginHandler) Status(c *gin.Context) {
+	id, ok := pluginIDParam(c)
+	if !ok {
+		return
+	}
+	result, err := h.manager.Status(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *PluginHandler) CreateUISession(c *gin.Context) {
 	id, ok := pluginIDParam(c)
 	if !ok {

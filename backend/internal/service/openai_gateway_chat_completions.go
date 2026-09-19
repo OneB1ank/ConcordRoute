@@ -267,7 +267,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	// 7. Send request
 	proxyURL := resolveAccountProxyURL(account)
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, tlsRouterMatch...))
+	resp, err := s.doOpenAIUpstream(
+		upstreamCtx,
+		upstreamReq,
+		responsesBody,
+		proxyURL,
+		account,
+		s.resolveOpenAITLSProfile(account, tlsRouterMatch...),
+	)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}

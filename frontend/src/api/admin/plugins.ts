@@ -177,6 +177,13 @@ export interface PluginTestResult {
   success: boolean
   message: string
   latency_ms: number
+  status_json?: string
+}
+
+export interface PluginStatusResult {
+  healthy: boolean
+  message: string
+  status_json?: string
 }
 
 export interface PluginVersion {
@@ -222,6 +229,11 @@ export interface PluginUISession {
 
 export async function list(): Promise<PluginInstallation[]> {
   const { data } = await apiClient.get<PluginInstallation[]>('/admin/plugins')
+  return data
+}
+
+export async function status(id: number): Promise<PluginStatusResult> {
+  const { data } = await apiClient.get<PluginStatusResult>(`/admin/plugins/${id}/status`)
   return data
 }
 
@@ -309,5 +321,6 @@ export default {
   getConfig,
   saveConfig,
   test,
+  status,
   createUISession
 }

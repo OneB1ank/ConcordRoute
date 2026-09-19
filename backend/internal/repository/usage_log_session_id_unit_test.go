@@ -29,9 +29,9 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 }
 
 // TestPrepareUsageLogInsert_SessionIDArgWiring 固定 session_id 在参数切片和类型表
-// 中的位置，确保所有 INSERT 列表保持同步；session_id 倒数第二，created_at 始终最后。
+// 中的位置，确保所有 INSERT 列表保持同步；尾部依次为会话、创建时间和请求观测模式。
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 64, "arg-type table must include team attribution and session_id")
+	require.Len(t, usageLogInsertArgTypes, 65, "arg-type table must include team attribution, session_id and request mode")
 
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
@@ -39,29 +39,30 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes),
 		"prepared args must match the arg-type table length")
 
-	// created_at 位于末尾，session_id 紧邻其前。
-	sessionArg := prepared.args[len(prepared.args)-2]
+	// 观测模式追加在 created_at 后，session_id 仍紧邻 created_at 之前。
+	sessionArg := prepared.args[len(prepared.args)-3]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.True(t, ns.Valid)
 	require.Equal(t, sessionID, ns.String)
 
-	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2],
+	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3],
 		"session_id arg type must be text")
+	require.Equal(t, "timestamptz", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
 }
 
 // TestPrepareUsageLogInsert_SessionIDNullWhenAbsent 验证缺失的会话标识会持久化为
 // SQL NULL，而不是空字符串。
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
-	sessionArg := prepared.args[len(prepared.args)-2]
+	sessionArg := prepared.args[len(prepared.args)-3]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.False(t, ns.Valid, "absent session id must be NULL, not empty string")
 
 	empty := ""
 	preparedEmpty := prepareUsageLogInsert(newSessionIDUsageLog(&empty))
-	nsEmpty := preparedEmpty.args[len(preparedEmpty.args)-2].(sql.NullString)
+	nsEmpty := preparedEmpty.args[len(preparedEmpty.args)-3].(sql.NullString)
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 

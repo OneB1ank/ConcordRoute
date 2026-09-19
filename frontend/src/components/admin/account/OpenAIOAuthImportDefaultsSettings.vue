@@ -76,6 +76,10 @@
                 data-testid="openai-oauth-default-codex-fingerprint-mode"
               />
             </div>
+            <CodexTurnModeSelector
+              v-model="codexTurnMode"
+              test-id="openai-oauth-default-codex-turn-mode"
+            />
             <CodexImageToolModeSelector
               v-model="codexImageToolMode"
               test-id-prefix="openai-oauth-default-codex-image-tool"
@@ -357,6 +361,8 @@ import {
 } from '@/composables/useModelWhitelist'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import CodexImageToolModeSelector from '@/components/account/CodexImageToolModeSelector.vue'
+import CodexTurnModeSelector from '@/components/account/CodexTurnModeSelector.vue'
+import { readCodexTurnMode, type CodexTurnMode } from '@/utils/codexTurnMode'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import { useAppStore } from '@/stores'
@@ -397,6 +403,7 @@ const credentialsJson = ref('{}')
 const extraJson = ref('{}')
 const openaiPassthrough = ref(false)
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+const codexTurnMode = ref<CodexTurnMode>('passthrough')
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 const codexCLIOnlyAllowClaudeCode = ref(false)
@@ -449,6 +456,7 @@ const structuredExtraKeys = [
   'codex_cli_only',
   'codex_cli_only_allowed_clients',
   'codex_fingerprint_mode',
+  'codex_turn_mode',
   CODEX_IMAGE_GENERATION_BRIDGE_KEY,
   LEGACY_CODEX_IMAGE_GENERATION_BRIDGE_KEY,
   CODEX_IMAGE_GENERATION_POLICY_KEY,
@@ -655,6 +663,7 @@ const hydrate = (defaults: OpenAIOAuthImportDefaults) => {
   const extra = { ...(defaults.extra || {}) }
   openaiPassthrough.value = extra.openai_passthrough === true || extra.openai_oauth_passthrough === true
   codexFingerprintMode.value = normalizeCodexFingerprintMode(extra.codex_fingerprint_mode)
+  codexTurnMode.value = readCodexTurnMode(extra)
   codexImageToolMode.value = readCodexImageToolMode(extra)
   openAIOAuthClientPolicy.value = normalizeOpenAIOAuthClientPolicy(
     extra.openai_oauth_client_policy,
@@ -787,6 +796,7 @@ const save = async (options: SaveOptions = {}): Promise<boolean> => {
       extra.openai_passthrough = true
     }
     extra.codex_fingerprint_mode = codexFingerprintMode.value
+    extra.codex_turn_mode = codexTurnMode.value
     if (wsMode.value !== OPENAI_WS_MODE_OFF) {
       extra.openai_oauth_responses_websockets_v2_mode = wsMode.value
       extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(wsMode.value)

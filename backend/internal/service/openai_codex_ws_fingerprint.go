@@ -38,7 +38,8 @@ func (state *codexWebSocketFingerprintState) prepare(ctx context.Context, repo A
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		// Cockpit 回合字段直接透传，不产生持久绑定；窗口和线程变化仍按实际脏标记提交。
+		// 实验模式的任意新回合也可能新增绑定；默认透传不创建回合绑定。
+		// 依据实际变更标记避免每帧全量提交。
 		windowChanged := current != nil && state.current != nil &&
 			(current.windowID != state.current.windowID || current.contextWindowID != state.current.contextWindowID)
 		if current != nil && local != nil && (local.codexIdentityBindingsDirty || windowChanged) {
@@ -89,12 +90,16 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 	current := *previous
 	current.turnIDPresent = source.turnID != ""
 	current.turnStartedAtPresent = source.turnStartedAtPresent
-	if current.mode == codexFingerprintCockpit {
+	if source.turnID == "" {
+		// 当前帧没有 turn_id 时保持字段缺失；不能把握手或上一帧的
+		// 原始回合重新带入出站元数据。
+		current.originalTurnID = ""
+		current.turnID = ""
+	} else if source.turnID != previous.originalTurnID {
 		current.originalTurnID = source.turnID
-		current.turnID = source.turnID
-	} else if source.turnID != "" && source.turnID != previous.originalTurnID {
-		current.originalTurnID = source.turnID
-		if current.mode != codexFingerprintCockpit {
+		if current.mode == codexFingerprintCockpit {
+			current.turnID = ""
+		} else {
 			current.turnID = newCodexUUIDv7().String()
 		}
 	}
@@ -103,18 +108,17 @@ func advanceCodexWebSocketFingerprint(account *Account, previous *codexFingerpri
 	current.originalParentTurnID = source.parentTurnID
 	current.originalRootTurnID = source.rootTurnID
 	if current.mode == codexFingerprintCockpit {
-		resolveCockpitTurnPassthrough(account, &current)
+		resolveCockpitTurnLineage(account, &current)
 	} else {
 		current.parentThreadID = resolveCodexParentThreadID(account, current.mode, current.originalThreadID, current.threadID, current.originalParentThreadID)
 		current.parentTurnID = source.parentTurnID
 		current.rootTurnID = resolveCodexRootTurnID(source.rootTurnID, source.parentTurnID, current.turnID)
 	}
+	// Cockpit 的开始时间按当前帧存在性处理；不把前帧或本地缓存时间回灌。
 	if current.mode == codexFingerprintCockpit {
 		current.turnStartedAtUnixMS = source.turnStartedAtUnixMS
 	} else if current.turnID != "" {
-		// 非 Cockpit 模式继续复用同一逻辑 turn 的生命周期时间。
 		current.turnStartedAtUnixMS = resolveCodexTurnStartedAt(account, current.mode, current.sessionID, current.originalTurnID, current.turnID, source.turnStartedAtUnixMS, source.turnStartedAtPresent)
-		current.turnStartedAtPresent = true
 	}
 	current.windowNumberPresent = source.windowNumberPresent
 	// 可选窗口字段必须逐帧刷新存在性。若本帧省略而沿用握手快照，

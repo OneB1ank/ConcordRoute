@@ -770,6 +770,34 @@ describe('EditAccountModal', () => {
     )
   })
 
+  it.each([undefined, 'invalid', 'passthrough', 'converge'])(
+    'Turn 选项独立回显并能保存为透传：%s',
+    async (mode) => {
+      const account = buildOpenAIOAuthAccount()
+      account.extra = { codex_fingerprint_mode: 'cockpit', codex_turn_mode: mode }
+      updateAccountMock.mockResolvedValue(account)
+      const wrapper = mountModal(account)
+      const select = wrapper.get<HTMLSelectElement>('[data-testid="edit-codex-turn-mode-select"]')
+      expect(select.element.value).toBe(mode === 'converge' ? 'converge' : 'passthrough')
+      await select.setValue('passthrough')
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+        codex_fingerprint_mode: 'cockpit',
+        codex_turn_mode: 'passthrough'
+      })
+    }
+  )
+
+  it('Turn 选项可以独立开启实验模式', async () => {
+    const account = buildOpenAIOAuthAccount()
+    account.extra = { codex_fingerprint_mode: 'cockpit' }
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-codex-turn-mode-select"]').setValue('converge')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_turn_mode).toBe('converge')
+  })
+
   it('does not show the plan type override for OpenAI API-key accounts', () => {
     const wrapper = mountModal(buildAccount())
 

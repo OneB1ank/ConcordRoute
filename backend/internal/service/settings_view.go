@@ -251,6 +251,8 @@ type SystemSettings struct {
 	OpenAICodexUserAgent                   string // OpenAI Codex 上游完整 User-Agent；空值使用内置 TUI 默认
 	OpenAIAllowClaudeCodeCodexPlugin       bool   // 全局开关：是否额外放行 Claude Code 的 Codex 插件（默认 false）
 	UserPromptReplacementConfig            *UserPromptReplacementConfig
+	// PluginManagementEnabled 控制管理员插件管理入口，默认关闭且不影响插件运行时。
+	PluginManagementEnabled bool `json:"plugin_management_enabled"`
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟
@@ -376,6 +378,7 @@ type PublicSettings struct {
 	TeamEnabled                          bool
 	TeamSelfServiceEnabled               bool
 	DataSharingEnabled                   bool   // 暴露给前端用于控制数据共享页面入口
+	PluginManagementEnabled              bool   `json:"plugin_management_enabled"`
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`

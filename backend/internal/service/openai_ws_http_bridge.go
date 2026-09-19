@@ -274,7 +274,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	turnStart := time.Now()
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.resolveOpenAITLSProfile(account, routerMatch...))
+	resp, err := s.doOpenAIUpstream(
+		upstreamCtx,
+		upstreamReq,
+		body,
+		proxyURL,
+		account,
+		s.resolveOpenAITLSProfile(account, routerMatch...),
+	)
 	if err != nil {
 		if turn == 1 {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)

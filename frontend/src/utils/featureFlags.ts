@@ -114,6 +114,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Affiliate',
   }),
+  pluginManagement: defineFlag({
+    key: 'plugin_management_enabled',
+    mode: 'opt-in',
+    label: 'Plugin Management',
+  }),
 } as const
 
 export type RegisteredFeatureFlag = keyof typeof FeatureFlags

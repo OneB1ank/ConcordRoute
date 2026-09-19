@@ -43,7 +43,7 @@ func TestCodexFingerprintParentTurnMetadataContract(t *testing.T) {
 				ids := resolveCodexFingerprintIDsFromRequest(account, headers, body)
 				require.NotNil(t, ids)
 				require.True(t, applyCodexFingerprintClientMetadata(body, ids))
-				expectedParent, expectedRoot := parent, root
+				expectedParent, expectedRoot := ids.parentTurnID, ids.rootTurnID
 				assertParentTurnMetadataContract(t, body, expectedParent, expectedRoot)
 
 				rawIDs := resolveCodexFingerprintIDsFromRawRequest(account, headers, raw)
@@ -53,7 +53,7 @@ func TestCodexFingerprintParentTurnMetadataContract(t *testing.T) {
 				require.True(t, changed)
 				var decoded map[string]any
 				require.NoError(t, json.Unmarshal(updated, &decoded))
-				expectedRawParent, expectedRawRoot := parent, root
+				expectedRawParent, expectedRawRoot := rawIDs.parentTurnID, rawIDs.rootTurnID
 				assertParentTurnMetadataContract(t, decoded, expectedRawParent, expectedRawRoot)
 			})
 		}

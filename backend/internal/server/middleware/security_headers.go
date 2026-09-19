@@ -94,6 +94,10 @@ var requiredCSPDirectiveValues = []struct {
 	{"style-src", AirwallexDemoStaticDomain},
 	{"style-src", AirwallexDemoCheckoutDomain},
 	{"frame-src", AirwallexDemoCheckoutDomain},
+	// 插件配置页使用宿主同源的短时能力 URL。放在列表末尾可兼容旧策略：
+	// frame-src 缺失时，前面的必需来源会先创建含 'self' 的指令；
+	// frame-src 已存在但遗漏 'self' 时，则在这里补齐且不重复。
+	{"frame-src", "'self'"},
 }
 
 // GenerateNonce generates a cryptographically secure random nonce.

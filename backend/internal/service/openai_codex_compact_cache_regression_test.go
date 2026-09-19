@@ -227,16 +227,16 @@ func TestCodexCompactCacheRegressionWindowOnlySession(t *testing.T) {
 
 // 显式 root 在没有新 turn_id 的 WS 后续帧中同样有效，且仍只写入元数据。
 func TestCodexRootPresentRegressionWS(t *testing.T) {
-	account := newTestOAuthAccount(18209, map[string]any{codexFingerprintModeExtraKey: "cockpit"})
+	account := newTestOAuthAccount(18209, map[string]any{codexFingerprintModeExtraKey: "cockpit", codexTurnModeExtraKey: "converge"})
 	first := resolveCodexFingerprintIDsFromRawRequest(account, nil, []byte(`{"client_metadata":{"session_id":"explicit-root-frame","turn_id":"same-turn"}}`))
 	for _, raw := range []string{
 		`{"client_metadata":{"root_turn_id":"explicit-root"}}`,
 		`{"client_metadata":{"parent_turn_id":"explicit-parent","root_turn_id":"explicit-root"}}`,
 	} {
 		next := advanceCodexWebSocketFingerprint(account, first, []byte(raw))
-		require.Equal(t, "explicit-root", next.rootTurnID)
+		require.Equal(t, resolveConvergedCockpitTurnID(account, first.sessionID, "explicit-root"), next.rootTurnID)
 		if next.parentTurnID != "" {
-			require.Equal(t, "explicit-parent", next.parentTurnID)
+			require.Equal(t, resolveConvergedCockpitTurnID(account, first.sessionID, "explicit-parent"), next.parentTurnID)
 		} else {
 			require.NotEqual(t, next.turnID, next.rootTurnID)
 		}

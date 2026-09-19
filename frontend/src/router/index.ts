@@ -576,6 +576,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
+      requiresPluginManagement: true,
       title: 'Plugin Management',
       titleKey: 'admin.plugins.title',
       descriptionKey: 'admin.plugins.description'
@@ -932,6 +933,7 @@ router.beforeEach(async (to, _from, next) => {
     || to.meta.requiresTeam
     || to.meta.requiresDataSharing
     || to.meta.requiresChannelMonitor
+    || to.meta.requiresPluginManagement
   if (requiresPublicFeature && !appStore.publicSettingsLoaded) {
     try {
       await appStore.fetchPublicSettings()
@@ -975,6 +977,15 @@ router.beforeEach(async (to, _from, next) => {
     appStore.cachedPublicSettings?.data_sharing_enabled === false
   ) {
     next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
+  }
+
+  if (
+    to.meta.requiresPluginManagement &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.plugin_management_enabled !== true
+  ) {
+    next('/admin/settings')
     return
   }
 

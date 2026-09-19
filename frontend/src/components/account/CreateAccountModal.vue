@@ -3286,6 +3286,13 @@
         </div>
       </div>
 
+      <CodexTurnModeSelector
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-model="codexTurnMode"
+        test-id="create-codex-turn-mode-select"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      />
+
       <!-- Codex 额度透支（仅 OpenAI OAuth，默认关闭） -->
       <div
         v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
@@ -4005,6 +4012,8 @@ import type { OpenAIOAuthImportDefaults } from '@/api/admin/settings'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import CodexTurnModeSelector from '@/components/account/CodexTurnModeSelector.vue'
+import { readCodexTurnMode, type CodexTurnMode } from '@/utils/codexTurnMode'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -4349,6 +4358,7 @@ const codexCLIOnlyAllowClaudeCodeEnabled = ref(false)
 const openAIOAuthClientPolicy = ref<OpenAIOAuthClientPolicy>('any')
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'cockpit' | 'full'
 const codexFingerprintMode = ref<CodexFingerprintMode>('off')
+const codexTurnMode = ref<CodexTurnMode>('passthrough')
 const codexQuotaOverdraftEnabled = ref(false)
 const codexFingerprintModeOptions = computed(() => [
   { value: 'off' as CodexFingerprintMode, label: t('admin.accounts.openai.codexFingerprintOff') },
@@ -4735,6 +4745,7 @@ const applyOpenAIOAuthImportDefaultsToForm = () => {
   }
 
   const extra = defaults.extra || {}
+  codexTurnMode.value = readCodexTurnMode(extra)
   const defaultFingerprintMode = extra.codex_fingerprint_mode
   codexFingerprintMode.value = (
     defaultFingerprintMode === 'off' ||
@@ -5612,6 +5623,7 @@ const resetForm = () => {
   codexCLIOnlyAllowClaudeCodeEnabled.value = false
   openAIOAuthClientPolicy.value = 'any'
   codexFingerprintMode.value = 'off'
+  codexTurnMode.value = 'passthrough'
   codexQuotaOverdraftEnabled.value = false
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -5794,6 +5806,12 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_fingerprint_mode = codexFingerprintMode.value
   } else {
     delete extra.codex_fingerprint_mode
+  }
+  if (accountCategory.value === 'oauth-based') {
+    // 显式保存透传，避免导入模板中残留的实验值覆盖当前选择。
+    extra.codex_turn_mode = codexTurnMode.value
+  } else {
+    delete extra.codex_turn_mode
   }
   if (accountCategory.value === 'oauth-based' && codexQuotaOverdraftEnabled.value) {
     extra.codex_quota_overdraft_enabled = true
